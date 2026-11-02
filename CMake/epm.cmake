@@ -63,18 +63,18 @@ include_guard(GLOBAL)
 # attached to the rolling `nightly` prerelease sets it to `nightly` (and its
 # EPM_VERSION to the source version of that build); everywhere else it is
 # v${EPM_VERSION}.
-set(EPM_VERSION 0.1.0)
+set(EPM_VERSION 0.1.1)
 set(EPM_RELEASE_TAG "v${EPM_VERSION}")
 
 # SHA-256 of the release archive per host platform, for bootstrap step 3: the
 # asset epm-${EPM_VERSION}-<platform>.tar.gz (.zip on Windows) of release
 # EPM_RELEASE_TAG, as published by .github/workflows/release.yml. An empty value
 # means no binary is pinned for that platform, which builds from source.
-set(EPM_RELEASE_SHA256_macos-universal "")
-set(EPM_RELEASE_SHA256_linux-x64 "")
-set(EPM_RELEASE_SHA256_linux-arm64 "")
-set(EPM_RELEASE_SHA256_windows-x64 "")
-set(EPM_RELEASE_SHA256_windows-arm64 "")
+set(EPM_RELEASE_SHA256_macos-universal "f7ddb1a3ad91aff9b3aed299936de817b9d1dc39a66d8cb620ec79861711f197")
+set(EPM_RELEASE_SHA256_linux-x64 "0a38f44d0ea0ef243c419bb19600831359513540858ffa02c4288b4887fcc6ac")
+set(EPM_RELEASE_SHA256_linux-arm64 "e4e08c0aa8d705fe8bd121b85f9e23bacf66fb7e47a4392ee3e6dbe951d9b404")
+set(EPM_RELEASE_SHA256_windows-x64 "eb6cd87d7df49ce0b9d9b45d4fff2ea65e83580c896328e5944d3bedbeea565a")
+set(EPM_RELEASE_SHA256_windows-arm64 "4aa9b7e9c0219f5e0c9032e470f941c33549d236fc5e1ce7119622d1918e02fc")
 
 set(EPM_RELEASE_PLATFORMS
         macos-universal linux-x64 linux-arm64 windows-x64 windows-arm64)
