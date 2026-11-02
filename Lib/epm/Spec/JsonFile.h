@@ -1,0 +1,50 @@
+#pragma once
+
+#include <eacp/Core/Utils/Files.h>
+
+#include <Miro/Json.h>
+#include <Miro/Reflect.h>
+
+#include <cstdint>
+#include <optional>
+#include <string>
+
+namespace epm
+{
+// nullopt when the file is missing or does not hold a JSON object. Keys the
+// file leaves out keep the struct's defaults.
+template <typename T>
+std::optional<T> loadJsonFile(const eacp::FilePath& path)
+{
+    if (!eacp::Files::isFile(path))
+        return std::nullopt;
+
+    const auto json = Miro::Json::getParsedValue(eacp::Files::readFile(path));
+
+    if (!json.isObject())
+        return std::nullopt;
+
+    return Miro::createFromJSON<T>(json);
+}
+
+template <typename T>
+bool saveJsonFile(const eacp::FilePath& path, const T& value)
+{
+    const auto text = Miro::toJSONString(value, 2) + "\n";
+
+    if (!eacp::Files::createDirectories(path.parentDirectory()))
+        return false;
+
+    try
+    {
+        eacp::Files::writeFileAtomically(
+            path, {reinterpret_cast<const std::uint8_t*>(text.data()), text.size()});
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+
+    return true;
+}
+} // namespace epm
