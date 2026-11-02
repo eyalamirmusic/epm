@@ -36,6 +36,13 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+`cmake --install build --prefix <dir>` installs only `bin/epm` and
+`share/epm/cmake/epm.cmake`. Consumers need neither: `epm.cmake` bootstraps the
+binary into `<cache>/tool/<ref>/` through those same install rules
+(`Docs/PoC.md` §8). The version lives only in `project(epm VERSION ...)`, which
+must match `EPM_VERSION` in `CMake/epm.cmake`; `Apps/epm/Version.h.in` carries it
+into `epm --version`.
+
 `EPM_ENABLE_TESTS` defaults ON when epm is the top-level project.
 `EPM_VERBOSE_CONFIGURE=ON` brings back the configure detail hidden by default.
 Use a local eacp with `-DCPM_eacp_SOURCE=/path/to/eacp`.

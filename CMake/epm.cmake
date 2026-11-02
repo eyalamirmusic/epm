@@ -22,10 +22,19 @@
 # caller's scope (plus <name>_BINARY_DIR in source mode).
 #
 # Variables read:
-#   EPM_EXECUTABLE              path to the epm binary (else searched on PATH)
+#   EPM_EXECUTABLE              path to an epm binary to use as is (skips the
+#                               bootstrap below)
+#   EPM_SOURCE_REF              epm tag, branch or commit to bootstrap
+#                               (default: v${EPM_VERSION})
+#   EPM_SOURCE_URL              tarball to build it from (default: GitHub's
+#                               archive of EPM_SOURCE_REF)
+#   EPM_BOOTSTRAP_SOURCE_DIR    build the binary from this local checkout instead
+#                               (for working on epm itself)
 #   EPM_BUILD_MISSING_BINARIES  ON (default): `auto` builds a missing binary
 #                               entry; OFF: `auto` falls back to source instead
 #   EPM_CACHE                   cache root handed to the binary as --cache
+#                               (else the EPM_CACHE environment variable, else the
+#                               platform cache directory, as the binary does)
 #   EPM_VERBOSE                 pass --verbose and echo the binary's output
 #
 # Files exchanged with the binary live under ${CMAKE_BINARY_DIR}/epm/:
@@ -34,6 +43,29 @@
 #   responses/<name>.cmake      written by the binary, included here
 
 include_guard(GLOBAL)
+
+# The epm binary this module expects, pinned the way CPM.cmake pins itself.
+set(EPM_VERSION 0.1.0)
+
+if (NOT EPM_SOURCE_REF)
+    set(EPM_SOURCE_REF "v${EPM_VERSION}")
+endif ()
+
+set(EPM_DEFAULT_SOURCE_URL
+        "https://github.com/eyalamirmusic/epm/archive/${EPM_SOURCE_REF}.tar.gz")
+
+if (NOT EPM_SOURCE_URL)
+    set(EPM_SOURCE_URL "${EPM_DEFAULT_SOURCE_URL}")
+endif ()
+
+# SHA-256 of the release binary per host platform, for bootstrap step 3. STUB: no
+# releases are published yet, so every entry is empty and the step is skipped.
+set(EPM_RELEASE_SHA256_macos-arm64 "")
+set(EPM_RELEASE_SHA256_macos-x86_64 "")
+set(EPM_RELEASE_SHA256_linux-x86_64 "")
+set(EPM_RELEASE_SHA256_linux-arm64 "")
+set(EPM_RELEASE_SHA256_windows-x86_64 "")
+set(EPM_RELEASE_SHA256_windows-arm64 "")
 
 # The same policies CPM sets (cpm_set_policies in CPM.cmake 0.40.2): with CMP0077
 # and CMP0126 NEW a plain variable set before add_subdirectory wins over the
@@ -56,15 +88,6 @@ option(EPM_BUILD_MISSING_BINARIES
         "Let MODE auto build a missing binary cache entry (OFF: fall back to source)"
         ON)
 
-find_program(EPM_EXECUTABLE NAMES epm DOC "Path to the epm binary")
-
-if (NOT EPM_EXECUTABLE OR NOT EXISTS "${EPM_EXECUTABLE}")
-    message(FATAL_ERROR
-            "epm: the epm binary was not found (EPM_EXECUTABLE='${EPM_EXECUTABLE}').\n"
-            "Build it from the epm repository and either put it on PATH or configure "
-            "with -DEPM_EXECUTABLE=/path/to/epm.")
-endif ()
-
 set(EPM_DIR "${CMAKE_BINARY_DIR}/epm")
 
 # Quotes `value` as a JSON string literal, for string(JSON ... SET), which takes
@@ -84,6 +107,384 @@ function(epm_json_set_string json_var key value)
     string(JSON json SET "${${json_var}}" "${key}" "${quoted}")
     set(${json_var} "${json}" PARENT_SCOPE)
 endfunction()
+
+# ---------------------------------------------------------------------------
+# Bootstrap: find the epm binary, or build it, before any epm_add_package call.
+# First hit wins:
+#   1. EPM_EXECUTABLE, when set and the file exists
+#   2. <cache>/tool/<ref>/bin/epm, when its marker <cache>/tool/<ref>.json exists
+#   3. the release binary for this host (stub, see EPM_RELEASE_SHA256_*)
+#   4. a source build of EPM_SOURCE_URL (or EPM_BOOTSTRAP_SOURCE_DIR), installed
+#      into <cache>/tool/<ref>
+#   5. epm on PATH, warning when its version is not EPM_VERSION
+# The result lands in EPM_EXECUTABLE (cache INTERNAL).
+
+# One line, shown with EPM_VERBOSE or --log-level=VERBOSE.
+function(epm_bootstrap_note text)
+    if (EPM_VERBOSE)
+        message(STATUS "epm: ${text}")
+    else ()
+        message(VERBOSE "epm: ${text}")
+    endif ()
+endfunction()
+
+# The cache root the binary uses when no --cache is given: CacheRoot::fromEnvironment
+# (the EPM_CACHE environment variable, else <platform cache dir>/epm), with eacp's
+# FilePath::cacheDirectory() per platform. The EPM_CACHE CMake variable comes
+# first because epm_add_package passes it as --cache.
+function(epm_cache_root out_var)
+    if (EPM_CACHE)
+        set(root "${EPM_CACHE}")
+    elseif (NOT "$ENV{EPM_CACHE}" STREQUAL "")
+        set(root "$ENV{EPM_CACHE}")
+    elseif (CMAKE_HOST_WIN32)
+        # FOLDERID_LocalAppData
+        set(root "$ENV{LOCALAPPDATA}/epm")
+    elseif (CMAKE_HOST_APPLE)
+        # NSCachesDirectory in the user domain
+        set(root "$ENV{HOME}/Library/Caches/epm")
+    elseif (NOT "$ENV{XDG_CACHE_HOME}" STREQUAL "")
+        set(root "$ENV{XDG_CACHE_HOME}/epm")
+    else ()
+        # FilePath::homeDirectory() drops a trailing separator from HOME.
+        string(REGEX REPLACE "(.)/$" "\\1" home "$ENV{HOME}")
+        set(root "${home}/.cache/epm")
+    endif ()
+
+    file(TO_CMAKE_PATH "${root}" root)
+    set(${out_var} "${root}" PARENT_SCOPE)
+endfunction()
+
+# <os>-<arch> of the machine running CMake (not the target), as used in
+# EPM_RELEASE_SHA256_<platform>.
+function(epm_host_platform out_var)
+    if (CMAKE_HOST_WIN32)
+        set(os "windows")
+    elseif (CMAKE_HOST_APPLE)
+        set(os "macos")
+    else ()
+        string(TOLOWER "${CMAKE_HOST_SYSTEM_NAME}" os)
+    endif ()
+
+    string(TOLOWER "${CMAKE_HOST_SYSTEM_PROCESSOR}" arch)
+
+    if (arch MATCHES "^(amd64|x64)$")
+        set(arch "x86_64")
+    elseif (arch STREQUAL "aarch64")
+        set(arch "arm64")
+    endif ()
+
+    set(${out_var} "${os}-${arch}" PARENT_SCOPE)
+endfunction()
+
+# The last `count` lines of `text`.
+function(epm_tail_lines text count out_var)
+    string(STRIP "${text}" text)
+    set(end -1)
+
+    foreach (i RANGE 1 ${count})
+        if (end EQUAL -1)
+            string(FIND "${text}" "\n" position REVERSE)
+        else ()
+            string(SUBSTRING "${text}" 0 ${end} head)
+            string(FIND "${head}" "\n" position REVERSE)
+        endif ()
+
+        if (position EQUAL -1)
+            set(${out_var} "${text}" PARENT_SCOPE)
+            return()
+        endif ()
+
+        set(end ${position})
+    endforeach ()
+
+    math(EXPR start "${end} + 1")
+    string(SUBSTRING "${text}" ${start} -1 tail)
+    set(${out_var} "${tail}" PARENT_SCOPE)
+endfunction()
+
+# Runs one bootstrap build step, appending the command and its output to `log`.
+# Sets epm_step_result in the caller.
+function(epm_bootstrap_run log)
+    set(echo_args "")
+
+    if (EPM_VERBOSE)
+        set(echo_args ECHO_OUTPUT_VARIABLE ECHO_ERROR_VARIABLE)
+    endif ()
+
+    string(JOIN " " command_line ${ARGN})
+    file(APPEND "${log}" "\n$ ${command_line}\n")
+
+    execute_process(COMMAND ${ARGN}
+            RESULT_VARIABLE result
+            OUTPUT_VARIABLE output
+            ERROR_VARIABLE output
+            ${echo_args})
+
+    file(APPEND "${log}" "${output}")
+    set(epm_step_result "${result}" PARENT_SCOPE)
+endfunction()
+
+function(epm_bootstrap_use executable)
+    set(EPM_EXECUTABLE "${executable}" CACHE INTERNAL "Path to the epm binary")
+    # Lets the next configure tell a bootstrapped binary from one the user gave,
+    # so a changed EPM_SOURCE_REF is honoured.
+    set(EPM_BOOTSTRAPPED_EXECUTABLE "${executable}" CACHE INTERNAL "")
+endfunction()
+
+# Step 4. Builds epm on the host with its own install rules, into `tool_dir`.
+# Sets epm_build_error in the caller when the source could not be obtained (so
+# the PATH fallback can run); a failed build is fatal.
+function(epm_bootstrap_build key tool_dir marker executable description)
+    set(epm_build_error "" PARENT_SCOPE)
+    get_filename_component(tool_root "${tool_dir}" DIRECTORY)
+    file(MAKE_DIRECTORY "${tool_root}")
+
+    # Held until the function returns: a parallel configure waits, then finds
+    # the marker.
+    file(LOCK "${tool_root}/${key}.lock" GUARD FUNCTION TIMEOUT 3600
+            RESULT_VARIABLE lock_result)
+
+    if (NOT lock_result EQUAL 0)
+        message(FATAL_ERROR
+                "epm: cannot lock ${tool_root}/${key}.lock: ${lock_result}")
+    endif ()
+
+    if (EXISTS "${marker}" AND EXISTS "${executable}")
+        return()
+    endif ()
+
+    message(STATUS
+            "epm: building ${description} into ${tool_dir} "
+            "(first time only)")
+
+    epm_cache_root(cache)
+    file(REMOVE_RECURSE "${tool_dir}")
+    set(build_dir "${tool_dir}/build")
+    set(log "${build_dir}/epm-bootstrap.log")
+    file(MAKE_DIRECTORY "${build_dir}")
+    set(staging "")
+
+    if (EPM_BOOTSTRAP_SOURCE_DIR)
+        get_filename_component(source_dir "${EPM_BOOTSTRAP_SOURCE_DIR}" ABSOLUTE)
+        set(origin "${source_dir}")
+    else ()
+        set(origin "${EPM_SOURCE_URL}")
+        string(RANDOM LENGTH 12 ALPHABET "0123456789abcdef" id)
+        set(staging "${cache}/tmp/epm-bootstrap-${id}")
+        set(tarball "${staging}/epm.tar.gz")
+        file(MAKE_DIRECTORY "${staging}/extract")
+
+        epm_bootstrap_note("downloading ${EPM_SOURCE_URL}")
+        file(DOWNLOAD "${EPM_SOURCE_URL}" "${tarball}"
+                STATUS status TLS_VERIFY ON)
+        list(GET status 0 status_code)
+        list(GET status 1 status_text)
+
+        if (NOT status_code EQUAL 0)
+            file(REMOVE_RECURSE "${staging}" "${tool_dir}")
+            set(epm_build_error
+                    "downloading ${EPM_SOURCE_URL} failed: ${status_text}"
+                    PARENT_SCOPE)
+            return()
+        endif ()
+
+        file(ARCHIVE_EXTRACT INPUT "${tarball}" DESTINATION "${staging}/extract")
+        file(GLOB entries LIST_DIRECTORIES true "${staging}/extract/*")
+        list(LENGTH entries entry_count)
+
+        if (NOT entry_count EQUAL 1 OR NOT IS_DIRECTORY "${entries}")
+            file(REMOVE_RECURSE "${staging}" "${tool_dir}")
+            set(epm_build_error
+                    "${EPM_SOURCE_URL} does not hold a single top-level directory"
+                    PARENT_SCOPE)
+            return()
+        endif ()
+
+        set(source_dir "${entries}")
+    endif ()
+
+    file(WRITE "${log}" "epm bootstrap of ${origin}\n")
+
+    # A host build: nothing from the consumer's toolchain, generator or target
+    # architectures reaches it, so it works while the consumer targets iOS or
+    # Android. CMake reads these variables from the environment too.
+    set(clean_env "${CMAKE_COMMAND}" -E env
+            --unset=CMAKE_TOOLCHAIN_FILE
+            --unset=CMAKE_GENERATOR
+            --unset=CMAKE_GENERATOR_PLATFORM
+            --unset=CMAKE_GENERATOR_TOOLSET
+            --unset=CMAKE_BUILD_TYPE
+            --unset=CMAKE_OSX_ARCHITECTURES
+            --unset=CMAKE_INSTALL_PREFIX
+            --unset=DESTDIR)
+
+    set(steps configure build install)
+    set(configure_command "${CMAKE_COMMAND}" -S "${source_dir}" -B "${build_dir}"
+            -DCMAKE_BUILD_TYPE=Release
+            -DEPM_ENABLE_TESTS=OFF
+            "-DCMAKE_INSTALL_PREFIX=${tool_dir}")
+    set(build_command "${CMAKE_COMMAND}" --build "${build_dir}"
+            --config Release --parallel)
+    set(install_command "${CMAKE_COMMAND}" --install "${build_dir}" --config Release)
+
+    foreach (step IN LISTS steps)
+        epm_bootstrap_run("${log}" ${clean_env} ${${step}_command})
+
+        if (NOT epm_step_result EQUAL 0)
+            file(READ "${log}" log_text)
+            epm_tail_lines("${log_text}" 40 tail)
+            message(FATAL_ERROR
+                    "epm: building epm from source failed at the ${step} step "
+                    "(${epm_step_result}).\n${tail}\n\n"
+                    "Full log: ${log}\nBuild dir kept: ${build_dir}")
+        endif ()
+    endforeach ()
+
+    execute_process(COMMAND "${executable}" --version
+            RESULT_VARIABLE version_result
+            OUTPUT_VARIABLE version
+            ERROR_QUIET
+            OUTPUT_STRIP_TRAILING_WHITESPACE)
+
+    if (NOT version_result EQUAL 0)
+        message(FATAL_ERROR
+                "epm: the freshly built ${executable} does not run "
+                "(${version_result}).\nFull log: ${log}\nBuild dir kept: ${build_dir}")
+    endif ()
+
+    file(REMOVE_RECURSE "${build_dir}")
+
+    if (staging)
+        file(REMOVE_RECURSE "${staging}")
+    endif ()
+
+    string(TIMESTAMP built_at "%Y-%m-%dT%H:%M:%SZ" UTC)
+    set(json "{}")
+    string(JSON json SET "${json}" schema 1)
+
+    if (EPM_BOOTSTRAP_SOURCE_DIR)
+        epm_json_set_string(json ref "")
+    else ()
+        epm_json_set_string(json ref "${EPM_SOURCE_REF}")
+    endif ()
+
+    epm_json_set_string(json url "${origin}")
+    epm_json_set_string(json version "${version}")
+    epm_json_set_string(json builtAt "${built_at}")
+
+    # Written last, by rename: the entry is visible only once complete.
+    file(WRITE "${marker}.tmp" "${json}\n")
+    file(RENAME "${marker}.tmp" "${marker}")
+endfunction()
+
+function(epm_bootstrap)
+    # 1. A binary the user gave (not one an earlier configure bootstrapped).
+    if (EPM_EXECUTABLE AND NOT EPM_EXECUTABLE STREQUAL EPM_BOOTSTRAPPED_EXECUTABLE)
+        if (EXISTS "${EPM_EXECUTABLE}")
+            epm_bootstrap_note("using EPM_EXECUTABLE ${EPM_EXECUTABLE}")
+            return()
+        endif ()
+
+        message(WARNING
+                "epm: EPM_EXECUTABLE '${EPM_EXECUTABLE}' does not exist; "
+                "bootstrapping instead")
+    endif ()
+
+    epm_cache_root(cache)
+
+    if (CMAKE_HOST_WIN32)
+        set(suffix ".exe")
+    else ()
+        set(suffix "")
+    endif ()
+
+    # The tool/ entry name. A local checkout is keyed by its path, which can never
+    # be mistaken for a ref; a non-default URL gets its own entry too.
+    if (EPM_BOOTSTRAP_SOURCE_DIR)
+        get_filename_component(source_dir "${EPM_BOOTSTRAP_SOURCE_DIR}" ABSOLUTE)
+        string(SHA256 path_hash "${source_dir}")
+        string(SUBSTRING "${path_hash}" 0 12 path_hash)
+        set(key "local-${path_hash}")
+        set(description "epm from ${source_dir}")
+    else ()
+        string(REGEX REPLACE "[^A-Za-z0-9._-]" "_" key "${EPM_SOURCE_REF}")
+
+        if (NOT EPM_SOURCE_URL STREQUAL EPM_DEFAULT_SOURCE_URL)
+            string(SHA256 url_hash "${EPM_SOURCE_URL}")
+            string(SUBSTRING "${url_hash}" 0 12 url_hash)
+            string(APPEND key "-${url_hash}")
+        endif ()
+
+        if (EPM_SOURCE_REF STREQUAL "v${EPM_VERSION}")
+            set(description "epm ${EPM_VERSION} from source")
+        else ()
+            set(description "epm ${EPM_SOURCE_REF} from source")
+        endif ()
+    endif ()
+
+    set(tool_dir "${cache}/tool/${key}")
+    set(marker "${cache}/tool/${key}.json")
+    set(executable "${tool_dir}/bin/epm${suffix}")
+
+    # 2. Built or downloaded by an earlier configure.
+    if (EXISTS "${marker}" AND EXISTS "${executable}")
+        epm_bootstrap_note("using ${executable}")
+        epm_bootstrap_use("${executable}")
+        return()
+    endif ()
+
+    # 3. Release binary. STUB: once releases are published, download
+    #    epm-<platform>.tar.gz of release v${EPM_VERSION}, check it against
+    #    EPM_RELEASE_SHA256_<platform> and unpack it into tool_dir. Only for the
+    #    pinned ref from the default URL.
+    epm_host_platform(platform)
+
+    if (NOT EPM_BOOTSTRAP_SOURCE_DIR AND EPM_SOURCE_REF STREQUAL "v${EPM_VERSION}"
+            AND EPM_SOURCE_URL STREQUAL EPM_DEFAULT_SOURCE_URL)
+        if (NOT EPM_RELEASE_SHA256_${platform})
+            epm_bootstrap_note(
+                    "no release binary pinned for ${platform}; building from source")
+        endif ()
+    endif ()
+
+    # 4. Source build.
+    epm_bootstrap_build("${key}" "${tool_dir}" "${marker}" "${executable}"
+            "${description}")
+
+    if (NOT epm_build_error AND EXISTS "${marker}" AND EXISTS "${executable}")
+        epm_bootstrap_use("${executable}")
+        return()
+    endif ()
+
+    # 5. Last resort: PATH (and only PATH; never re-rooted by a cross toolchain).
+    find_program(path_executable NAMES epm NO_CACHE
+            NO_PACKAGE_ROOT_PATH NO_CMAKE_PATH NO_CMAKE_ENVIRONMENT_PATH
+            NO_CMAKE_SYSTEM_PATH NO_CMAKE_INSTALL_PREFIX NO_CMAKE_FIND_ROOT_PATH)
+
+    if (NOT path_executable)
+        message(FATAL_ERROR
+                "epm: no epm binary: ${epm_build_error}\n"
+                "Configure with -DEPM_EXECUTABLE=/path/to/epm or put epm on PATH.")
+    endif ()
+
+    execute_process(COMMAND "${path_executable}" --version
+            OUTPUT_VARIABLE path_version
+            ERROR_QUIET
+            OUTPUT_STRIP_TRAILING_WHITESPACE)
+
+    if (NOT path_version STREQUAL EPM_VERSION)
+        message(WARNING
+                "epm: using ${path_executable} from PATH (${epm_build_error}), but "
+                "its version '${path_version}' is not the pinned ${EPM_VERSION}")
+    else ()
+        epm_bootstrap_note("using ${path_executable} from PATH (${epm_build_error})")
+    endif ()
+
+    epm_bootstrap_use("${path_executable}")
+endfunction()
+
+epm_bootstrap()
 
 # Splits a CPM-style option, "KEY VALUE" (or a bare "KEY", meaning ON). The value
 # keeps any spaces after the first one.

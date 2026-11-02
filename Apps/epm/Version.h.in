@@ -1,0 +1,8 @@
+#pragma once
+
+// Generated from Version.h.in by CMake: project(epm VERSION ...) is the only
+// place the version is written down.
+namespace epm
+{
+constexpr auto version = "@PROJECT_VERSION@";
+}

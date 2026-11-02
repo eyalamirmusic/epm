@@ -4,6 +4,8 @@
 #include <epm/Spec/JsonFile.h>
 #include <epm/Util/Log.h>
 
+#include "Version.h"
+
 #include <eacp/Core/App/App.h>
 #include <eacp/Core/App/Args.h>
 #include <eacp/Core/Utils/Console.h>
@@ -137,7 +139,7 @@ int run()
 
     if (command == "--version")
     {
-        Console::print(EPM_VERSION);
+        Console::print(epm::version);
         return 0;
     }
 

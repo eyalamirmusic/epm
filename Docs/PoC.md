@@ -11,7 +11,7 @@ Everything here is PoC-level and may be replaced; the shape follows `PLAN.md`.
 ```cmake
 cmake_minimum_required(VERSION 3.31)
 project(HelloEacp CXX)
-include(path/to/epm/CMake/epm.cmake)        # finds the epm binary (EPM_EXECUTABLE or PATH)
+include(path/to/epm/CMake/epm.cmake)        # finds or builds the epm binary (§8)
 
 epm_add_package(
   NAME eacp
@@ -110,6 +110,9 @@ $EPM_CACHE  (default: <platform cache dir>/epm, e.g. ~/Library/Caches/epm or ~/.
   bin/<name>/<key12>.json           completeness marker, written last: {key, commit, builtAt}
   build/<name>/<key12>/<Config>/    child build trees; deleted after a successful harvest
   cpm/                              CPM_SOURCE_CACHE for child builds (nested CPM deps)
+  tool/<ref>/bin/epm                the bootstrapped binary (§8), an epm install prefix
+  tool/<ref>.json                   its completeness marker: {ref, url, version, builtAt}
+  tool/<ref>.lock                   CMake file(LOCK) held while bootstrapping
   tmp/                              staging; final locations are reached by rename
 ```
 
@@ -226,7 +229,9 @@ endforeach()
 
 ```
 epm/
-  CMakeLists.txt            CMake 3.31; options EPM_ENABLE_TESTS (default ON when top-level)
+  CMakeLists.txt            CMake 3.31; options EPM_ENABLE_TESTS (default ON when top-level);
+                            install: bin/epm, share/epm/cmake/epm.cmake
+  README.md
   .clang-format .gitignore  copied from /Users/eyalamir/Code/eacp
   CLAUDE.md                 conventions pointer (eacp style, NanoTest, Miro for JSON)
   CMake/CPM.cmake           vendored 0.40.2 (same as other projects), for epm's own deps
@@ -243,6 +248,7 @@ epm/
     Build/ChildBuild, Harvest   (+ EmbeddedExport.cpp.in: epm-export.cmake compiled in)
     Emit/Response
     Resolve/Resolve         the pipeline and the mode decision
+  Apps/epm/Version.h.in     generated Version.h: epm::version from project(VERSION)
   Apps/epm/Main.cpp         Apps::runConsole + manual subcommand dispatch (resolve, --version)
   Tests/                    NanoTest: Sha256 vectors, key canonicalisation, response text,
                             ref resolution, export-file scanning/relocation, .names parsing,
@@ -257,5 +263,45 @@ eacp is consumed with `EACP_BUILD_GRAPHICS OFF`, `EACP_BUILD_WEBVIEW OFF`,
 
 Remote stores, lockfile and prefetch, CPM shim for transitive deps, URL archives, patches,
 case-insensitive name matching, compiler content hashing, Windows/Linux validation (code
-should stay portable, but only macOS is exercised), bootstrapping the binary from CMake
-(`EPM_EXECUTABLE` or PATH is required).
+should stay portable, but only macOS is exercised), published release binaries (§8, step 3).
+
+## 8. Bootstrap
+
+`epm.cmake` pins the binary it expects (`set(EPM_VERSION 0.1.0)`) and, at include time,
+finds the binary in this order, stopping at the first hit:
+
+1. `EPM_EXECUTABLE`, when set and the file exists.
+2. `<cache>/tool/<ref>/bin/epm[.exe]`, when the marker `<cache>/tool/<ref>.json` exists.
+3. The release binary for this host, checked against `EPM_RELEASE_SHA256_<os>-<arch>`.
+   A stub for now: the table is empty and the step is skipped with a verbose note.
+4. A source build: download `EPM_SOURCE_URL` (`file(DOWNLOAD … TLS_VERIFY ON)` into
+   `<cache>/tmp/`), extract it, then configure, build and `cmake --install` it with
+   `CMAKE_INSTALL_PREFIX=<cache>/tool/<ref>`, all under `file(LOCK <cache>/tool/<ref>.lock)`.
+   The build is a host Release build: it runs through `cmake -E env --unset=…` so no
+   toolchain file, generator, build type or `CMAKE_OSX_ARCHITECTURES` of the consumer
+   (variable or environment) reaches it; a consumer targeting iOS or Android still gets
+   a macOS/Linux/Windows `epm`. On success the build dir and the extracted source are
+   deleted and the marker is written last. A failed build is fatal, with the last 40
+   lines of output and the log path (`<cache>/tool/<ref>/build/epm-bootstrap.log`, kept).
+   One status line is printed (`-- epm: building epm 0.1.0 from source into … (first
+   time only)`); `EPM_VERBOSE` streams the build.
+5. `epm` on PATH, with a warning if its `--version` is not `EPM_VERSION`. Reached only
+   when the source could not be downloaded.
+
+The result goes into `EPM_EXECUTABLE` (cache `INTERNAL`). A bootstrapped path is
+remembered as such, so a later change of `EPM_SOURCE_REF` is honoured on reconfigure.
+
+Overrides: `EPM_SOURCE_REF` (tag, branch or commit; default `v${EPM_VERSION}`),
+`EPM_SOURCE_URL` (default `https://github.com/eyalamirmusic/epm/archive/${EPM_SOURCE_REF}.tar.gz`;
+a non-default URL gets `<ref>-<sha256(url)[:12]>` as its `tool/` name), and
+`EPM_BOOTSTRAP_SOURCE_DIR` (build from a local checkout, keyed `local-<sha256(path)[:12]>`;
+the entry is not rebuilt when the checkout changes, so delete it or use `EPM_EXECUTABLE`
+while working on epm). Refs are sanitised to `[A-Za-z0-9._-]` for the directory name.
+
+The cache root is the one the binary uses: the `EPM_CACHE` CMake variable (passed as
+`--cache`), else the `EPM_CACHE` environment variable, else eacp's
+`FilePath::cacheDirectory()` + `/epm` mirrored in CMake: `$HOME/Library/Caches` on macOS,
+`$XDG_CACHE_HOME` or `$HOME/.cache` on Linux, `%LOCALAPPDATA%` on Windows.
+
+`cmake --install` of epm installs exactly `bin/epm` and `share/epm/cmake/epm.cmake`;
+`epm --version` prints `project(epm VERSION …)` through the generated `Version.h`.

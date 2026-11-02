@@ -37,6 +37,10 @@ list(APPEND CMAKE_MODULE_PATH "${eacp_SOURCE_DIR}/CMake")
 add_subdirectory(Lib)
 add_subdirectory(Apps)
 
+# The whole install: the binary and the consumer module. eacp and Miro are
+# static and linked in. The bootstrap in epm.cmake installs through these rules.
+install(FILES CMake/epm.cmake DESTINATION share/epm/cmake)
+
 option(EPM_ENABLE_TESTS "Enable Tests for epm" ${PROJECT_IS_TOP_LEVEL})
 
 if (EPM_ENABLE_TESTS)

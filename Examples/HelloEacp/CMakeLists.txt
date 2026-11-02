@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.31)
 project(HelloEacp CXX)
 
-# Finds the epm binary through EPM_EXECUTABLE or PATH.
+# Uses -DEPM_EXECUTABLE when given; otherwise builds the pinned epm into the
+# cache on first use (see Docs/PoC.md §8).
 include(${CMAKE_CURRENT_LIST_DIR}/../../CMake/epm.cmake)
 
 epm_add_package(
