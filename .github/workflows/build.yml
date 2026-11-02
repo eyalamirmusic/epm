@@ -1,0 +1,172 @@
+name: Build
+
+# Reusable: one job per target, called by ci.yml (tests + HelloEacp smoke) and
+# release.yml (tests + packaging). The matrix lives only here.
+on:
+  workflow_call:
+    inputs:
+      smoke:
+        description: Build and run Examples/HelloEacp with the just-built epm
+        type: boolean
+        default: false
+      package:
+        description: Install, archive and upload epm-<version>-<platform>
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    continue-on-error: ${{ matrix.allow-failure == true }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # `platform` is the release asset suffix and must match the
+        # EPM_RELEASE_SHA256_<platform> keys in CMake/epm.cmake.
+        # `cmake-flags` apply to epm and to the HelloEacp smoke build,
+        # `epm-flags` to epm only.
+        include:
+          - platform: macos-universal
+            os: macos-15
+            epm-flags: '-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"'
+          - platform: windows-x64
+            os: windows-latest
+            msvc-arch: x64
+            cmake-flags: -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
+          - platform: windows-arm64
+            os: windows-11-arm
+            msvc-arch: arm64
+            cmake-flags: -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
+          - platform: linux-x64
+            os: ubuntu-24.04
+            cmake-flags: -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          - platform: linux-arm64
+            os: ubuntu-24.04-arm
+            cmake-flags: -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang ninja-build libcurl4-openssl-dev
+
+      - name: Set up the MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc-arch }}
+
+      # Forward slashes on Windows too, so the paths can go straight into CMake.
+      - name: Set up paths
+        run: |
+          root="$(pwd -W 2>/dev/null || pwd)"
+          suffix=""
+          if [ "$RUNNER_OS" = "Windows" ]; then suffix=".exe"; fi
+          {
+            echo "ROOT=$root"
+            echo "EXE_SUFFIX=$suffix"
+            echo "CPM_SOURCE_CACHE=$root/.cpm-cache"
+          } >> "$GITHUB_ENV"
+
+      - name: Show the toolchain
+        run: |
+          cmake --version
+          echo "ninja $(ninja --version)"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            where clang-cl && clang-cl --version
+          else
+            clang++ --version
+          fi
+
+      # eacp is fetched at GIT_TAG main, which CPM never refreshes inside an
+      # existing source cache, so eacp's current commit is part of the key and a
+      # new eacp commit starts a fresh cache rather than restoring a stale one.
+      - name: Resolve eacp main
+        id: eacp
+        run: |
+          echo "sha=$(git ls-remote https://github.com/eyalamirmusic/eacp refs/heads/main | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache CPM sources
+        uses: actions/cache@v6
+        with:
+          path: .cpm-cache
+          key: cpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMake/Find*.cmake') }}-eacp-${{ steps.eacp.outputs.sha }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          ${{ matrix.cmake-flags }} ${{ matrix.epm-flags }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Check the binary
+        run: |
+          "build/Apps/epm/epm$EXE_SUFFIX" --version
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            archs="$(lipo -archs build/Apps/epm/epm)"
+            echo "architectures: $archs"
+            [[ "$archs" == *arm64* && "$archs" == *x86_64* ]]
+          fi
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      # The full consumer path: epm.cmake with this epm, MODE auto, so eacp is
+      # fetched and built Debug + Release into a cache inside the workspace.
+      - name: HelloEacp smoke test
+        if: inputs.smoke
+        run: |
+          cmake -S Examples/HelloEacp -B build-hello -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            "-DEPM_EXECUTABLE=$ROOT/build/Apps/epm/epm$EXE_SUFFIX" \
+            "-DEPM_CACHE=$ROOT/.epm-cache" -DEPM_VERBOSE=ON \
+            ${{ matrix.cmake-flags }}
+          cmake --build build-hello
+          "./build-hello/hello$EXE_SUFFIX"
+
+      - name: Package
+        if: inputs.package
+        run: |
+          version="$(sed -n 's/^project(epm VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
+
+          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF_NAME#v}" != "$version" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match project(epm VERSION $version)"
+            exit 1
+          fi
+
+          name="epm-$version-${{ matrix.platform }}"
+          stage="stage/$name"
+          cmake --install build --prefix "$stage"
+          (cd "$stage" && find . -type f | sort)
+          [ "$("$stage/bin/epm$EXE_SUFFIX" --version)" = "$version" ]
+
+          # bin/ and share/ at the archive root: unpacked as is into
+          # <cache>/tool/<ref>/ by the bootstrap.
+          mkdir -p dist
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            (cd "$stage" && cmake -E tar cf "$ROOT/dist/$name.zip" --format=zip bin share)
+          else
+            (cd "$stage" && cmake -E tar czf "$ROOT/dist/$name.tar.gz" bin share)
+          fi
+          ls -l dist
+
+      - name: Upload the package
+        if: inputs.package
+        uses: actions/upload-artifact@v7
+        with:
+          name: epm-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error

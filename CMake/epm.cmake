@@ -58,13 +58,14 @@ if (NOT EPM_SOURCE_URL)
     set(EPM_SOURCE_URL "${EPM_DEFAULT_SOURCE_URL}")
 endif ()
 
-# SHA-256 of the release binary per host platform, for bootstrap step 3. STUB: no
-# releases are published yet, so every entry is empty and the step is skipped.
-set(EPM_RELEASE_SHA256_macos-arm64 "")
-set(EPM_RELEASE_SHA256_macos-x86_64 "")
-set(EPM_RELEASE_SHA256_linux-x86_64 "")
+# SHA-256 of the release archive per host platform, for bootstrap step 3: the
+# asset epm-${EPM_VERSION}-<platform>.tar.gz (.zip on Windows) that
+# .github/workflows/release.yml publishes. STUB: no hashes are pinned yet, so
+# every entry is empty and the step is skipped.
+set(EPM_RELEASE_SHA256_macos-universal "")
+set(EPM_RELEASE_SHA256_linux-x64 "")
 set(EPM_RELEASE_SHA256_linux-arm64 "")
-set(EPM_RELEASE_SHA256_windows-x86_64 "")
+set(EPM_RELEASE_SHA256_windows-x64 "")
 set(EPM_RELEASE_SHA256_windows-arm64 "")
 
 # The same policies CPM sets (cpm_set_policies in CPM.cmake 0.40.2): with CMP0077
@@ -156,20 +157,23 @@ function(epm_cache_root out_var)
 endfunction()
 
 # <os>-<arch> of the machine running CMake (not the target), as used in
-# EPM_RELEASE_SHA256_<platform>.
+# EPM_RELEASE_SHA256_<platform> and the release asset names: macos-universal,
+# linux-x64, linux-arm64, windows-x64, windows-arm64.
 function(epm_host_platform out_var)
-    if (CMAKE_HOST_WIN32)
+    if (CMAKE_HOST_APPLE)
+        # One universal binary serves both architectures.
+        set(${out_var} "macos-universal" PARENT_SCOPE)
+        return()
+    elseif (CMAKE_HOST_WIN32)
         set(os "windows")
-    elseif (CMAKE_HOST_APPLE)
-        set(os "macos")
     else ()
         string(TOLOWER "${CMAKE_HOST_SYSTEM_NAME}" os)
     endif ()
 
     string(TOLOWER "${CMAKE_HOST_SYSTEM_PROCESSOR}" arch)
 
-    if (arch MATCHES "^(amd64|x64)$")
-        set(arch "x86_64")
+    if (arch MATCHES "^(amd64|x86_64)$")
+        set(arch "x64")
     elseif (arch STREQUAL "aarch64")
         set(arch "arm64")
     endif ()
@@ -434,10 +438,11 @@ function(epm_bootstrap)
         return()
     endif ()
 
-    # 3. Release binary. STUB: once releases are published, download
-    #    epm-<platform>.tar.gz of release v${EPM_VERSION}, check it against
-    #    EPM_RELEASE_SHA256_<platform> and unpack it into tool_dir. Only for the
-    #    pinned ref from the default URL.
+    # 3. Release binary. STUB: once hashes are pinned, download
+    #    epm-${EPM_VERSION}-<platform>.tar.gz (.zip on Windows) of release
+    #    v${EPM_VERSION}, check it against EPM_RELEASE_SHA256_<platform> and
+    #    unpack it into tool_dir (bin/ and share/ sit at the archive root). Only
+    #    for the pinned ref from the default URL.
     epm_host_platform(platform)
 
     if (NOT EPM_BOOTSTRAP_SOURCE_DIR AND EPM_SOURCE_REF STREQUAL "v${EPM_VERSION}"

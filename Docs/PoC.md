@@ -272,7 +272,9 @@ finds the binary in this order, stopping at the first hit:
 
 1. `EPM_EXECUTABLE`, when set and the file exists.
 2. `<cache>/tool/<ref>/bin/epm[.exe]`, when the marker `<cache>/tool/<ref>.json` exists.
-3. The release binary for this host, checked against `EPM_RELEASE_SHA256_<os>-<arch>`.
+3. The release binary for this host, the asset `epm-<version>-<platform>.tar.gz` (`.zip`
+   on Windows) checked against `EPM_RELEASE_SHA256_<platform>`, where `<platform>` is
+   `macos-universal`, `linux-x64`, `linux-arm64`, `windows-x64` or `windows-arm64`.
    A stub for now: the table is empty and the step is skipped with a verbose note.
 4. A source build: download `EPM_SOURCE_URL` (`file(DOWNLOAD … TLS_VERIFY ON)` into
    `<cache>/tmp/`), extract it, then configure, build and `cmake --install` it with

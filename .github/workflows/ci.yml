@@ -1,0 +1,25 @@
+name: CI
+
+# Every branch push and pull request: unit tests and the HelloEacp smoke test
+# on all five targets, plus the packages as workflow artifacts (so a broken
+# install shows up before it reaches a release branch). Tags are built by
+# release.yml.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/build.yml
+    with:
+      smoke: true
+      package: true

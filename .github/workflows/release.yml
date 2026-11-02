@@ -1,0 +1,82 @@
+name: Release
+
+# The refs that publish binaries -- edit here and nowhere else. A push to one of
+# these branches replaces the rolling `nightly` prerelease; a v* tag gets (or
+# refreshes) a GitHub Release of its own.
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+    tags:
+      - 'v*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      package: true
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    # main and release/** both write `nightly`; never interleave two of them.
+    concurrency:
+      group: publish-${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'nightly' }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: epm-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum epm-* > SHA256SUMS
+          cat SHA256SUMS
+          ls -l
+
+      - name: Publish the tag release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
+              --title "epm ${GITHUB_REF_NAME#v}" --generate-notes
+          fi
+
+      # Move the tag first: `gh release create` ignores --target for a tag that
+      # already exists. Deleting the release drops every old asset, including
+      # ones named after an earlier version.
+      - name: Publish the nightly prerelease
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          if gh api "repos/$GH_REPO/git/ref/tags/nightly" > /dev/null 2>&1; then
+            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/nightly" \
+              -f sha="$GITHUB_SHA" -F force=true > /dev/null
+          else
+            gh api -X POST "repos/$GH_REPO/git/refs" \
+              -f ref=refs/tags/nightly -f sha="$GITHUB_SHA" > /dev/null
+          fi
+
+          gh release delete nightly --yes 2> /dev/null || true
+          gh release create nightly dist/* --verify-tag --prerelease --latest=false \
+            --title "Nightly" \
+            --notes "Rolling build of \`$GITHUB_REF_NAME\` at $GITHUB_SHA ($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID). Replaced on every push; use a v* release for anything pinned."
