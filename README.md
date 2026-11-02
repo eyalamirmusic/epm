@@ -16,9 +16,10 @@ cache layout, is described in [Docs/PoC.md](Docs/PoC.md).
 
 ## Status
 
-This is a proof of concept. It is exercised on macOS only, with
-[eacp](https://github.com/eyalamirmusic/eacp) as the test dependency. File
-formats, cache layout and the CMake interface may all change.
+This is a proof of concept. It is exercised with
+[eacp](https://github.com/eyalamirmusic/eacp) as the test dependency, on macOS,
+Windows and Linux in CI (see below). File formats, cache layout and the CMake
+interface may all change.
 
 ## Quick start
 
@@ -85,3 +86,36 @@ cmake -S . -B build && cmake --build build && cmake --install build --prefix ~/.
 This installs `bin/epm` and `share/epm/cmake/epm.cmake`, nothing else. Tests run
 with `ctest --test-dir build` (`EPM_ENABLE_TESTS` is ON by default when epm is
 the top-level project).
+
+## Continuous integration
+
+[![CI](https://github.com/eyalamirmusic/epm/actions/workflows/ci.yml/badge.svg)](https://github.com/eyalamirmusic/epm/actions/workflows/ci.yml)
+
+Every push and pull request runs `.github/workflows/ci.yml` on five targets, all
+Release builds with Ninja:
+
+| Platform          | Runner             | Compiler                            |
+|-------------------|--------------------|-------------------------------------|
+| `macos-universal` | `macos-15`         | Apple clang, `arm64;x86_64`         |
+| `windows-x64`     | `windows-latest`   | clang-cl (MSVC ABI)                 |
+| `windows-arm64`   | `windows-11-arm`   | clang-cl (MSVC ABI)                 |
+| `linux-x64`       | `ubuntu-24.04`     | clang, lld                          |
+| `linux-arm64`     | `ubuntu-24.04-arm` | clang, lld                          |
+
+Each job builds epm, runs `ctest`, then configures and runs `Examples/HelloEacp`
+with the binary it just built (`MODE auto`, so eacp is fetched and built Debug
+and Release into a cache inside the workspace), and uploads the package as a
+workflow artifact.
+
+`.github/workflows/release.yml` builds the same packages on pushes to `main` and
+`release/**` and on `v*` tags (the list is at the top of the file):
+`epm-<version>-<platform>.tar.gz` (`.zip` on Windows), holding `bin/epm` and
+`share/epm/cmake/epm.cmake`, plus a `SHA256SUMS` file. A branch push replaces
+the assets of the rolling
+[`nightly`](https://github.com/eyalamirmusic/epm/releases/tag/nightly)
+prerelease; a `v*` tag publishes them on the
+[release](https://github.com/eyalamirmusic/epm/releases) of that tag. Both
+workflows share their build matrix through `.github/workflows/build.yml`.
+
+The Linux binaries are built on Ubuntu 24.04 and need glibc 2.38 or newer and
+`libcurl.so.4`; the Windows binaries need the Visual C++ runtime.
