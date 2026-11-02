@@ -30,7 +30,9 @@ jobs:
         # `platform` is the release asset suffix and must match the
         # EPM_RELEASE_SHA256_<platform> keys in CMake/epm.cmake.
         # `cmake-flags` apply to epm and to the HelloEacp smoke build,
-        # `epm-flags` to epm only.
+        # `epm-flags` to epm only. Linux links with lld: eacp's
+        # set_default_target_setting turns on LTO for Release, and GNU ld
+        # cannot read clang's bitcode archives without the LLVMgold plugin.
         include:
           - platform: macos-universal
             os: macos-15
@@ -45,10 +47,14 @@ jobs:
             cmake-flags: -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
           - platform: linux-x64
             os: ubuntu-24.04
-            cmake-flags: -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+            cmake-flags: >-
+              -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+              -DCMAKE_LINKER_TYPE=LLD
           - platform: linux-arm64
             os: ubuntu-24.04-arm
-            cmake-flags: -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+            cmake-flags: >-
+              -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+              -DCMAKE_LINKER_TYPE=LLD
 
     defaults:
       run:
@@ -61,7 +67,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang ninja-build libcurl4-openssl-dev
+          sudo apt-get install -y clang lld ninja-build libcurl4-openssl-dev
 
       - name: Set up the MSVC environment
         if: runner.os == 'Windows'

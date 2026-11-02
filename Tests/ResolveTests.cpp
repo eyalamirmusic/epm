@@ -2,6 +2,8 @@
 #include <epm/Emit/Response.h>
 #include <epm/Resolve/Resolve.h>
 
+#include <eacp/Core/Platform/Platform.h>
+
 #include <NanoTest/NanoTest.h>
 
 using namespace nano;
@@ -126,7 +128,9 @@ auto tGeneratorMultiConfig =
 
     const auto withoutNinja = chooseGenerator(generatorEnv("Xcode", true), {});
 
-    check(withoutNinja.name == "Unix Makefiles");
+    // Windows leaves -G out for CMake's own default.
+    check(withoutNinja.name
+          == (eacp::Platform::isWindows() ? "" : "Unix Makefiles"));
     check(withoutNinja.makeProgram.empty());
 };
 
