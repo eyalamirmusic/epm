@@ -25,11 +25,15 @@
 #   EPM_EXECUTABLE              path to an epm binary to use as is (skips the
 #                               bootstrap below)
 #   EPM_SOURCE_REF              epm tag, branch or commit to bootstrap
-#                               (default: v${EPM_VERSION})
+#                               (default: EPM_RELEASE_TAG); any other value
+#                               builds that ref from source
 #   EPM_SOURCE_URL              tarball to build it from (default: GitHub's
-#                               archive of EPM_SOURCE_REF)
+#                               archive of EPM_SOURCE_REF); setting it builds
+#                               from source
 #   EPM_BOOTSTRAP_SOURCE_DIR    build the binary from this local checkout instead
 #                               (for working on epm itself)
+#   EPM_BOOTSTRAP_NO_DOWNLOAD   ON: never download the release binary, always
+#                               build the pinned version from source
 #   EPM_BUILD_MISSING_BINARIES  ON (default): `auto` builds a missing binary
 #                               entry; OFF: `auto` falls back to source instead
 #   EPM_CACHE                   cache root handed to the binary as --cache
@@ -45,10 +49,38 @@
 include_guard(GLOBAL)
 
 # The epm binary this module expects, pinned the way CPM.cmake pins itself.
+#
+# EPM_VERSION is the *pinned binary version*, not the version of the source tree
+# this file sits in (that is project(epm VERSION ...) in the top-level
+# CMakeLists.txt). The EPM_RELEASE_SHA256_<platform> values below are the hashes
+# of the release assets of exactly this version, so the two may only change
+# together: after release.yml publishes vX.Y.Z, set EPM_VERSION to X.Y.Z and
+# paste the five hashes from that release's SHA256SUMS. Between releases the
+# source version runs ahead of EPM_VERSION. Each release also carries an
+# epm.cmake asset with both already filled in.
+#
+# EPM_RELEASE_TAG is the GitHub release the binaries come from. The epm.cmake
+# attached to the rolling `nightly` prerelease sets it to `nightly` (and its
+# EPM_VERSION to the source version of that build); everywhere else it is
+# v${EPM_VERSION}.
 set(EPM_VERSION 0.1.0)
+set(EPM_RELEASE_TAG "v${EPM_VERSION}")
+
+# SHA-256 of the release archive per host platform, for bootstrap step 3: the
+# asset epm-${EPM_VERSION}-<platform>.tar.gz (.zip on Windows) of release
+# EPM_RELEASE_TAG, as published by .github/workflows/release.yml. An empty value
+# means no binary is pinned for that platform, which builds from source.
+set(EPM_RELEASE_SHA256_macos-universal "")
+set(EPM_RELEASE_SHA256_linux-x64 "")
+set(EPM_RELEASE_SHA256_linux-arm64 "")
+set(EPM_RELEASE_SHA256_windows-x64 "")
+set(EPM_RELEASE_SHA256_windows-arm64 "")
+
+set(EPM_RELEASE_PLATFORMS
+        macos-universal linux-x64 linux-arm64 windows-x64 windows-arm64)
 
 if (NOT EPM_SOURCE_REF)
-    set(EPM_SOURCE_REF "v${EPM_VERSION}")
+    set(EPM_SOURCE_REF "${EPM_RELEASE_TAG}")
 endif ()
 
 set(EPM_DEFAULT_SOURCE_URL
@@ -57,16 +89,6 @@ set(EPM_DEFAULT_SOURCE_URL
 if (NOT EPM_SOURCE_URL)
     set(EPM_SOURCE_URL "${EPM_DEFAULT_SOURCE_URL}")
 endif ()
-
-# SHA-256 of the release archive per host platform, for bootstrap step 3: the
-# asset epm-${EPM_VERSION}-<platform>.tar.gz (.zip on Windows) that
-# .github/workflows/release.yml publishes. STUB: no hashes are pinned yet, so
-# every entry is empty and the step is skipped.
-set(EPM_RELEASE_SHA256_macos-universal "")
-set(EPM_RELEASE_SHA256_linux-x64 "")
-set(EPM_RELEASE_SHA256_linux-arm64 "")
-set(EPM_RELEASE_SHA256_windows-x64 "")
-set(EPM_RELEASE_SHA256_windows-arm64 "")
 
 # The same policies CPM sets (cpm_set_policies in CPM.cmake 0.40.2): with CMP0077
 # and CMP0126 NEW a plain variable set before add_subdirectory wins over the
@@ -88,6 +110,10 @@ epm_set_policies()
 option(EPM_BUILD_MISSING_BINARIES
         "Let MODE auto build a missing binary cache entry (OFF: fall back to source)"
         ON)
+
+option(EPM_BOOTSTRAP_NO_DOWNLOAD
+        "Build the pinned epm from source instead of downloading the release binary"
+        OFF)
 
 set(EPM_DIR "${CMAKE_BINARY_DIR}/epm")
 
@@ -114,11 +140,14 @@ endfunction()
 # First hit wins:
 #   1. EPM_EXECUTABLE, when set and the file exists
 #   2. <cache>/tool/<ref>/bin/epm, when its marker <cache>/tool/<ref>.json exists
-#   3. the release binary for this host (stub, see EPM_RELEASE_SHA256_*)
+#   3. the release binary for this host, downloaded from EPM_RELEASE_TAG and
+#      checked against EPM_RELEASE_SHA256_<platform>, unpacked into
+#      <cache>/tool/<ref>; only for the default EPM_SOURCE_REF and EPM_SOURCE_URL
 #   4. a source build of EPM_SOURCE_URL (or EPM_BOOTSTRAP_SOURCE_DIR), installed
-#      into <cache>/tool/<ref>
+#      into <cache>/tool/<ref>; also whenever step 3 fails
 #   5. epm on PATH, warning when its version is not EPM_VERSION
-# The result lands in EPM_EXECUTABLE (cache INTERNAL).
+# Steps 3 and 4 run under file(LOCK <cache>/tool/<ref>.lock). The result lands in
+# EPM_EXECUTABLE (cache INTERNAL).
 
 # One line, shown with EPM_VERBOSE or --log-level=VERBOSE.
 function(epm_bootstrap_note text)
@@ -236,27 +265,118 @@ function(epm_bootstrap_use executable)
     set(EPM_BOOTSTRAPPED_EXECUTABLE "${executable}" CACHE INTERNAL "")
 endfunction()
 
-# Step 4. Builds epm on the host with its own install rules, into `tool_dir`.
-# Sets epm_build_error in the caller when the source could not be obtained (so
-# the PATH fallback can run); a failed build is fatal.
-function(epm_bootstrap_build key tool_dir marker executable description)
-    set(epm_build_error "" PARENT_SCOPE)
-    get_filename_component(tool_root "${tool_dir}" DIRECTORY)
-    file(MAKE_DIRECTORY "${tool_root}")
+# Writes the <cache>/tool/<ref>.json marker that makes a tool entry visible to
+# step 2. `origin` is "release" or "source"; `url` is where the entry came from.
+function(epm_bootstrap_write_marker marker origin url version)
+    string(TIMESTAMP built_at "%Y-%m-%dT%H:%M:%SZ" UTC)
+    set(json "{}")
+    string(JSON json SET "${json}" schema 1)
 
-    # Held until the function returns: a parallel configure waits, then finds
-    # the marker.
-    file(LOCK "${tool_root}/${key}.lock" GUARD FUNCTION TIMEOUT 3600
-            RESULT_VARIABLE lock_result)
-
-    if (NOT lock_result EQUAL 0)
-        message(FATAL_ERROR
-                "epm: cannot lock ${tool_root}/${key}.lock: ${lock_result}")
+    if (EPM_BOOTSTRAP_SOURCE_DIR)
+        epm_json_set_string(json ref "")
+    else ()
+        epm_json_set_string(json ref "${EPM_SOURCE_REF}")
     endif ()
 
-    if (EXISTS "${marker}" AND EXISTS "${executable}")
+    epm_json_set_string(json origin "${origin}")
+    epm_json_set_string(json url "${url}")
+    epm_json_set_string(json version "${version}")
+    epm_json_set_string(json builtAt "${built_at}")
+
+    # Written last, by rename: the entry is visible only once complete.
+    file(WRITE "${marker}.tmp" "${json}\n")
+    file(RENAME "${marker}.tmp" "${marker}")
+endfunction()
+
+# Step 3. Downloads the release archive for `platform`, checks its hash, unpacks
+# it into `tool_dir` (bin/ and share/ sit at the archive root, the same layout
+# the source build installs) and checks that the binary runs. Sets
+# epm_download_error in the caller: empty on success, else the reason, with
+# everything partial removed.
+function(epm_bootstrap_download tool_dir marker executable platform)
+    set(expected_hash "${EPM_RELEASE_SHA256_${platform}}")
+    string(TOLOWER "${expected_hash}" expected_hash)
+
+    if (CMAKE_HOST_WIN32)
+        set(extension "zip")
+    else ()
+        set(extension "tar.gz")
+    endif ()
+
+    set(asset "epm-${EPM_VERSION}-${platform}.${extension}")
+    set(url "https://github.com/eyalamirmusic/epm/releases/download/")
+    string(APPEND url "${EPM_RELEASE_TAG}/${asset}")
+
+    epm_cache_root(cache)
+    string(RANDOM LENGTH 12 ALPHABET "0123456789abcdef" id)
+    set(staging "${cache}/tmp/epm-release-${id}")
+    set(archive "${staging}/${asset}")
+    file(MAKE_DIRECTORY "${staging}")
+
+    # The hash is compared by hand: with EXPECTED_HASH a mismatch is a CMake
+    # error rather than a STATUS, which would end the configure instead of
+    # falling back to the source build.
+    epm_bootstrap_note("downloading ${url}")
+    file(DOWNLOAD "${url}" "${archive}" STATUS status TLS_VERIFY ON)
+    list(GET status 0 status_code)
+    list(GET status 1 status_text)
+
+    if (NOT status_code EQUAL 0)
+        file(REMOVE_RECURSE "${staging}")
+        set(epm_download_error "downloading ${url}: ${status_text}" PARENT_SCOPE)
         return()
     endif ()
+
+    file(SHA256 "${archive}" actual_hash)
+
+    if (NOT actual_hash STREQUAL expected_hash)
+        file(REMOVE_RECURSE "${staging}")
+        set(epm_download_error
+                "SHA-256 of ${asset} is ${actual_hash}, expected ${expected_hash}"
+                PARENT_SCOPE)
+        return()
+    endif ()
+
+    file(REMOVE_RECURSE "${tool_dir}")
+    file(ARCHIVE_EXTRACT INPUT "${archive}" DESTINATION "${tool_dir}")
+    file(REMOVE_RECURSE "${staging}")
+
+    # Catches a binary this host cannot run: too old a glibc, no libcurl, no
+    # Visual C++ runtime.
+    execute_process(COMMAND "${executable}" --version
+            RESULT_VARIABLE version_result
+            OUTPUT_VARIABLE version
+            ERROR_VARIABLE version_error
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_STRIP_TRAILING_WHITESPACE
+            TIMEOUT 60)
+
+    if (NOT version_result STREQUAL "0" OR NOT version STREQUAL EPM_VERSION)
+        file(REMOVE_RECURSE "${tool_dir}")
+        set(reason "${executable} --version: exit ${version_result}")
+
+        if (NOT version STREQUAL "")
+            string(APPEND reason ", printed '${version}'")
+        endif ()
+
+        if (NOT version_error STREQUAL "")
+            string(APPEND reason ", ${version_error}")
+        endif ()
+
+        set(epm_download_error "${reason}" PARENT_SCOPE)
+        return()
+    endif ()
+
+    epm_bootstrap_write_marker("${marker}" release "${url}" "${version}")
+    set(epm_download_error "" PARENT_SCOPE)
+endfunction()
+
+# Step 4. Builds epm on the host with its own install rules, into `tool_dir`.
+# The caller holds the tool entry's lock. Sets epm_build_error in the caller
+# when the source could not be obtained (so the PATH fallback can run); a failed
+# build is fatal.
+function(epm_bootstrap_build tool_dir marker executable description)
+    set(epm_build_error "" PARENT_SCOPE)
 
     message(STATUS
             "epm: building ${description} into ${tool_dir} "
@@ -363,23 +483,7 @@ function(epm_bootstrap_build key tool_dir marker executable description)
         file(REMOVE_RECURSE "${staging}")
     endif ()
 
-    string(TIMESTAMP built_at "%Y-%m-%dT%H:%M:%SZ" UTC)
-    set(json "{}")
-    string(JSON json SET "${json}" schema 1)
-
-    if (EPM_BOOTSTRAP_SOURCE_DIR)
-        epm_json_set_string(json ref "")
-    else ()
-        epm_json_set_string(json ref "${EPM_SOURCE_REF}")
-    endif ()
-
-    epm_json_set_string(json url "${origin}")
-    epm_json_set_string(json version "${version}")
-    epm_json_set_string(json builtAt "${built_at}")
-
-    # Written last, by rename: the entry is visible only once complete.
-    file(WRITE "${marker}.tmp" "${json}\n")
-    file(RENAME "${marker}.tmp" "${marker}")
+    epm_bootstrap_write_marker("${marker}" source "${origin}" "${version}")
 endfunction()
 
 function(epm_bootstrap)
@@ -403,8 +507,25 @@ function(epm_bootstrap)
         set(suffix "")
     endif ()
 
+    # Step 3 is only for the pinned release: any other ref, URL or local
+    # checkout means "build from that source".
+    epm_host_platform(platform)
+    set(release_hash "")
+
+    if (NOT EPM_BOOTSTRAP_SOURCE_DIR AND EPM_SOURCE_REF STREQUAL EPM_RELEASE_TAG
+            AND EPM_SOURCE_URL STREQUAL EPM_DEFAULT_SOURCE_URL)
+        set(use_release ON)
+
+        if (platform IN_LIST EPM_RELEASE_PLATFORMS)
+            set(release_hash "${EPM_RELEASE_SHA256_${platform}}")
+        endif ()
+    else ()
+        set(use_release OFF)
+    endif ()
+
     # The tool/ entry name. A local checkout is keyed by its path, which can never
-    # be mistaken for a ref; a non-default URL gets its own entry too.
+    # be mistaken for a ref; a non-default URL gets its own entry too, and so
+    # does each build behind a moving release tag (nightly).
     if (EPM_BOOTSTRAP_SOURCE_DIR)
         get_filename_component(source_dir "${EPM_BOOTSTRAP_SOURCE_DIR}" ABSOLUTE)
         string(SHA256 path_hash "${source_dir}")
@@ -418,6 +539,13 @@ function(epm_bootstrap)
             string(SHA256 url_hash "${EPM_SOURCE_URL}")
             string(SUBSTRING "${url_hash}" 0 12 url_hash)
             string(APPEND key "-${url_hash}")
+        endif ()
+
+        if (use_release AND release_hash
+                AND NOT EPM_RELEASE_TAG STREQUAL "v${EPM_VERSION}")
+            string(SUBSTRING "${release_hash}" 0 12 release_hash_prefix)
+            string(TOLOWER "${release_hash_prefix}" release_hash_prefix)
+            string(APPEND key "-${release_hash_prefix}")
         endif ()
 
         if (EPM_SOURCE_REF STREQUAL "v${EPM_VERSION}")
@@ -438,24 +566,46 @@ function(epm_bootstrap)
         return()
     endif ()
 
-    # 3. Release binary. STUB: once hashes are pinned, download
-    #    epm-${EPM_VERSION}-<platform>.tar.gz (.zip on Windows) of release
-    #    v${EPM_VERSION}, check it against EPM_RELEASE_SHA256_<platform> and
-    #    unpack it into tool_dir (bin/ and share/ sit at the archive root). Only
-    #    for the pinned ref from the default URL.
-    epm_host_platform(platform)
+    # Held until epm_bootstrap returns: a parallel configure waits, then finds
+    # the marker.
+    file(MAKE_DIRECTORY "${cache}/tool")
+    file(LOCK "${cache}/tool/${key}.lock" GUARD FUNCTION TIMEOUT 3600
+            RESULT_VARIABLE lock_result)
 
-    if (NOT EPM_BOOTSTRAP_SOURCE_DIR AND EPM_SOURCE_REF STREQUAL "v${EPM_VERSION}"
-            AND EPM_SOURCE_URL STREQUAL EPM_DEFAULT_SOURCE_URL)
-        if (NOT EPM_RELEASE_SHA256_${platform})
-            epm_bootstrap_note(
-                    "no release binary pinned for ${platform}; building from source")
+    if (NOT lock_result EQUAL 0)
+        message(FATAL_ERROR
+                "epm: cannot lock ${cache}/tool/${key}.lock: ${lock_result}")
+    endif ()
+
+    if (EXISTS "${marker}" AND EXISTS "${executable}")
+        epm_bootstrap_note("using ${executable}")
+        epm_bootstrap_use("${executable}")
+        return()
+    endif ()
+
+    # 3. Release binary.
+    if (use_release AND EPM_BOOTSTRAP_NO_DOWNLOAD)
+        epm_bootstrap_note("EPM_BOOTSTRAP_NO_DOWNLOAD is ON; building from source")
+    elseif (use_release AND NOT release_hash)
+        epm_bootstrap_note(
+                "no release binary pinned for ${platform}; building from source")
+    elseif (use_release)
+        epm_bootstrap_download("${tool_dir}" "${marker}" "${executable}"
+                "${platform}")
+
+        if (NOT epm_download_error AND EXISTS "${marker}")
+            message(STATUS
+                    "epm: downloaded epm ${EPM_VERSION} (${platform}) into ${tool_dir}")
+            epm_bootstrap_use("${executable}")
+            return()
         endif ()
+
+        message(STATUS "epm: release download failed (${epm_download_error}), "
+                "building from source")
     endif ()
 
     # 4. Source build.
-    epm_bootstrap_build("${key}" "${tool_dir}" "${marker}" "${executable}"
-            "${description}")
+    epm_bootstrap_build("${tool_dir}" "${marker}" "${executable}" "${description}")
 
     if (NOT epm_build_error AND EXISTS "${marker}" AND EXISTS "${executable}")
         epm_bootstrap_use("${executable}")

@@ -263,37 +263,82 @@ eacp is consumed with `EACP_BUILD_GRAPHICS OFF`, `EACP_BUILD_WEBVIEW OFF`,
 
 Remote stores, lockfile and prefetch, CPM shim for transitive deps, URL archives, patches,
 case-insensitive name matching, compiler content hashing, Windows/Linux validation (code
-should stay portable, but only macOS is exercised), published release binaries (§8, step 3).
+should stay portable, but only macOS is exercised).
 
 ## 8. Bootstrap
 
-`epm.cmake` pins the binary it expects (`set(EPM_VERSION 0.1.0)`) and, at include time,
-finds the binary in this order, stopping at the first hit:
+`epm.cmake` pins the binary it expects (`set(EPM_VERSION 0.1.1)`) together with the
+SHA-256 of that version's release asset for each platform
+(`EPM_RELEASE_SHA256_<platform>`).
+
+Two versions are in play. `project(epm VERSION …)` in the top-level `CMakeLists.txt` is
+the *source* version: what `epm --version` prints and what release.yml names the assets
+after. `EPM_VERSION` in `epm.cmake` is the *pinned binary* version consumers get, and the
+five hashes belong to exactly that release, so `EPM_VERSION` can only move once the
+release exists. The two coincide right after a release and the source version runs ahead
+in between. Releasing is: bump `project(VERSION)`, push to main, tag `vX.Y.Z`, let
+release.yml publish, then set `EPM_VERSION X.Y.Z` and paste the hashes from the release's
+`SHA256SUMS`.
+
+`EPM_RELEASE_TAG` (default `v${EPM_VERSION}`) names the GitHub release the binaries come
+from, and `EPM_SOURCE_REF` defaults to it.
+
+Every release also carries `epm.cmake` as an asset, made by release.yml from the tagged
+`CMake/epm.cmake` with `EPM_VERSION` set to the released version and the hashes filled
+in from `SHA256SUMS` (`.github/scripts/bake-epm-cmake.cmake`). The copy on the rolling
+`nightly` prerelease sets `EPM_VERSION` to the source version of that build and
+`EPM_RELEASE_TAG` to `nightly`, so it downloads the nightly assets and falls back to the
+`nightly` source; its `tool/` entry is `nightly-<sha256[:12]>`, so each nightly gets a
+fresh one.
+
+At include time `epm.cmake` finds the binary in this order, stopping at the first hit:
 
 1. `EPM_EXECUTABLE`, when set and the file exists.
 2. `<cache>/tool/<ref>/bin/epm[.exe]`, when the marker `<cache>/tool/<ref>.json` exists.
-3. The release binary for this host, the asset `epm-<version>-<platform>.tar.gz` (`.zip`
-   on Windows) checked against `EPM_RELEASE_SHA256_<platform>`, where `<platform>` is
-   `macos-universal`, `linux-x64`, `linux-arm64`, `windows-x64` or `windows-arm64`.
-   A stub for now: the table is empty and the step is skipped with a verbose note.
+3. The release binary for this host. Only when `EPM_SOURCE_REF` and `EPM_SOURCE_URL` are
+   the defaults (any override means "build from that source"), `EPM_BOOTSTRAP_SOURCE_DIR`
+   is unset and `EPM_BOOTSTRAP_NO_DOWNLOAD` is OFF. `<platform>` comes from
+   `epm_host_platform`: `macos-universal`, `linux-x64`, `linux-arm64`, `windows-x64` or
+   `windows-arm64`; any other platform, or an empty hash for it, skips the step with a
+   verbose note. The asset
+   `https://github.com/eyalamirmusic/epm/releases/download/<EPM_RELEASE_TAG>/epm-<EPM_VERSION>-<platform>.tar.gz`
+   (`.zip` on Windows) is downloaded with `TLS_VERIFY ON` into
+   `<cache>/tmp/epm-release-<random>/`, its SHA-256 compared with
+   `EPM_RELEASE_SHA256_<platform>` (by `file(SHA256)`, not `EXPECTED_HASH`, whose
+   mismatch is a CMake error rather than a status), and it is extracted into
+   `<cache>/tool/<ref>/`. The archive holds `bin/` and `share/` at its root, the same
+   layout the source build installs. `bin/epm --version` must then exit 0 and print
+   `EPM_VERSION`, which catches a binary the host cannot run (too old a glibc, no
+   libcurl, no Visual C++ runtime). The marker is written last, with `"origin":
+   "release"`. One status line: `-- epm: downloaded epm 0.1.1 (<platform>) into
+   <cache>/tool/v0.1.1`. Any failure (network, missing asset, hash mismatch, binary that
+   does not run) removes the partial files, prints `-- epm: release download failed
+   (<reason>), building from source` and goes on to step 4.
 4. A source build: download `EPM_SOURCE_URL` (`file(DOWNLOAD … TLS_VERIFY ON)` into
    `<cache>/tmp/`), extract it, then configure, build and `cmake --install` it with
-   `CMAKE_INSTALL_PREFIX=<cache>/tool/<ref>`, all under `file(LOCK <cache>/tool/<ref>.lock)`.
+   `CMAKE_INSTALL_PREFIX=<cache>/tool/<ref>`. Steps 3 and 4 both run under
+   `file(LOCK <cache>/tool/<ref>.lock)`; a configure that waited on the lock re-checks
+   the marker first.
    The build is a host Release build: it runs through `cmake -E env --unset=…` so no
    toolchain file, generator, build type or `CMAKE_OSX_ARCHITECTURES` of the consumer
    (variable or environment) reaches it; a consumer targeting iOS or Android still gets
    a macOS/Linux/Windows `epm`. On success the build dir and the extracted source are
    deleted and the marker is written last. A failed build is fatal, with the last 40
    lines of output and the log path (`<cache>/tool/<ref>/build/epm-bootstrap.log`, kept).
-   One status line is printed (`-- epm: building epm 0.1.0 from source into … (first
-   time only)`); `EPM_VERBOSE` streams the build.
+   One status line is printed (`-- epm: building epm 0.1.1 from source into … (first
+   time only)`); `EPM_VERBOSE` streams the build. The marker carries `"origin":
+   "source"`.
 5. `epm` on PATH, with a warning if its `--version` is not `EPM_VERSION`. Reached only
    when the source could not be downloaded.
+
+The marker `<cache>/tool/<ref>.json` holds `schema`, `ref`, `origin` (`release` or
+`source`), `url` (the asset, tarball or checkout it came from), `version` and `builtAt`.
 
 The result goes into `EPM_EXECUTABLE` (cache `INTERNAL`). A bootstrapped path is
 remembered as such, so a later change of `EPM_SOURCE_REF` is honoured on reconfigure.
 
-Overrides: `EPM_SOURCE_REF` (tag, branch or commit; default `v${EPM_VERSION}`),
+Overrides: `EPM_BOOTSTRAP_NO_DOWNLOAD` (ON: skip step 3, always build the pinned version
+from source), `EPM_SOURCE_REF` (tag, branch or commit; default `EPM_RELEASE_TAG`),
 `EPM_SOURCE_URL` (default `https://github.com/eyalamirmusic/epm/archive/${EPM_SOURCE_REF}.tar.gz`;
 a non-default URL gets `<ref>-<sha256(url)[:12]>` as its `tool/` name), and
 `EPM_BOOTSTRAP_SOURCE_DIR` (build from a local checkout, keyed `local-<sha256(path)[:12]>`;

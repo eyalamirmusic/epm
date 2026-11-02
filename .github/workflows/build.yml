@@ -143,6 +143,23 @@ jobs:
           cmake --build build-hello
           "./build-hello/hello$EXE_SUFFIX"
 
+      # The consumer path with no epm at all: epm.cmake must download the pinned
+      # release binary for this platform (bootstrap step 3) into a fresh cache,
+      # not build it. Skipped until CMake/epm.cmake pins release hashes.
+      - name: HelloEacp release download smoke test
+        if: inputs.smoke
+        run: |
+          if ! grep -Eq '^set\(EPM_RELEASE_SHA256_[a-z0-9-]+ "[0-9a-fA-F]{64}"\)' CMake/epm.cmake; then
+            echo "::notice::CMake/epm.cmake pins no release hashes; skipping the download smoke test"
+            exit 0
+          fi
+          cmake -S Examples/HelloEacp -B build-hello-download -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            "-DEPM_CACHE=$ROOT/.epm-cache-download" \
+            ${{ matrix.cmake-flags }} 2>&1 | tee configure-download.log
+          grep -q 'epm: downloaded epm' configure-download.log
+          cmake --build build-hello-download
+          "./build-hello-download/hello$EXE_SUFFIX"
+
       - name: Package
         if: inputs.package
         run: |

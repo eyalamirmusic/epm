@@ -50,9 +50,9 @@ cmake --build build-hello
 ./build-hello/hello
 ```
 
-The first configure builds epm itself (see below) and then eacp, in Debug and
-Release, into the cache. Later configures, in any build directory, reuse both
-and take about a second.
+The first configure fetches epm itself (see below) and then builds eacp, in
+Debug and Release, into the cache. Later configures, in any build directory,
+reuse both and take about a second.
 
 ## Getting the epm binary
 
@@ -60,19 +60,30 @@ and take about a second.
 in this order:
 
 1. `-DEPM_EXECUTABLE=/path/to/epm`, if given.
-2. A binary built earlier, under `<cache>/tool/<ref>/`.
-3. A published release binary (not available yet; skipped).
-4. Download the pinned source tag from GitHub and build it on the host, once per
-   machine, into `<cache>/tool/<ref>/`. This prints one line and takes a
-   minute or so. The build ignores the consumer's toolchain, so it also works
-   when the consumer targets iOS or Android.
-5. `epm` on `PATH`, if the source could not be downloaded.
+2. A binary fetched earlier, under `<cache>/tool/<ref>/`.
+3. The pinned release binary, downloaded from
+   [GitHub Releases](https://github.com/eyalamirmusic/epm/releases) on macOS,
+   Linux (x64, arm64) and Windows (x64, arm64), checked against the SHA-256
+   pinned in `epm.cmake` and unpacked into `<cache>/tool/<ref>/`. This takes a
+   few seconds and prints one line (`-- epm: downloaded epm 0.1.1 (...)`).
+4. Otherwise, or if the download, the hash check or a test run of the binary
+   fails: download the pinned source tag and build it on the host, once per
+   machine, into the same place. This prints one line and takes a minute or so.
+   The build ignores the consumer's toolchain, so it also works when the
+   consumer targets iOS or Android.
+5. `epm` on `PATH`, if the source could not be downloaded either.
 
 The cache is `~/Library/Caches/epm` on macOS, `$XDG_CACHE_HOME/epm` or
 `~/.cache/epm` on Linux, `%LOCALAPPDATA%\epm` on Windows, or wherever `EPM_CACHE`
-(CMake or environment variable) points. `EPM_SOURCE_REF` builds another tag,
-branch or commit, `EPM_BOOTSTRAP_SOURCE_DIR` builds from a local checkout, and
-`EPM_VERBOSE=ON` shows the full output. Details are in Docs/PoC.md §8.
+(CMake or environment variable) points. `-DEPM_BOOTSTRAP_NO_DOWNLOAD=ON` always
+builds the pinned version from source, `EPM_SOURCE_REF` (or `EPM_SOURCE_URL`)
+builds another tag, branch or commit from source, `EPM_BOOTSTRAP_SOURCE_DIR`
+builds from a local checkout, and `EPM_VERBOSE=ON` shows the full output.
+Details are in Docs/PoC.md §8.
+
+Every release also carries an `epm.cmake` asset with its version and hashes
+already pinned, so a project can vendor that single file. The copy on the
+`nightly` prerelease pins the nightly binaries.
 
 ## Building and installing epm
 
@@ -104,13 +115,15 @@ Release builds with Ninja:
 
 Each job builds epm, runs `ctest`, then configures and runs `Examples/HelloEacp`
 with the binary it just built (`MODE auto`, so eacp is fetched and built Debug
-and Release into a cache inside the workspace), and uploads the package as a
-workflow artifact.
+and Release into a cache inside the workspace), configures it once more with no
+epm at all and a fresh cache to check that the pinned release binary is
+downloaded, and uploads the package as a workflow artifact.
 
 `.github/workflows/release.yml` builds the same packages on pushes to `main` and
 `release/**` and on `v*` tags (the list is at the top of the file):
 `epm-<version>-<platform>.tar.gz` (`.zip` on Windows), holding `bin/epm` and
-`share/epm/cmake/epm.cmake`, plus a `SHA256SUMS` file. A branch push replaces
+`share/epm/cmake/epm.cmake`, a `SHA256SUMS` file, and an `epm.cmake` with
+those hashes pinned (see above). A branch push replaces
 the assets of the rolling
 [`nightly`](https://github.com/eyalamirmusic/epm/releases/tag/nightly)
 prerelease; a `v*` tag publishes them on the

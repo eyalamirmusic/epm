@@ -37,11 +37,18 @@ ctest --test-dir build --output-on-failure
 ```
 
 `cmake --install build --prefix <dir>` installs only `bin/epm` and
-`share/epm/cmake/epm.cmake`. Consumers need neither: `epm.cmake` bootstraps the
-binary into `<cache>/tool/<ref>/` through those same install rules
-(`Docs/PoC.md` §8). The version lives only in `project(epm VERSION ...)`, which
-must match `EPM_VERSION` in `CMake/epm.cmake`; `Apps/epm/Version.h.in` carries it
-into `epm --version`.
+`share/epm/cmake/epm.cmake`. Consumers need neither: `epm.cmake` downloads the
+pinned release binary into `<cache>/tool/<ref>/`, or builds it there through
+those same install rules (`Docs/PoC.md` §8).
+
+Two versions: `project(epm VERSION ...)` is the source version
+(`Apps/epm/Version.h.in` carries it into `epm --version`, release.yml names the
+assets after it and checks it against a `v*` tag). `EPM_VERSION` in
+`CMake/epm.cmake` is the binary version consumers get, with the five
+`EPM_RELEASE_SHA256_<platform>` hashes of exactly that release. To release:
+bump `project(VERSION)`, push to main, tag `vX.Y.Z`, wait for release.yml, then
+set `EPM_VERSION` and paste the hashes from the release's `SHA256SUMS` (or
+copy them from its `epm.cmake` asset).
 
 `EPM_ENABLE_TESTS` defaults ON when epm is the top-level project.
 `EPM_VERBOSE_CONFIGURE=ON` brings back the configure detail hidden by default.

@@ -39,6 +39,8 @@ jobs:
       GH_REPO: ${{ github.repository }}
 
     steps:
+      - uses: actions/checkout@v7
+
       - uses: actions/download-artifact@v8
         with:
           pattern: epm-*
@@ -51,6 +53,22 @@ jobs:
           sha256sum epm-* > SHA256SUMS
           cat SHA256SUMS
           ls -l
+
+      # The consumer module with this release pinned: EPM_VERSION is the version
+      # just built and the five EPM_RELEASE_SHA256_* come from SHA256SUMS. The
+      # nightly copy also sets EPM_RELEASE_TAG to `nightly`, so it downloads
+      # from (and falls back to the source of) the nightly prerelease.
+      - name: Hash-pinned epm.cmake
+        run: |
+          version="$(sed -n 's/^project(epm VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="nightly"
+          fi
+          cmake -DINPUT=CMake/epm.cmake -DOUTPUT=dist/epm.cmake -DSUMS=dist/SHA256SUMS \
+            "-DVERSION=$version" "-DTAG=$tag" -P .github/scripts/bake-epm-cmake.cmake
+          grep -E '^set\((EPM_VERSION|EPM_RELEASE_TAG|EPM_RELEASE_SHA256_)' dist/epm.cmake
 
       - name: Publish the tag release
         if: startsWith(github.ref, 'refs/tags/v')
