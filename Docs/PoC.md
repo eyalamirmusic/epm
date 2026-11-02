@@ -43,6 +43,7 @@ All under `${CMAKE_BINARY_DIR}/epm/`.
 ```json
 { "schema": 1,
   "cmake": "/path/to/cmake", "cmakeVersion": "3.31.6", "generator": "Ninja",
+  "makeProgram": "/opt/homebrew/bin/ninja",
   "isMultiConfig": false,
   "buildType": "Debug", "configurationTypes": [],
   "cCompiler": "/usr/bin/cc", "cxxCompiler": "/usr/bin/c++",
@@ -56,6 +57,8 @@ All under `${CMAKE_BINARY_DIR}/epm/`.
 Empty string / empty array when a variable is unset. Written at the first `epm_add_package`
 call (not at include time), once per configure. `cCompiler` is empty when the consumer does
 not enable C; the binary must not pass an empty `-DCMAKE_C_COMPILER` to child builds.
+`makeProgram` (`CMAKE_MAKE_PROGRAM`) is passed to a child build that reuses the consumer's
+generator, so a build tool that is not on PATH (CLion's bundled ninja) is still found.
 
 ### `requests/<name>.json` (one per `epm_add_package` call)
 
@@ -71,8 +74,10 @@ not enable C; the binary must not pass an empty `-DCMAKE_C_COMPILER` to child bu
 
 Invocation: `epm resolve --request <json> --env <json> --response <cmake> [--cache <dir>]
 [--verbose]`. `--cache` is passed only when the CMake variable `EPM_CACHE` is set;
-`EPM_VERBOSE` adds `--verbose` and streams the binary's output. Non-zero exit with a one-line
-message on stderr means configure fails. `EPM_BUILD_MISSING_BINARIES` is a global `option()`
+`EPM_VERBOSE` adds `--verbose` and streams the binary's output (step lines plus the child
+builds' output, live). Non-zero exit with a one-line message on stderr means configure
+fails; when a child build failed, the last 40 lines of its output come first and the full
+log stays in the kept build dir (`epm-configure.log` / `epm-build.log`). `EPM_BUILD_MISSING_BINARIES` is a global `option()`
 (default ON) whose value lands in `buildMissingBinaries`. `GIT_TAG` is required; `NAME`
 defaults to the repository name as in CPM.
 
@@ -101,28 +106,42 @@ $EPM_CACHE  (default: <platform cache dir>/epm, e.g. ~/Library/Caches/epm or ~/.
       export-Debug.cmake export-Release.cmake   (CMake export() output, namespaced)
       epm-targets.cmake                          (facade targets, see §5)
       manifest.json                              (everything that went into the key)
-  bin/<name>/<key12>.json           completeness marker, written last
+      gen/<Config>/…  gen/common/…               (relocated build-tree files, see §5)
+  bin/<name>/<key12>.json           completeness marker, written last: {key, commit, builtAt}
   build/<name>/<key12>/<Config>/    child build trees; deleted after a successful harvest
   cpm/                              CPM_SOURCE_CACHE for child builds (nested CPM deps)
   tmp/                              staging; final locations are reached by rename
-  locks/                            cross-process locks (eacp IPC::Lock), one per name
 ```
+
+Locks: one eacp `IPC::Lock` per package name, held while fetching a snapshot and while
+building an entry (waits up to an hour for another process). `IPC::Lock` keeps its lock
+files in its own per-user directory (`<appData>/eacp/Locks`) and takes no path, so the lock
+is named `epm-<sha256(cache root)[:12]>-<name>` to keep separate caches independent; there
+is no `locks/` directory. The cache root is resolved (`weakly_canonical`) before use so
+every path epm writes and matches has one spelling.
 
 `sourceId = sha256("git\n" + url + "\n" + commit)`, first 12 hex chars as directory name.
 `key = sha256(canonical JSON manifest)`, first 12 hex chars. Manifest fields (PoC):
 `schema, name, sourceId, cxxCompiler, cxxCompilerId, cxxCompilerVersion, systemName,
 systemProcessor, osxArchitectures, osxDeploymentTarget, cxxStandard, options (sorted),
-configs ["Debug","Release"]`. Full toolchain probing (compiler content hash, macros) comes
-later.
+configs ["Debug","Release"]`. The canonical form is Miro's compact output of the
+`BuildManifest` struct (`Miro::toJSONString(manifest)`): Miro objects are `std::map`s, so
+every key, options included, comes out sorted, with no whitespace. Full toolchain probing
+(compiler content hash, macros) comes later. Note the compiler *path* is in the key, so an
+Xcode consumer (Xcode's `clang++`) and a Ninja consumer (`/usr/bin/c++`) get separate
+entries.
 
 ## 4. Source fetch
 
 1. Resolve `gitRef` to a commit: 40 hex chars → as is; otherwise `git ls-remote <url>` and
-   pick, in order, `refs/tags/<ref>^{}`, `refs/tags/<ref>`, `refs/heads/<ref>`.
+   pick, in order, `refs/tags/<ref>^{}`, `refs/tags/<ref>`, `refs/heads/<ref>`, then an
+   exact ref name (`HEAD`, `refs/...`).
 2. Under the per-name lock, if the marker exists → done. Else into `tmp/<random>/`:
    `git init`, `git remote add origin <url>`, `git fetch --depth 1 origin <commit>`,
-   `git checkout --detach FETCH_HEAD`, `git submodule update --init --depth 1` (if any),
-   delete `.git`, rename into place, write the marker.
+   `git checkout --detach FETCH_HEAD`, `git submodule update --init --recursive --depth 1`
+   (if any), delete `.git` (and submodules' `.git` files), rename into place, write the
+   marker. A server that refuses the shallow fetch by commit gets `git fetch origin <ref>`
+   (every branch and tag for a bare hash) and `git checkout --detach <commit>`.
 3. Shell out to the `git` CLI through `eacp::Processes` with a non-interactive environment
    (`GIT_TERMINAL_PROMPT=0`). Lift the wrapper from
    `/Users/eyalamir/Code/AgentWorkspace/Lib/WorkspaceCore/Git.{h,cpp}`.
@@ -145,8 +164,10 @@ cmake -S <src> -B <builddir> -G <generator>
 cmake --build <builddir> --parallel
 ```
 
-- Generator: the consumer's generator if it is single-config; otherwise `Ninja` if found on
-  PATH, else `Unix Makefiles` (or the platform default on Windows).
+- Generator: the consumer's generator (and `CMAKE_MAKE_PROGRAM`) if it is single-config;
+  otherwise `Ninja` if found on PATH (passed as `CMAKE_MAKE_PROGRAM`), else
+  `Unix Makefiles` (or the platform default on Windows). `-D` flags whose env value is empty
+  are left out; `-DCMAKE_TOOLCHAIN_FILE` is passed when the consumer has one.
 - `epm-export.cmake` (source of truth: `CMake/epm-export.cmake` in this repo, embedded into
   the binary at build time and written into `<builddir>` before configure) does:
   `cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR} CALL epm_export_all_targets)`.
@@ -170,6 +191,14 @@ cmake --build <builddir> --parallel
   literal `<builddir>` prefix with `<prefix>/gen/<Config>` throughout the export file. After
   that no path references the build tree and the build dir is deleted. If any reference
   survives the rewrite (unexpected), warn and keep the build dir.
+- **Shared generated files.** After both configs are harvested, every relocated *file*
+  that is byte-identical in `gen/Debug` and `gen/Release` moves to `gen/common/<relative>`
+  and both export files point there (whole-path replacement, so a directory and a file
+  inside it are handled independently). Required by Xcode: with one path per config, the
+  registration `.cpp` files in `INTERFACE_SOURCES` make the consumer's target fail with
+  "source files which vary by configuration". For eacp this shares the two
+  `*_Register.cpp` files; the `.o` files and the generated include dirs (whose `.d` files
+  embed the build path) stay per config.
 - If any export file mentions `Threads::Threads`, `epm-targets.cmake` adds
   `find_package(Threads REQUIRED)` before the includes.
 - Generate `epm-targets.cmake`:
@@ -208,12 +237,16 @@ epm/
     Util/Sha256.{h,cpp}     lifted from /Users/eyalamir/Code/PackagesCPP/Lib/pkgcpp/Sha256.*
     Util/Git.{h,cpp}        lifted from AgentWorkspace
     Cache/CacheRoot, SourceCache, BinaryCache
+    Util/Command, Log, Text, Timestamp   child processes, findExecutable, --verbose, text
+    Cache/CacheRoot, SourceCache, BinaryCache, PackageLock
     Spec/Request, Env       Miro-reflected structs for the JSON files
-    Build/ChildBuild, Harvest
+    Build/ChildBuild, Harvest   (+ EmbeddedExport.cpp.in: epm-export.cmake compiled in)
     Emit/Response
+    Resolve/Resolve         the pipeline and the mode decision
   Apps/epm/Main.cpp         Apps::runConsole + manual subcommand dispatch (resolve, --version)
   Tests/                    NanoTest: Sha256 vectors, key canonicalisation, response text,
-                            export-file name scraping, ref resolution parsing
+                            ref resolution, export-file scanning/relocation, .names parsing,
+                            generator choice, child configure arguments, mode decision
   Examples/HelloEacp/       the consumer project from §1
 ```
 

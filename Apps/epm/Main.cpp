@@ -1,8 +1,16 @@
 #include <epm/Cache/CacheRoot.h>
+#include <epm/Emit/Response.h>
+#include <epm/Resolve/Resolve.h>
+#include <epm/Spec/JsonFile.h>
+#include <epm/Util/Log.h>
 
 #include <eacp/Core/App/App.h>
 #include <eacp/Core/App/Args.h>
 #include <eacp/Core/Utils/Console.h>
+#include <eacp/Core/Utils/Files.h>
+#include <eacp/Core/Utils/StdPath.h>
+
+#include <filesystem>
 
 using namespace eacp;
 
@@ -26,6 +34,24 @@ Vector<std::string> argumentsAfter(int count)
     return rest;
 }
 
+int fail(const std::string& message)
+{
+    Console::printError("epm: " + message);
+    return 1;
+}
+
+// One spelling for every path epm writes into the cache and matches in export
+// files, whatever symlinks (/tmp on macOS) the cache root was given through.
+epm::CacheRoot canonical(const epm::CacheRoot& cache)
+{
+    Files::createDirectories(cache.path());
+    auto failure = std::error_code {};
+    const auto resolved =
+        std::filesystem::weakly_canonical(toStdPath(cache.path()), failure);
+
+    return failure ? cache : epm::CacheRoot {FilePath {resolved}};
+}
+
 int resolve()
 {
     auto request = FilePath {};
@@ -45,8 +71,42 @@ int resolve()
     if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
         return *code;
 
-    Console::printError("epm resolve: not implemented");
-    return 1;
+    epm::Log::setVerbose(verbose);
+
+    try
+    {
+        const auto envSpec = epm::loadJsonFile<epm::Env>(env);
+
+        if (!envSpec)
+            return fail("cannot read the env file " + env.str());
+
+        const auto requestSpec = epm::loadJsonFile<epm::Request>(request);
+
+        if (!requestSpec)
+            return fail("cannot read the request file " + request.str());
+
+        const auto cacheRoot = cache.empty() ? epm::CacheRoot::fromEnvironment()
+                                             : epm::CacheRoot {cache};
+        const auto result =
+            epm::resolvePackage(*requestSpec, *envSpec, canonical(cacheRoot));
+
+        if (!result.ok)
+        {
+            if (!result.details.empty())
+                Console::printError(result.details);
+
+            return fail(result.error);
+        }
+
+        if (!epm::writeResponse(response, result.response))
+            return fail("cannot write " + response.str());
+    }
+    catch (const std::exception& error)
+    {
+        return fail(error.what());
+    }
+
+    return 0;
 }
 
 int cache()

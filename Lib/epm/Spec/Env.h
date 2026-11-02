@@ -16,6 +16,10 @@ struct Env
     std::string cmake;
     std::string cmakeVersion;
     std::string generator;
+
+    // CMAKE_MAKE_PROGRAM, so a child build that reuses the consumer's
+    // generator also finds its build tool when that is not on PATH.
+    std::string makeProgram;
     bool isMultiConfig = false;
     std::string buildType;
     eacp::Vector<std::string> configurationTypes;
@@ -34,6 +38,7 @@ struct Env
                  cmake,
                  cmakeVersion,
                  generator,
+                 makeProgram,
                  isMultiConfig,
                  buildType,
                  configurationTypes,

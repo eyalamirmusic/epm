@@ -3,6 +3,7 @@
 #include <eacp/Core/Utils/FilePath.h>
 
 #include <string>
+#include <string_view>
 
 namespace epm
 {
@@ -16,9 +17,12 @@ struct Response
 
     eacp::FilePath sourceDirectory;
 
-    // Prebuilt only.
+    // Prebuilt only; the targets file is <prefix>/epm-targets.cmake.
     eacp::FilePath prefix;
 };
+
+// `text` as a double-quoted CMake argument.
+std::string cmakeQuoted(std::string_view text);
 
 std::string responseText(const Response& response);
 

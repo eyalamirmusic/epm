@@ -10,12 +10,16 @@ repository layout. `PLAN.md` is the longer-term design and background.
 - `Lib/epm/` — static library `epm-core`, namespace `epm::`. Included as
   `<epm/Area/File.h>`.
   - `Util/` — `Sha256`, `Git` (git CLI through `eacp::Processes`, never
-    interactive).
+    interactive), `Command` (child processes, `findExecutable`), `Log`
+    (`--verbose`), `Text`, `Timestamp`.
   - `Spec/` — `Env`, `Request`: Miro-reflected structs whose field names are the
     JSON keys; `JsonFile.h` loads and saves them.
-  - `Cache/` — `CacheRoot`, `SourceCache`, `BinaryCache`.
-  - `Build/` — `ChildBuild`, `Harvest`.
+  - `Cache/` — `CacheRoot`, `SourceCache`, `BinaryCache`, `PackageLock`
+    (eacp `IPC::Lock`, hence the `eacp-network` dependency).
+  - `Build/` — `ChildBuild`, `Harvest`. `CMake/epm-export.cmake` is compiled
+    into the binary through `Build/EmbeddedExport.cpp.in`.
   - `Emit/` — `Response` (the `responses/<name>.cmake` writer).
+  - `Resolve/` — the `epm resolve` pipeline and the mode decision.
 - `Apps/epm/Main.cpp` — the `epm` executable: `Apps::runConsole` plus manual
   subcommand dispatch on `argv[1]`, `Args::Parser` per subcommand.
 - `CMake/` — vendored `CPM.cmake`, `Find<dep>.cmake` shims (one

@@ -2,8 +2,12 @@ find_package(NanoTest REQUIRED)
 
 nano_add_executable(epmTests
         SOURCES
+            BinaryCacheTests.cpp
             CacheRootTests.cpp
             GitTests.cpp
+            HarvestTests.cpp
+            ResolveTests.cpp
             Sha256Tests.cpp
+            SourceCacheTests.cpp
             SpecTests.cpp
         TARGETS epm-core)

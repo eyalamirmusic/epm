@@ -126,7 +126,8 @@ function(epm_write_env)
     foreach (pair IN ITEMS
             "cmake=CMAKE_COMMAND"
             "cmakeVersion=CMAKE_VERSION"
-            "generator=CMAKE_GENERATOR")
+            "generator=CMAKE_GENERATOR"
+            "makeProgram=CMAKE_MAKE_PROGRAM")
         string(REPLACE "=" ";" pair "${pair}")
         list(GET pair 0 key)
         list(GET pair 1 var)

@@ -1,4 +1,5 @@
 #include "Git.h"
+#include "Text.h"
 
 #include <eacp/Core/Process/Process.h>
 
@@ -8,30 +9,6 @@ using namespace eacp;
 
 namespace
 {
-Vector<std::string_view> lines(std::string_view text)
-{
-    auto result = Vector<std::string_view> {};
-
-    while (!text.empty())
-    {
-        const auto end = text.find('\n');
-        auto line = text.substr(0, end);
-
-        if (!line.empty() && line.back() == '\r')
-            line.remove_suffix(1);
-
-        if (!line.empty())
-            result.add(line);
-
-        if (end == std::string_view::npos)
-            break;
-
-        text.remove_prefix(end + 1);
-    }
-
-    return result;
-}
-
 // No terminal prompt, no GUI askpass, ssh in batch mode: git runs with nobody
 // to answer, so anything that would ask must fail instead.
 Vector<Processes::EnvironmentVariable> nonInteractiveEnvironment()
@@ -87,7 +64,7 @@ Vector<RemoteRef> parseLsRemote(std::string_view output)
 {
     auto refs = Vector<RemoteRef> {};
 
-    for (const auto line: lines(output))
+    for (const auto line: splitLines(output))
     {
         const auto tab = line.find('\t');
 
