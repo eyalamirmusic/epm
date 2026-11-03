@@ -81,7 +81,7 @@ FilePath getDefaultLockFile(const FilePath& sourceDirectory)
     if (!sourceDirectory.empty())
         return sourceDirectory / epm::lockFileName;
 
-    return FilePath {std::filesystem::current_path()} / epm::lockFileName;
+    return FilePath::currentDirectory() / epm::lockFileName;
 }
 
 int runPackageCommand(const std::string& command, int argumentsToSkip)
@@ -174,6 +174,8 @@ int runPackageCommand(const std::string& command, int argumentsToSkip)
 
         if (options.lock.empty())
             options.lock = getDefaultLockFile(options.sourceDirectory);
+        else if (!options.lock.isAbsolute())
+            options.lock = FilePath::currentDirectory() / options.lock.str();
 
         if (command == "resolve")
             return epm::runAddCommand(options);

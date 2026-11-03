@@ -126,21 +126,14 @@
       "usesGitLfs": false
     },
     {
-      "commit": "fa534447a43c1daae88d3620838c4f1f265b4a5c",
-      "hash": "e3a648159ed59a6c99b4bafb64ccfe80bd0f3ce8a364af6e8c1a8f31a6355cba",
+      "commit": "1d1c981bd812e13111007a5216217a8274e99b0f",
+      "hash": "37b93b2f19ce6861f0342e5a4f090b994f80f5afffb419807cbac2de71726865",
       "isOverridden": false,
       "kind": "git",
       "name": "eacp",
       "patches": [],
       "requestedRef": "develop",
-      "requirements": [
-        {
-          "commit": "fa534447a43c1daae88d3620838c4f1f265b4a5c",
-          "requestedBy": "root",
-          "requestedRef": "develop",
-          "url": "https://github.com/eyalamirmusic/eacp.git"
-        }
-      ],
+      "requirements": [],
       "submoduleSelection": {
         "isRecursive": true,
         "isRestricted": false,
@@ -176,6 +169,6 @@
       "usesGitLfs": false
     }
   ],
-  "root": "c0ac202b174deedcca1d9b7a9f90337b17c7b263ba8d4f799c1182433b4bee17",
+  "root": "0fe77a7321c68b7d18971e30e3f42b060a08d55d4331996a0f6a77d16a396f33",
   "version": 1
 }

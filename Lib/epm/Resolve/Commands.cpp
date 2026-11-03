@@ -21,7 +21,7 @@
 #include <epm/Cache/SourceCache.h>
 #include <epm/Spec/JsonFile.h>
 #include <epm/Spec/Manifest.h>
-#include <epm/Util/Sha256.h>
+#include <eacp/Core/Utils/Sha256.h>
 #include <eacp/Core/Utils/Time.h>
 
 #include <algorithm>
@@ -54,14 +54,12 @@ std::string describeVersion(PackageKind kind,
 
 std::string getPathForLock(const eacp::FilePath& lockPath, const std::string& path)
 {
-    auto lockDirectory = eacp::toStdPath(lockPath).parent_path();
-    auto relative =
-        eacp::toStdPath(eacp::FilePath {path}).lexically_relative(lockDirectory);
+    auto relative = eacp::FilePath {path}.relativeTo(lockPath.parentDirectory());
 
     if (relative.empty())
         return path;
 
-    return eacp::FilePath {relative}.str();
+    return relative.str();
 }
 
 eacp::FilePath makeAbsolute(const eacp::FilePath& base, const std::string& path)
@@ -71,24 +69,24 @@ eacp::FilePath makeAbsolute(const eacp::FilePath& base, const std::string& path)
     if (asPath.isAbsolute())
         return asPath;
 
-    return eacp::FilePath {
-        (eacp::toStdPath(base) / eacp::toStdPath(asPath)).lexically_normal()};
+    return (base / path).lexicallyNormal();
 }
 
 std::string getPathForUser(const CommandOptions& options, const eacp::FilePath& path)
 {
-    auto projectDirectory = eacp::toStdPath(options.sourceDirectory);
+    auto projectDirectory = options.sourceDirectory;
 
     if (projectDirectory.empty())
-        projectDirectory = std::filesystem::current_path();
+        projectDirectory = eacp::FilePath::currentDirectory();
 
-    auto relative = eacp::toStdPath(path).lexically_relative(projectDirectory);
-    auto isInsideProject = !relative.empty() && *relative.begin() != "..";
+    auto relative = path.relativeTo(projectDirectory).str();
+    auto isInsideProject =
+        !relative.empty() && relative != ".." && !relative.starts_with("../");
 
     if (!isInsideProject)
         return path.str();
 
-    return eacp::FilePath {relative}.str();
+    return relative;
 }
 
 eacp::FilePath getRequestingFile(const CommandOptions& options)
@@ -607,18 +605,14 @@ bool isUnderDirectory(const std::string& path, const std::string& directory)
 // the requesting directory, else the top-level project.
 std::string identifyRequester(const CommandOptions& options, const Session& session)
 {
-    auto requesting =
-        eacp::FilePath {eacp::toStdPath(options.requestedBy).lexically_normal()}
-            .str();
+    auto requesting = options.requestedBy.lexicallyNormal().str();
     auto requester = options.rootName;
     auto longestMatch = std::size_t {0};
 
     for (const auto& package: session.packages)
     {
         auto directory =
-            eacp::FilePath {eacp::toStdPath(eacp::FilePath {package.sourceDirectory})
-                                .lexically_normal()}
-                .str();
+            eacp::FilePath {package.sourceDirectory}.lexicallyNormal().str();
 
         if (!package.sourceDirectory.empty() && directory.size() > longestMatch
             && isUnderDirectory(requesting, directory))

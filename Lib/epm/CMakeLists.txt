@@ -51,9 +51,6 @@ add_library(epm-core STATIC
         Util/Log.h
         Util/LongPath.cpp
         Util/LongPath.h
-        Util/Paths.h
-        Util/Sha256.cpp
-        Util/Sha256.h
         Util/Status.cpp
         Util/Status.h
         Util/Text.cpp

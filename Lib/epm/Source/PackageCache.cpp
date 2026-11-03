@@ -3,9 +3,8 @@
 #include <epm/Source/Mirror.h>
 #include <epm/Util/LongPath.h>
 #include <epm/Lock/MerkleHash.h>
-#include <epm/Util/Paths.h>
 #include <epm/Lock/Messages.h>
-#include <epm/Util/Sha256.h>
+#include <eacp/Core/Utils/Sha256.h>
 #include <epm/Util/Status.h>
 #include <epm/Util/Text.h>
 
@@ -31,7 +30,7 @@ constexpr auto urlKeyLength = 16;
 
 std::string computeUrlKey(const std::string& url)
 {
-    return computeSha256Hex(url).substr(0, urlKeyLength);
+    return eacp::computeSha256Hex(url).substr(0, urlKeyLength);
 }
 
 constexpr auto symlinkModeLetter = 'l';
@@ -39,14 +38,14 @@ constexpr auto symlinkArrowLength = std::string_view {" -> "}.size();
 
 eacp::FilePath getStampPath(const eacp::FilePath& sourceDirectory)
 {
-    return getSiblingWithSuffix(sourceDirectory, ".stamp");
+    return sourceDirectory.withSuffix(".stamp");
 }
 
 // src/<hash>.symlinks: the tree's declared symlinks, one per line, which a
 // later rehash needs where they were checked out as plain files.
 eacp::FilePath getSymlinksPath(const eacp::FilePath& sourceDirectory)
 {
-    return getSiblingWithSuffix(sourceDirectory, ".symlinks");
+    return sourceDirectory.withSuffix(".symlinks");
 }
 
 DeclaredSymlinks readDeclaredSymlinks(const eacp::FilePath& sourceDirectory)

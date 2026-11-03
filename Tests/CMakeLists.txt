@@ -11,7 +11,6 @@ nano_add_executable(epmTests
             PackageArgumentsTests.cpp
             RequirementsTests.cpp
             ResolveTests.cpp
-            Sha256Tests.cpp
             SourceCacheTests.cpp
             SpecTests.cpp
         TARGETS epm-core)

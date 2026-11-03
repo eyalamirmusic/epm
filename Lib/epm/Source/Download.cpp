@@ -1,7 +1,6 @@
 #include <epm/Source/Download.h>
 #include <epm/Lock/Messages.h>
-#include <epm/Util/Paths.h>
-#include <epm/Util/Sha256.h>
+#include <eacp/Core/Utils/Sha256.h>
 
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Network/HTTP/Http.h>
@@ -19,7 +18,7 @@ void downloadFile(const std::string& url,
                   const eacp::FilePath& destination,
                   const ExpectedHash& expected)
 {
-    auto partial = getSiblingWithSuffix(destination, ".part");
+    auto partial = destination.withSuffix(".part");
     eacp::Files::createDirectories(destination.parentDirectory());
 
     auto response =

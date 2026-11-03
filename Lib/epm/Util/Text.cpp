@@ -13,8 +13,7 @@ bool writeTextFile(const FilePath& path, std::string_view text)
 
     try
     {
-        Files::writeFileAtomically(
-            path, {reinterpret_cast<const std::uint8_t*>(text.data()), text.size()});
+        Files::writeFileAtomically(path, text);
     }
     catch (const std::exception&)
     {

@@ -1,6 +1,6 @@
 #include "PackageLock.h"
 
-#include <epm/Util/Sha256.h>
+#include <eacp/Core/Utils/Sha256.h>
 
 namespace epm
 {
@@ -8,7 +8,7 @@ namespace
 {
 std::string lockName(const CacheRoot& cache, std::string_view name)
 {
-    return "epm-" + computeSha256Hex(cache.path().str()).substr(0, 12) + "-"
+    return "epm-" + eacp::computeSha256Hex(cache.path().str()).substr(0, 12) + "-"
            + std::string {name};
 }
 } // namespace

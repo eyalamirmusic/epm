@@ -8,7 +8,7 @@
 #include <epm/Spec/JsonFile.h>
 #include <epm/Util/Command.h>
 #include <epm/Util/Log.h>
-#include <epm/Util/Sha256.h>
+#include <eacp/Core/Utils/Sha256.h>
 #include <epm/Util/Text.h>
 #include <eacp/Core/Utils/Time.h>
 
@@ -99,7 +99,7 @@ std::string canonicalManifest(const BuildManifest& manifest)
 
 std::string binaryKey(const BuildManifest& manifest)
 {
-    return computeSha256Hex(canonicalManifest(manifest));
+    return eacp::computeSha256Hex(canonicalManifest(manifest));
 }
 
 std::optional<BinaryEntry> findBinary(const CacheRoot& cache,

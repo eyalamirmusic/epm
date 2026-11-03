@@ -1,6 +1,8 @@
 #include <epm/Lock/MerkleHash.h>
 #include <epm/Util/LongPath.h>
-#include <epm/Util/Sha256.h>
+#include <eacp/Core/Utils/Files.h>
+#include <eacp/Core/Utils/Sha256.h>
+#include <eacp/Core/Utils/Strings.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -91,13 +93,24 @@ std::string describeEntryKind(TreeEntryKind kind)
 
 std::string computeSymlinkHash(const std::filesystem::path& link)
 {
-    auto target = eacp::FilePath(std::filesystem::read_symlink(link));
-    return computeSha256Hex(target.str());
+    return eacp::computeSha256Hex(
+        eacp::Files::readSymlink(eacp::FilePath {link}).str());
 }
 
 std::string computeMerkleHashOfStdPath(const std::filesystem::path& directory,
                                        const std::string& relativeDirectory,
                                        const DeclaredSymlinks& symlinks);
+
+std::string computeFileHash(const std::filesystem::path& file)
+{
+    auto hash = eacp::computeFileSha256Hex(eacp::FilePath {file});
+
+    if (hash.empty())
+        throw std::runtime_error("cannot open " + eacp::FilePath {file}.str()
+                                 + " to hash it");
+
+    return hash;
+}
 
 std::string joinRelativePath(const std::string& directory, const std::string& name)
 {
@@ -122,7 +135,7 @@ std::string computeEntryHash(const TreeEntry& entry,
     switch (entry.kind)
     {
         case TreeEntryKind::file:
-            return computeFileSha256Hex(entry.path);
+            return computeFileHash(entry.path);
         case TreeEntryKind::directory:
             return computeMerkleHashOfStdPath(entry.path, relativePath, symlinks);
         case TreeEntryKind::symlink:
@@ -136,7 +149,7 @@ std::string computeMerkleHashOfStdPath(const std::filesystem::path& directory,
                                        const std::string& relativeDirectory,
                                        const DeclaredSymlinks& symlinks)
 {
-    auto hasher = Sha256 {};
+    auto hasher = eacp::Sha256 {};
 
     for (const auto& entry: listHashedEntries(directory))
     {
@@ -152,7 +165,8 @@ std::string computeMerkleHashOfStdPath(const std::filesystem::path& directory,
         hasher.update(line);
     }
 
-    return convertDigestToHex(hasher.finish());
+    auto digest = hasher.finish();
+    return eacp::Strings::toHex(digest);
 }
 
 std::string describeFileForStamp(const std::filesystem::path& file)
@@ -165,7 +179,7 @@ std::string describeFileForStamp(const std::filesystem::path& file)
     return ' ' + std::to_string(size) + ' ' + std::to_string(writtenTicks);
 }
 
-void addTreeToStamp(Sha256& hasher,
+void addTreeToStamp(eacp::Sha256& hasher,
                     const std::filesystem::path& directory,
                     const std::string& relativeDirectory)
 {
@@ -194,8 +208,9 @@ std::string computeMerkleHash(const eacp::FilePath& directory,
 
 std::string computeTreeStamp(const eacp::FilePath& directory)
 {
-    auto hasher = Sha256 {};
+    auto hasher = eacp::Sha256 {};
     addTreeToStamp(hasher, getLongPathSafeStdPath(directory), {});
-    return convertDigestToHex(hasher.finish());
+    auto digest = hasher.finish();
+    return eacp::Strings::toHex(digest);
 }
 } // namespace epm
