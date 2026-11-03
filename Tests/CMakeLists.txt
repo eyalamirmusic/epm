@@ -14,3 +14,4 @@ nano_add_executable(epmTests
 
 add_test(NAME get_epm_ranges
         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/GetEpmRanges.cmake)
+add_subdirectory(Consumer)

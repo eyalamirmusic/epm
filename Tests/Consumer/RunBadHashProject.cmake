@@ -1,14 +1,14 @@
 # Configures a project whose archive has a wrong URL_HASH, from an empty cache,
 # and checks the configure ends with the hash mismatch rather than a generic
-# download failure. Expects PROJECT_DIR, WORK_DIR, LOCKSTEP_EXECUTABLE and
-# LOCKSTEP_SHIM.
+# download failure. Expects PROJECT_DIR, WORK_DIR, EPM_EXECUTABLE and
+# EPM_MODULE.
 
 file(REMOVE_RECURSE "${WORK_DIR}")
 execute_process(COMMAND "${CMAKE_COMMAND}" -S "${PROJECT_DIR}" -B "${WORK_DIR}/build"
-        "-DLOCKSTEP_SHIM=${LOCKSTEP_SHIM}"
-        "-DLOCKSTEP_EXECUTABLE=${LOCKSTEP_EXECUTABLE}"
-        "-DLOCKSTEP_CACHE=${WORK_DIR}/cache"
-        -DLOCKSTEP_MODE=update
+        "-DEPM_MODULE=${EPM_MODULE}"
+        "-DEPM_EXECUTABLE=${EPM_EXECUTABLE}"
+        "-DEPM_CACHE=${WORK_DIR}/cache" "-DEPM_LOCK_FILE=${WORK_DIR}/epm.lock"
+        -DEPM_LOCK_MODE=update
         RESULT_VARIABLE exit_code OUTPUT_VARIABLE output ERROR_VARIABLE output)
 message("${output}")
 
