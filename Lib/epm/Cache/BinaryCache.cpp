@@ -3,6 +3,8 @@
 
 #include <epm/Build/ChildBuild.h>
 #include <epm/Build/Harvest.h>
+#include <epm/Lock/LockFile.h>
+#include <epm/Lock/Session.h>
 #include <epm/Spec/JsonFile.h>
 #include <epm/Util/Command.h>
 #include <epm/Util/Log.h>
@@ -38,6 +40,30 @@ FilePath markerFor(const CacheRoot& cache,
     return cache.bin() / name / (shortKey(key) + ".json");
 }
 
+bool isBuiltWithLockedDependencies(const BinaryMarker& marker, const LockFile& lock)
+{
+    for (const auto& [name, hash]: marker.dependencies)
+    {
+        auto locked = lock.findPackage(name);
+
+        if (!locked || locked->hash != hash)
+            return false;
+    }
+
+    return true;
+}
+
+// What the child build's epm.cmake added, from its session.
+void collectChildDependencies(const FilePath& buildDirectory,
+                              std::map<std::string, std::string>& dependencies)
+{
+    for (const auto& package: readSession(buildDirectory).packages)
+    {
+        if (!package.hash.empty())
+            dependencies[package.name] = package.hash;
+    }
+}
+
 BinaryResult failure(std::string error, std::string details = {})
 {
     auto result = BinaryResult {};
@@ -48,11 +74,11 @@ BinaryResult failure(std::string error, std::string details = {})
 } // namespace
 
 BuildManifest
-    makeManifest(const Request& request, const Env& env, const std::string& sourceId)
+    makeManifest(const Request& request, const Env& env, const std::string& sourceHash)
 {
     auto manifest = BuildManifest {};
     manifest.name = request.name;
-    manifest.sourceId = sourceId;
+    manifest.sourceHash = sourceHash;
     manifest.cxxCompiler = env.cxxCompiler;
     manifest.cxxCompilerId = env.cxxCompilerId;
     manifest.cxxCompilerVersion = env.cxxCompilerVersion;
@@ -72,14 +98,20 @@ std::string canonicalManifest(const BuildManifest& manifest)
 
 std::string binaryKey(const BuildManifest& manifest)
 {
-    return sha256Hex(canonicalManifest(manifest));
+    return computeSha256Hex(canonicalManifest(manifest));
 }
 
 std::optional<BinaryEntry> findBinary(const CacheRoot& cache,
                                       const std::string& name,
-                                      const std::string& key)
+                                      const std::string& key,
+                                      const FilePath& lock)
 {
-    if (!Files::isFile(markerFor(cache, name, key)))
+    const auto marker = loadJsonFile<BinaryMarker>(markerFor(cache, name, key));
+
+    if (!marker)
+        return std::nullopt;
+
+    if (!lock.empty() && !isBuiltWithLockedDependencies(*marker, readLockFile(lock)))
         return std::nullopt;
 
     const auto prefix = prefixFor(cache, name, key);
@@ -89,9 +121,10 @@ std::optional<BinaryEntry> findBinary(const CacheRoot& cache,
 BinaryResult buildBinary(const CacheRoot& cache,
                          const Request& request,
                          const Env& env,
-                         const SourceSnapshot& snapshot)
+                         const SourceSnapshot& snapshot,
+                         const LockForChildBuilds& childLock)
 {
-    const auto manifest = makeManifest(request, env, snapshot.sourceId);
+    const auto manifest = makeManifest(request, env, snapshot.hash);
     const auto key = binaryKey(manifest);
 
     auto lock = PackageLock {cache, request.name, packageLockTimeout};
@@ -100,7 +133,7 @@ BinaryResult buildBinary(const CacheRoot& cache,
         return failure("timed out waiting for another epm process using "
                        + request.name);
 
-    if (auto existing = findBinary(cache, request.name, key))
+    if (auto existing = findBinary(cache, request.name, key, childLock.lock))
         return {true, *existing, {}, {}};
 
     const auto prefix = prefixFor(cache, request.name, key);
@@ -115,6 +148,7 @@ BinaryResult buildBinary(const CacheRoot& cache,
     auto relocatedPaths = Vector<std::string> {};
     auto needsThreads = false;
     auto keptBuildTree = false;
+    auto dependencies = std::map<std::string, std::string> {};
 
     Log::step("epm: building " + request.name + " into " + prefix.str()
               + " with generator '" + generator.name + "'");
@@ -129,12 +163,16 @@ BinaryResult buildBinary(const CacheRoot& cache,
         build.buildDirectory = buildRoot / config;
         build.prefix = prefix;
         build.cpmCache = cache.cpm();
+        build.cacheRoot = cache.path();
+        build.childLock = childLock;
         build.config = config;
 
         const auto built = runChildBuild(build);
 
         if (!built.ok)
             return failure(built.error, built.details);
+
+        collectChildDependencies(build.buildDirectory, dependencies);
 
         const auto harvest = harvestConfig(build.buildDirectory, prefix, config);
 
@@ -172,7 +210,8 @@ BinaryResult buildBinary(const CacheRoot& cache,
     if (!saveJsonFile(prefix / "manifest.json", manifest))
         return failure("cannot write " + (prefix / "manifest.json").str());
 
-    const auto marker = BinaryMarker {key, snapshot.commit, utcTimestamp()};
+    const auto marker =
+        BinaryMarker {key, snapshot.commit, utcTimestamp(), dependencies};
 
     if (!saveJsonFile(markerFor(cache, request.name, key), marker))
         return failure("cannot write the marker for " + prefix.str());

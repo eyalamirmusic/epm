@@ -16,6 +16,8 @@ public:
     const eacp::FilePath& path() const;
 
     eacp::FilePath src() const;
+    eacp::FilePath git() const;
+    eacp::FilePath downloads() const;
     eacp::FilePath bin() const;
     eacp::FilePath build() const;
     eacp::FilePath cpm() const;

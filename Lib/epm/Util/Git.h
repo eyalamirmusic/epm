@@ -1,5 +1,6 @@
 #pragma once
 
+#include <eacp/Core/Process/Process.h>
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/FilePath.h>
 
@@ -20,10 +21,10 @@ struct Result
     }
 };
 
-// Runs git in `workingDirectory` and waits. Never prompts for credentials: a
-// remote that needs them fails instead of hanging.
-Result run(const eacp::FilePath& workingDirectory,
-           const eacp::Vector<std::string>& arguments);
+// Runs git from the temp directory and waits. Never prompts for credentials:
+// a remote that needs them fails instead of hanging.
+Result run(const eacp::Vector<std::string>& arguments,
+           const eacp::Vector<eacp::Processes::EnvironmentVariable>& environment = {});
 
 bool isAvailable();
 

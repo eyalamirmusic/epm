@@ -22,34 +22,25 @@ bool isFullCommitHash(std::string_view ref);
 std::optional<std::string> resolveRef(const eacp::Vector<Git::RemoteRef>& refs,
                                       std::string_view ref);
 
-// src/<name>/<sourceId12>.json, written once the snapshot is complete.
+// A cached tree: src/<hash>, where hash is its Merkle hash.
+struct SourceSnapshot
+{
+    std::string commit;
+    std::string hash;
+    eacp::FilePath directory;
+};
+
+// src/<sourceId12>.json: which tree a commit (with its patches and
+// submodule selection) unpacked to, so an unlocked configure finds it again
+// without checking it out.
 struct SourceMarker
 {
     std::string url;
     std::string commit;
+    std::string hash;
     std::string fetchedAt;
 
-    MIRO_REFLECT(url, commit, fetchedAt)
+    MIRO_REFLECT(url, commit, hash, fetchedAt)
 };
 
-struct SourceSnapshot
-{
-    std::string commit;
-    std::string sourceId;
-    eacp::FilePath directory;
-};
-
-struct SourceResult
-{
-    bool ok = false;
-    SourceSnapshot snapshot;
-    std::string error;
-};
-
-// Resolves `ref` and fetches a clean snapshot (no .git) into
-// src/<name>/<sourceId12>, unless one is already marked complete.
-SourceResult fetchSource(const CacheRoot& cache,
-                         const std::string& name,
-                         const std::string& url,
-                         const std::string& ref);
 } // namespace epm

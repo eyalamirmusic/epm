@@ -5,6 +5,7 @@
 #include <epm/Util/Text.h>
 
 #include <eacp/Core/Platform/Platform.h>
+#include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Strings.h>
 
 namespace epm
@@ -42,6 +43,22 @@ ChildBuildResult runStep(const ChildBuild& build,
                 + ") failed: " + result.error + " - full log: " + log.str(),
             Log::isVerbose() ? std::string {}
                              : lastLines(result.output, failureTailLines)};
+}
+bool isLockingChildDependencies(const ChildBuild& build)
+{
+    return !build.childLock.lock.empty() && !build.env.module.empty();
+}
+
+// With a lock, epm.cmake is loaded too, so the dependency's own CPMAddPackage
+// and FetchContent calls resolve against the consumer's lock.
+std::string topLevelIncludes(const ChildBuild& build)
+{
+    auto includes = (build.buildDirectory / "epm-export.cmake").str();
+
+    if (isLockingChildDependencies(build))
+        includes += ";" + build.env.module;
+
+    return includes;
 }
 } // namespace
 
@@ -87,7 +104,15 @@ Vector<std::string> configureArguments(const ChildBuild& build)
     addDefinition(arguments, "CPM_SOURCE_CACHE", build.cpmCache.str());
     addDefinition(arguments,
                   "CMAKE_PROJECT_TOP_LEVEL_INCLUDES",
-                  (build.buildDirectory / "epm-export.cmake").str());
+                  topLevelIncludes(build));
+
+    if (isLockingChildDependencies(build))
+    {
+        addDefinition(arguments, "EPM_EXECUTABLE", Files::executablePath().str());
+        addDefinition(arguments, "EPM_LOCK_FILE", build.childLock.lock.str());
+        addDefinition(arguments, "EPM_LOCK_MODE", build.childLock.mode);
+        addDefinition(arguments, "EPM_CACHE", build.cacheRoot.str());
+    }
     addDefinition(arguments, "EPM_EXPORT_FILE", exportFile.str());
     addDefinition(arguments,
                   "EPM_EXPORT_NAMESPACE",

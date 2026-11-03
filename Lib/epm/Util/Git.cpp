@@ -1,7 +1,7 @@
 #include "Git.h"
 #include "Text.h"
 
-#include <eacp/Core/Process/Process.h>
+#include <eacp/Core/Platform/Platform.h>
 
 namespace epm::Git
 {
@@ -32,19 +32,34 @@ std::string firstLine(const std::string& text)
 {
     return text.substr(0, text.find('\n'));
 }
+
+
+// Git for Windows refuses checkouts past MAX_PATH unless core.longpaths is set.
+Vector<std::string> platformArguments(const Vector<std::string>& arguments)
+{
+    if (!Platform::isWindows())
+        return arguments;
+
+    auto withLongPaths = Vector<std::string> {"-c", "core.longpaths=true"};
+    withLongPaths.addFrom(arguments);
+    return withLongPaths;
+}
 } // namespace
 
-Result run(const FilePath& workingDirectory, const Vector<std::string>& arguments)
+Result run(const Vector<std::string>& arguments,
+           const Vector<Processes::EnvironmentVariable>& environment)
 {
     auto options = Processes::ProcessOptions {};
 
     options.executable = "git";
-    options.workingDirectory = workingDirectory.str();
     options.environment = nonInteractiveEnvironment();
-    options.arguments.add("--no-optional-locks");
+    options.environment.addFrom(environment);
 
-    for (const auto& argument: arguments)
-        options.arguments.add(argument);
+    // Never the project's own directory: git would read its .git first, and a
+    // worktree whose .git points somewhere missing stops every command.
+    options.workingDirectory = FilePath::tempDirectory().str();
+    options.arguments.add("--no-optional-locks");
+    options.arguments.addFrom(platformArguments(arguments));
 
     const auto result = Processes::run(std::move(options));
 
@@ -56,7 +71,7 @@ Result run(const FilePath& workingDirectory, const Vector<std::string>& argument
 
 bool isAvailable()
 {
-    static const auto available = run({}, {"--version"}).ok;
+    static const auto available = run({"--version"}).ok;
     return available;
 }
 
@@ -82,8 +97,7 @@ RemoteRefs lsRemote(const std::string& url)
 {
     auto refs = RemoteRefs {};
 
-    // No working directory: a checkout's config must not rewrite the URL asked.
-    const auto result = run({}, {"ls-remote", url});
+    const auto result = run({"ls-remote", url});
 
     if (!result.ok)
     {

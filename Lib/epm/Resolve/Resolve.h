@@ -1,6 +1,8 @@
 #pragma once
 
+#include <epm/Build/ChildBuild.h>
 #include <epm/Cache/CacheRoot.h>
+#include <epm/Cache/SourceCache.h>
 #include <epm/Emit/Response.h>
 #include <epm/Spec/Env.h>
 #include <epm/Spec/Request.h>
@@ -35,8 +37,11 @@ struct ResolveResult
     std::string details;
 };
 
-// The whole `epm resolve` pipeline: fetch the source, then find, build or skip
-// the binary entry as the mode decides.
-ResolveResult
-    resolvePackage(const Request& request, const Env& env, const CacheRoot& cache);
+// The binary half of resolving a package whose sources are already in the
+// cache: find, build or skip the binary entry as the mode decides.
+ResolveResult resolveBinary(const Request& request,
+                            const Env& env,
+                            const CacheRoot& cache,
+                            const SourceSnapshot& snapshot,
+                            const LockForChildBuilds& childLock);
 } // namespace epm

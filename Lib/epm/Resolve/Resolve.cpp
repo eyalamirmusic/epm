@@ -1,7 +1,6 @@
 #include "Resolve.h"
 
 #include <epm/Cache/BinaryCache.h>
-#include <epm/Cache/SourceCache.h>
 #include <epm/Util/Log.h>
 
 namespace epm
@@ -59,9 +58,6 @@ std::optional<std::string> requestError(const Request& request)
     if (request.gitUrl.empty())
         return "the request for " + request.name + " has no gitUrl";
 
-    if (request.gitRef.empty())
-        return "the request for " + request.name + " has no gitRef";
-
     if (request.mode != "auto" && request.mode != "prebuilt"
         && request.mode != "source")
         return "the request for " + request.name + " has an unknown mode '"
@@ -70,25 +66,20 @@ std::optional<std::string> requestError(const Request& request)
     return std::nullopt;
 }
 
-ResolveResult
-    resolvePackage(const Request& request, const Env& env, const CacheRoot& cache)
+ResolveResult resolveBinary(const Request& request,
+                            const Env& env,
+                            const CacheRoot& cache,
+                            const SourceSnapshot& snapshot,
+                            const LockForChildBuilds& childLock)
 {
     if (auto error = requestError(request))
         return failure(*error);
 
-    const auto source =
-        fetchSource(cache, request.name, request.gitUrl, request.gitRef);
-
-    if (!source.ok)
-        return failure(source.error);
-
-    const auto& snapshot = source.snapshot;
-
     if (request.mode == "source")
         return success(sourceResponse(request, snapshot));
 
-    const auto key = binaryKey(makeManifest(request, env, snapshot.sourceId));
-    const auto existing = findBinary(cache, request.name, key);
+    const auto key = binaryKey(makeManifest(request, env, snapshot.hash));
+    const auto existing = findBinary(cache, request.name, key, childLock.lock);
 
     Log::step("epm: " + request.name + " binary key " + key.substr(0, 12) + " "
               + (existing ? "found" : "missing"));
@@ -105,7 +96,7 @@ ResolveResult
             break;
     }
 
-    const auto built = buildBinary(cache, request, env, snapshot);
+    const auto built = buildBinary(cache, request, env, snapshot, childLock);
 
     if (!built.ok)
         return failure(built.error, built.details);

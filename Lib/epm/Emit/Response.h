@@ -7,7 +7,7 @@
 
 namespace epm
 {
-// What responses/<name>.cmake tells epm.cmake.
+// Which way a package was resolved.
 struct Response
 {
     std::string name;
@@ -24,7 +24,7 @@ struct Response
 // `text` as a double-quoted CMake argument.
 std::string cmakeQuoted(std::string_view text);
 
-std::string responseText(const Response& response);
-
-bool writeResponse(const eacp::FilePath& path, const Response& response);
+// Includes a binary entry's targets file and makes the imported targets
+// global.
+std::string prebuiltTargetsText(const eacp::FilePath& prefix);
 } // namespace epm

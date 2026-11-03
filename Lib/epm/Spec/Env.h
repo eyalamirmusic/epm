@@ -34,6 +34,10 @@ struct Env
     std::string cxxStandard;
     std::string toolchainFile;
 
+    // The epm.cmake that wrote this file, loaded into child builds that
+    // resolve their dependencies against the consumer's lock.
+    std::string module;
+
     MIRO_REFLECT(schema,
                  cmake,
                  cmakeVersion,
@@ -51,6 +55,7 @@ struct Env
                  osxArchitectures,
                  osxDeploymentTarget,
                  cxxStandard,
-                 toolchainFile)
+                 toolchainFile,
+                 module)
 };
 } // namespace epm

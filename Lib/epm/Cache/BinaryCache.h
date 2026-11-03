@@ -3,6 +3,7 @@
 #include "CacheRoot.h"
 #include "SourceCache.h"
 
+#include <epm/Build/ChildBuild.h>
 #include <epm/Spec/Env.h>
 #include <epm/Spec/Request.h>
 
@@ -21,9 +22,10 @@ namespace epm
 // listed them in.
 struct BuildManifest
 {
-    int schema = 1;
+    // 2: the Merkle hash of the sources replaced sourceId (url + commit).
+    int schema = 2;
     std::string name;
-    std::string sourceId;
+    std::string sourceHash;
     std::string cxxCompiler;
     std::string cxxCompilerId;
     std::string cxxCompilerVersion;
@@ -37,7 +39,7 @@ struct BuildManifest
 
     MIRO_REFLECT(schema,
                  name,
-                 sourceId,
+                 sourceHash,
                  cxxCompiler,
                  cxxCompilerId,
                  cxxCompilerVersion,
@@ -52,7 +54,7 @@ struct BuildManifest
 
 BuildManifest makeManifest(const Request& request,
                            const Env& env,
-                           const std::string& sourceId);
+                           const std::string& sourceHash);
 
 std::string canonicalManifest(const BuildManifest& manifest);
 
@@ -66,7 +68,11 @@ struct BinaryMarker
     std::string commit;
     std::string builtAt;
 
-    MIRO_REFLECT(key, commit, builtAt)
+    // The Merkle hash of every package a child build added through the lock,
+    // by name. Empty when the child's CPM fetched them itself.
+    std::map<std::string, std::string> dependencies;
+
+    MIRO_REFLECT(key, commit, builtAt, dependencies)
 };
 
 struct BinaryEntry
@@ -75,10 +81,13 @@ struct BinaryEntry
     eacp::FilePath targetsFile;
 };
 
-// The entry at bin/<name>/<key12>, only once its completeness marker exists.
+// The entry at bin/<name>/<key12>, only once its completeness marker exists
+// and, with a lock, while every dependency it was built with is still locked
+// at the hash it recorded.
 std::optional<BinaryEntry> findBinary(const CacheRoot& cache,
                                       const std::string& name,
-                                      const std::string& key);
+                                      const std::string& key,
+                                      const eacp::FilePath& lock = {});
 
 struct BinaryResult
 {
@@ -94,5 +103,6 @@ struct BinaryResult
 BinaryResult buildBinary(const CacheRoot& cache,
                          const Request& request,
                          const Env& env,
-                         const SourceSnapshot& snapshot);
+                         const SourceSnapshot& snapshot,
+                         const LockForChildBuilds& childLock = {});
 } // namespace epm

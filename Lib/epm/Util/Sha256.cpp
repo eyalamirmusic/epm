@@ -1,192 +1,236 @@
-#include "Sha256.h"
+#include <epm/Util/Sha256.h>
 
-#include <eacp/Core/Utils/MemoryMappedFile.h>
+#include <epm/Util/LongPath.h>
 
-#include <array>
-#include <bit>
-#include <cstdint>
-#include <cstring>
+#include <fstream>
+
+#include <algorithm>
+
+#include <stdexcept>
+#include <vector>
 
 namespace epm
 {
 namespace
 {
 constexpr auto roundConstants = std::array<std::uint32_t, 64> {
-    0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU, 0x59f111f1U,
-    0x923f82a4U, 0xab1c5ed5U, 0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U,
-    0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U, 0xc19bf174U, 0xe49b69c1U, 0xefbe4786U,
-    0x0fc19dc6U, 0x240ca1ccU, 0x2de92c6fU, 0x4a7484aaU, 0x5cb0a9dcU, 0x76f988daU,
-    0x983e5152U, 0xa831c66dU, 0xb00327c8U, 0xbf597fc7U, 0xc6e00bf3U, 0xd5a79147U,
-    0x06ca6351U, 0x14292967U, 0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU, 0x53380d13U,
-    0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U, 0xa2bfe8a1U, 0xa81a664bU,
-    0xc24b8b70U, 0xc76c51a3U, 0xd192e819U, 0xd6990624U, 0xf40e3585U, 0x106aa070U,
-    0x19a4c116U, 0x1e376c08U, 0x2748774cU, 0x34b0bcb5U, 0x391c0cb3U, 0x4ed8aa4aU,
-    0x5b9cca4fU, 0x682e6ff3U, 0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U,
-    0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U};
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
+    0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
+    0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
+    0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+    0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
+    0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
 
-constexpr auto initialHash = std::array<std::uint32_t, 8> {0x6a09e667U,
-                                                           0xbb67ae85U,
-                                                           0x3c6ef372U,
-                                                           0xa54ff53aU,
-                                                           0x510e527fU,
-                                                           0x9b05688cU,
-                                                           0x1f83d9abU,
-                                                           0x5be0cd19U};
+constexpr auto initialState =
+    std::array<std::uint32_t, sha256WordCount> {0x6a09e667,
+                                                0xbb67ae85,
+                                                0x3c6ef372,
+                                                0xa54ff53a,
+                                                0x510e527f,
+                                                0x9b05688c,
+                                                0x1f83d9ab,
+                                                0x5be0cd19};
 
-std::uint32_t loadBigEndian32(const std::uint8_t* bytes)
+constexpr auto messageScheduleSize = 64;
+constexpr auto lengthFieldSize = 8;
+constexpr auto bitsPerByte = 8;
+constexpr auto bytesPerWord = 4;
+constexpr auto blockWordCount = sha256BlockSize / bytesPerWord;
+constexpr auto paddingStartByte = std::uint8_t {0x80};
+
+std::uint32_t rotateRight(std::uint32_t value, int bits)
 {
-    return (static_cast<std::uint32_t>(bytes[0]) << 24)
-           | (static_cast<std::uint32_t>(bytes[1]) << 16)
-           | (static_cast<std::uint32_t>(bytes[2]) << 8)
-           | static_cast<std::uint32_t>(bytes[3]);
+    return (value >> bits) | (value << (32 - bits));
 }
 
-class Hasher
+std::uint32_t readBigEndianWord(std::span<const std::uint8_t, bytesPerWord> bytes)
 {
-public:
-    void update(const std::uint8_t* bytes, std::size_t size)
-    {
-        bitCount += static_cast<std::uint64_t>(size) * 8U;
-
-        if (bufferSize > 0)
-        {
-            const auto take = std::min(size, buffer.size() - bufferSize);
-            std::memcpy(buffer.data() + bufferSize, bytes, take);
-            bufferSize += take;
-            bytes += take;
-            size -= take;
-
-            if (bufferSize == buffer.size())
-            {
-                compress(buffer.data());
-                bufferSize = 0;
-            }
-        }
-
-        while (size >= buffer.size())
-        {
-            compress(bytes);
-            bytes += buffer.size();
-            size -= buffer.size();
-        }
-
-        if (size > 0)
-        {
-            std::memcpy(buffer.data(), bytes, size);
-            bufferSize = size;
-        }
-    }
-
-    void update(std::string_view text)
-    {
-        update(reinterpret_cast<const std::uint8_t*>(text.data()), text.size());
-    }
-
-    std::string finishHex()
-    {
-        const auto messageBits = bitCount;
-
-        const auto one = std::uint8_t {0x80};
-        update(&one, 1);
-
-        const auto zero = std::uint8_t {0};
-
-        while (bufferSize != 56)
-            update(&zero, 1);
-
-        auto length = std::array<std::uint8_t, 8> {};
-
-        for (auto i = 0; i < 8; ++i)
-            length[7 - i] = static_cast<std::uint8_t>(messageBits >> (i * 8));
-
-        update(length.data(), length.size());
-
-        constexpr auto digits = std::string_view {"0123456789abcdef"};
-        auto hex = std::string {};
-        hex.reserve(64);
-
-        for (const auto word: state)
-            for (auto shift = 28; shift >= 0; shift -= 4)
-                hex += digits[(word >> shift) & 0xfU];
-
-        return hex;
-    }
-
-private:
-    void compress(const std::uint8_t* block)
-    {
-        auto w = std::array<std::uint32_t, 64> {};
-
-        for (auto i = 0; i < 16; ++i)
-            w[i] = loadBigEndian32(block + i * 4);
-
-        for (auto i = 16; i < 64; ++i)
-        {
-            const auto s0 = std::rotr(w[i - 15], 7) ^ std::rotr(w[i - 15], 18)
-                            ^ (w[i - 15] >> 3);
-            const auto s1 =
-                std::rotr(w[i - 2], 17) ^ std::rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
-        }
-
-        auto a = state[0];
-        auto b = state[1];
-        auto c = state[2];
-        auto d = state[3];
-        auto e = state[4];
-        auto f = state[5];
-        auto g = state[6];
-        auto h = state[7];
-
-        for (auto i = 0; i < 64; ++i)
-        {
-            const auto sum1 = std::rotr(e, 6) ^ std::rotr(e, 11) ^ std::rotr(e, 25);
-            const auto choose = (e & f) ^ (~e & g);
-            const auto temp1 = h + sum1 + choose + roundConstants[i] + w[i];
-            const auto sum0 = std::rotr(a, 2) ^ std::rotr(a, 13) ^ std::rotr(a, 22);
-            const auto majority = (a & b) ^ (a & c) ^ (b & c);
-
-            h = g;
-            g = f;
-            f = e;
-            e = d + temp1;
-            d = c;
-            c = b;
-            b = a;
-            a = temp1 + sum0 + majority;
-        }
-
-        state[0] += a;
-        state[1] += b;
-        state[2] += c;
-        state[3] += d;
-        state[4] += e;
-        state[5] += f;
-        state[6] += g;
-        state[7] += h;
-    }
-
-    std::array<std::uint32_t, 8> state = initialHash;
-    std::array<std::uint8_t, 64> buffer {};
-    std::uint64_t bitCount = 0;
-    std::size_t bufferSize = 0;
-};
+    return (std::uint32_t(bytes[0]) << 24) | (std::uint32_t(bytes[1]) << 16)
+           | (std::uint32_t(bytes[2]) << 8) | std::uint32_t(bytes[3]);
+}
 } // namespace
 
-std::string sha256Hex(std::string_view bytes)
+Sha256::Sha256()
+    : state(initialState)
 {
-    auto hasher = Hasher {};
-    hasher.update(bytes);
-    return hasher.finishHex();
 }
 
-std::optional<std::string> sha256HexOfFile(const eacp::FilePath& path)
+void Sha256::processBlock(std::span<const std::uint8_t, sha256BlockSize> block)
 {
-    auto mapped = eacp::MemoryMappedFile {path};
+    auto schedule = std::array<std::uint32_t, messageScheduleSize> {};
 
-    if (!mapped.isValid())
-        return std::nullopt;
+    for (auto i = 0; i < blockWordCount; ++i)
+        schedule[i] =
+            readBigEndianWord(block.subspan(i * bytesPerWord).first<bytesPerWord>());
 
-    return sha256Hex(mapped.text());
+    for (auto i = blockWordCount; i < messageScheduleSize; ++i)
+    {
+        auto s0 = rotateRight(schedule[i - 15], 7)
+                  ^ rotateRight(schedule[i - 15], 18) ^ (schedule[i - 15] >> 3);
+        auto s1 = rotateRight(schedule[i - 2], 17) ^ rotateRight(schedule[i - 2], 19)
+                  ^ (schedule[i - 2] >> 10);
+        schedule[i] = schedule[i - 16] + s0 + schedule[i - 7] + s1;
+    }
+
+    auto [a, b, c, d, e, f, g, h] = state;
+
+    for (auto i = 0; i < messageScheduleSize; ++i)
+    {
+        auto sum1 = rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25);
+        auto choice = (e & f) ^ (~e & g);
+        auto temp1 = h + sum1 + choice + roundConstants[i] + schedule[i];
+        auto sum0 = rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22);
+        auto majority = (a & b) ^ (a & c) ^ (b & c);
+        auto temp2 = sum0 + majority;
+
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2;
+    }
+
+    state[0] += a;
+    state[1] += b;
+    state[2] += c;
+    state[3] += d;
+    state[4] += e;
+    state[5] += f;
+    state[6] += g;
+    state[7] += h;
+}
+
+void Sha256::update(std::span<const std::uint8_t> bytes)
+{
+    totalBytes += bytes.size();
+    auto offset = std::size_t {0};
+
+    if (pendingSize > 0)
+    {
+        auto toCopy = std::min(sha256BlockSize - pendingSize, bytes.size());
+        std::copy_n(bytes.data(), toCopy, pending.data() + pendingSize);
+        pendingSize += toCopy;
+        offset = toCopy;
+
+        if (pendingSize < sha256BlockSize)
+            return;
+
+        processBlock(pending);
+        pendingSize = 0;
+    }
+
+    while (bytes.size() - offset >= sha256BlockSize)
+    {
+        processBlock(bytes.subspan(offset).first<sha256BlockSize>());
+        offset += sha256BlockSize;
+    }
+
+    pendingSize = bytes.size() - offset;
+    std::copy_n(bytes.data() + offset, pendingSize, pending.data());
+}
+
+void Sha256::update(std::string_view text)
+{
+    auto bytes = reinterpret_cast<const std::uint8_t*>(text.data());
+    update(std::span<const std::uint8_t>(bytes, text.size()));
+}
+
+Sha256Digest Sha256::finish()
+{
+    auto totalBits = totalBytes * bitsPerByte;
+    auto padding = std::vector<std::uint8_t> {paddingStartByte};
+    auto lengthOffset = sha256BlockSize - lengthFieldSize;
+
+    while ((pendingSize + padding.size()) % sha256BlockSize != lengthOffset)
+        padding.push_back(0);
+
+    for (auto i = lengthFieldSize - 1; i >= 0; --i)
+        padding.push_back(std::uint8_t(totalBits >> (i * bitsPerByte)));
+
+    auto savedTotal = totalBytes;
+    update(padding);
+    totalBytes = savedTotal;
+
+    auto digest = Sha256Digest {};
+
+    for (auto i = 0; i < sha256WordCount; ++i)
+    {
+        for (auto byte = 0; byte < bytesPerWord; ++byte)
+        {
+            auto shift = (bytesPerWord - 1 - byte) * bitsPerByte;
+            digest[i * bytesPerWord + byte] = std::uint8_t(state[i] >> shift);
+        }
+    }
+
+    return digest;
+}
+
+std::string convertDigestToHex(const Sha256Digest& digest)
+{
+    constexpr auto hexDigits = std::string_view {"0123456789abcdef"};
+    constexpr auto nibbleBits = 4;
+    constexpr auto nibbleMask = 0xf;
+
+    auto hex = std::string {};
+
+    for (auto byte: digest)
+    {
+        hex.push_back(hexDigits[byte >> nibbleBits]);
+        hex.push_back(hexDigits[byte & nibbleMask]);
+    }
+
+    return hex;
+}
+
+std::string computeSha256Hex(std::string_view text)
+{
+    auto hasher = Sha256 {};
+    hasher.update(text);
+    return convertDigestToHex(hasher.finish());
+}
+
+Sha256Digest computeFileSha256(const std::filesystem::path& file)
+{
+    constexpr auto readChunkSize = std::size_t {1 << 20};
+    auto stream = std::ifstream {file, std::ios::binary};
+
+    if (!stream)
+        throw std::runtime_error("cannot open " + eacp::FilePath {file}.str()
+                                 + " to hash it");
+
+    auto hasher = Sha256 {};
+    auto chunk = std::vector<char>(readChunkSize);
+
+    while (stream.read(chunk.data(), static_cast<std::streamsize>(chunk.size()))
+           || stream.gcount() > 0)
+    {
+        auto readCount = static_cast<std::size_t>(stream.gcount());
+        hasher.update(std::string_view {chunk.data(), readCount});
+    }
+
+    return hasher.finish();
+}
+
+Sha256Digest computeFileSha256(const eacp::FilePath& file)
+{
+    return computeFileSha256(getLongPathSafeStdPath(file));
+}
+
+std::string computeFileSha256Hex(const eacp::FilePath& file)
+{
+    return convertDigestToHex(computeFileSha256(file));
+}
+
+std::string computeFileSha256Hex(const std::filesystem::path& file)
+{
+    return convertDigestToHex(computeFileSha256(file));
 }
 } // namespace epm

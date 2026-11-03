@@ -13,10 +13,31 @@ add_library(epm-core STATIC
         Cache/SourceCache.h
         Emit/Response.cpp
         Emit/Response.h
+        Lock/LockFile.cpp
+        Lock/LockFile.h
+        Lock/MerkleHash.cpp
+        Lock/MerkleHash.h
+        Lock/Messages.cpp
+        Lock/Messages.h
+        Lock/Session.cpp
+        Lock/Session.h
+        Resolve/Commands.cpp
+        Resolve/Commands.h
         Resolve/Resolve.cpp
         Resolve/Resolve.h
+        Source/Download.cpp
+        Source/Download.h
+        Source/Mirror.cpp
+        Source/Mirror.h
+        Source/PackageCache.cpp
+        Source/PackageCache.h
+        Source/Submodules.cpp
+        Source/Submodules.h
         Spec/Env.h
         Spec/JsonFile.h
+        Spec/PackageArguments.cpp
+        Spec/PackageArguments.h
+        Spec/PackageKind.h
         Spec/Request.h
         Util/Command.cpp
         Util/Command.h
@@ -24,8 +45,13 @@ add_library(epm-core STATIC
         Util/Git.h
         Util/Log.cpp
         Util/Log.h
+        Util/LongPath.cpp
+        Util/LongPath.h
+        Util/Paths.h
         Util/Sha256.cpp
         Util/Sha256.h
+        Util/Status.cpp
+        Util/Status.h
         Util/Text.cpp
         Util/Text.h
         Util/Timestamp.cpp

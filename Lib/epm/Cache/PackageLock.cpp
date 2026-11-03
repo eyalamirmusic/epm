@@ -8,7 +8,7 @@ namespace
 {
 std::string lockName(const CacheRoot& cache, std::string_view name)
 {
-    return "epm-" + sha256Hex(cache.path().str()).substr(0, 12) + "-"
+    return "epm-" + computeSha256Hex(cache.path().str()).substr(0, 12) + "-"
            + std::string {name};
 }
 } // namespace
