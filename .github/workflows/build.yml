@@ -97,13 +97,13 @@ jobs:
             clang++ --version
           fi
 
-      # eacp is fetched at GIT_TAG main, which CPM never refreshes inside an
+      # eacp is fetched at GIT_TAG develop, which CPM never refreshes inside an
       # existing source cache, so eacp's current commit is part of the key and a
       # new eacp commit starts a fresh cache rather than restoring a stale one.
-      - name: Resolve eacp main
+      - name: Resolve eacp develop
         id: eacp
         run: |
-          echo "sha=$(git ls-remote https://github.com/eyalamirmusic/eacp refs/heads/main | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git ls-remote https://github.com/eyalamirmusic/eacp refs/heads/develop | cut -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Cache CPM sources
         uses: actions/cache@v6
