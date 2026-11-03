@@ -27,7 +27,7 @@ interface may all change.
 cmake_minimum_required(VERSION 3.31)
 project(HelloEacp CXX)
 
-include(path/to/epm/CMake/epm.cmake)
+include(cmake/get_epm.cmake)        # vendored from this repository's CMake/
 
 epm_add_package(
         NAME eacp
@@ -56,34 +56,53 @@ reuse both and take about a second.
 
 ## Getting the epm binary
 
-`epm.cmake` pins an epm version and finds the binary when it is included,
-in this order:
+A project vendors one file, [`CMake/get_epm.cmake`](CMake/get_epm.cmake) (also
+attached to every [release](https://github.com/eyalamirmusic/epm/releases)),
+and includes it. By default it uses the **latest epm release**. It finds a
+binary in this order, taking the first one whose version is in range:
 
 1. `-DEPM_EXECUTABLE=/path/to/epm`, if given.
-2. A binary fetched earlier, under `<cache>/tool/<ref>/`.
-3. The pinned release binary, downloaded from
-   [GitHub Releases](https://github.com/eyalamirmusic/epm/releases) on macOS,
-   Linux (x64, arm64) and Windows (x64, arm64), checked against the SHA-256
-   pinned in `epm.cmake` and unpacked into `<cache>/tool/<ref>/`. This takes a
-   few seconds and prints one line (`-- epm: downloaded epm 0.1.1 (...)`).
-4. Otherwise, or if the download, the hash check or a test run of the binary
-   fails: download the pinned source tag and build it on the host, once per
-   machine, into the same place. This prints one line and takes a minute or so.
-   The build ignores the consumer's toolchain, so it also works when the
-   consumer targets iOS or Android.
-5. `epm` on `PATH`, if the source could not be downloaded either.
+2. An `epm` installed on `PATH` (with its `share/epm/cmake/epm.cmake`):
+   `-- epm: using epm 0.1.2 from /usr/local/bin/epm`.
+3. A binary an earlier configure put in the cache, under `<cache>/tool/v<version>/`,
+   unless the latest release is newer.
+4. The latest release: its `manifest.json` is read from GitHub at most once a
+   day (`-DEPM_UPDATE=ON` checks now), and the archive for this host (macOS,
+   Linux x64/arm64, Windows x64/arm64) is downloaded, checked against the
+   manifest's SHA-256 and unpacked into the cache. This takes a few seconds and
+   prints `-- epm: downloaded epm 0.1.2 (macos-universal) into ...`.
+5. Otherwise, or if the download fails: build that version from source on the
+   host, once per machine, into the same place. This takes a minute or so and
+   ignores the consumer's toolchain, so it also works when the consumer targets
+   iOS or Android.
+
+It then includes the `epm.cmake` that was installed with the chosen binary, so
+`epm_add_package` and the binary always match. Offline, the cached binary is
+used.
+
+### Pinning a version
+
+Set `EPM_VERSION` before the include (or pass `-DEPM_VERSION=...`), in CMake's
+range syntax:
+
+```cmake
+set(EPM_VERSION "0.1...<0.2")    # any 0.1.x
+include(cmake/get_epm.cmake)
+```
+
+`"0.1.2"` means 0.1.2 or newer (as in `find_package`), `"0.1...0.2"` includes
+0.2.0. An `epm` on `PATH` or in the cache outside the range is skipped. When the
+latest release is outside the range and the range starts at an exact `x.y.z`,
+release `vx.y.z` is downloaded instead; no other releases are searched, so to
+stay on an older line, start the range at a version that exists.
 
 The cache is `~/Library/Caches/epm` on macOS, `$XDG_CACHE_HOME/epm` or
 `~/.cache/epm` on Linux, `%LOCALAPPDATA%\epm` on Windows, or wherever `EPM_CACHE`
-(CMake or environment variable) points. `-DEPM_BOOTSTRAP_NO_DOWNLOAD=ON` always
-builds the pinned version from source, `EPM_SOURCE_REF` (or `EPM_SOURCE_URL`)
+(CMake or environment variable) points. `-DEPM_BOOTSTRAP_NO_DOWNLOAD=ON` builds
+from source instead of downloading, `EPM_SOURCE_REF` (or `EPM_SOURCE_URL`)
 builds another tag, branch or commit from source, `EPM_BOOTSTRAP_SOURCE_DIR`
-builds from a local checkout, and `EPM_VERBOSE=ON` shows the full output.
-Details are in Docs/PoC.md §8.
-
-Every release also carries an `epm.cmake` asset with its version and hashes
-already pinned, so a project can vendor that single file. The copy on the
-`nightly` prerelease pins the nightly binaries.
+builds a local checkout and uses its `CMake/epm.cmake` (for working on epm), and
+`EPM_VERBOSE=ON` shows what is tried. Details are in Docs/PoC.md §8.
 
 ## Building and installing epm
 
@@ -94,7 +113,8 @@ fetched with CPM and linked statically.
 cmake -S . -B build && cmake --build build && cmake --install build --prefix ~/.local
 ```
 
-This installs `bin/epm` and `share/epm/cmake/epm.cmake`, nothing else. Tests run
+This installs `bin/epm` and `share/epm/cmake/epm.cmake`, nothing else; with
+`bin` on `PATH`, `get_epm.cmake` uses it. Tests run
 with `ctest --test-dir build` (`EPM_ENABLE_TESTS` is ON by default when epm is
 the top-level project).
 
@@ -113,22 +133,33 @@ Release builds with Ninja:
 | `linux-x64`       | `ubuntu-24.04`     | clang, lld                          |
 | `linux-arm64`     | `ubuntu-24.04-arm` | clang, lld                          |
 
-Each job builds epm, runs `ctest`, then configures and runs `Examples/HelloEacp`
-with the binary it just built (`MODE auto`, so eacp is fetched and built Debug
-and Release into a cache inside the workspace), configures it once more with no
-epm at all and a fresh cache to check that the pinned release binary is
-downloaded, and uploads the package as a workflow artifact.
+Each job builds epm, runs `ctest`, then configures, builds and runs
+`Examples/HelloEacp` through `get_epm.cmake` four ways: (a) with the binary it
+just built (`MODE auto`, so eacp is fetched and built Debug and Release into a
+cache inside the workspace); (b) with nothing set and no epm on `PATH`, which
+must download the latest release; (c) with the epm 0.1.1 release unpacked onto
+`PATH`, which must be used; (d) with that same `PATH` and `EPM_VERSION=0.1.2`,
+which must skip it and download the latest release. (b) and (d) are skipped
+while the latest release has no `manifest.json`. The package is uploaded as a
+workflow artifact.
 
 `.github/workflows/release.yml` builds the same packages on pushes to `main` and
 `release/**` and on `v*` tags (the list is at the top of the file):
 `epm-<version>-<platform>.tar.gz` (`.zip` on Windows), holding `bin/epm` and
-`share/epm/cmake/epm.cmake`, a `SHA256SUMS` file, and an `epm.cmake` with
-those hashes pinned (see above). A branch push replaces
+`share/epm/cmake/epm.cmake`, plus `SHA256SUMS`, `manifest.json` (what
+`get_epm.cmake` reads) and a copy of `get_epm.cmake`. A branch push replaces
 the assets of the rolling
 [`nightly`](https://github.com/eyalamirmusic/epm/releases/tag/nightly)
-prerelease; a `v*` tag publishes them on the
-[release](https://github.com/eyalamirmusic/epm/releases) of that tag. Both
-workflows share their build matrix through `.github/workflows/build.yml`.
+prerelease (never "latest", so never picked by `get_epm.cmake`); a `v*` tag
+publishes them on the [release](https://github.com/eyalamirmusic/epm/releases)
+of that tag, which becomes the latest. Both workflows share their build matrix
+through `.github/workflows/build.yml`.
+
+### Releasing
+
+Bump `project(epm VERSION X.Y.Z)` in `CMakeLists.txt`, merge to `main`, then
+tag and push `vX.Y.Z`. That is all: no version or hash lives anywhere else in
+the repository, and consumers pick the new release up within a day.
 
 The Linux binaries are built on Ubuntu 24.04 and need glibc 2.38 or newer and
 `libcurl.so.4`; the Windows binaries need the Visual C++ runtime.

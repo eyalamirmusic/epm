@@ -1,10 +1,13 @@
 cmake_minimum_required(VERSION 3.31)
 project(HelloEacp CXX)
 
-# Uses -DEPM_EXECUTABLE when given; otherwise downloads the pinned epm release
-# binary into the cache on first use, or builds it from source where no binary
-# is available (see Docs/PoC.md §8).
-include(${CMAKE_CURRENT_LIST_DIR}/../../CMake/epm.cmake)
+# Uses -DEPM_EXECUTABLE or an epm on PATH when given, else the latest epm
+# release, downloaded into the cache on first use (built from source where no
+# binary is available). See Docs/PoC.md §8. Optional, before the include:
+#
+#   set(EPM_VERSION "0.1...<0.2")                      # accepted epm versions
+#   set(EPM_BOOTSTRAP_SOURCE_DIR /path/to/epm)         # build a local epm checkout
+include(${CMAKE_CURRENT_LIST_DIR}/../../CMake/get_epm.cmake)
 
 epm_add_package(
         NAME eacp

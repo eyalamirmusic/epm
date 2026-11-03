@@ -23,9 +23,12 @@ repository layout. `PLAN.md` is the longer-term design and background.
 - `Apps/epm/Main.cpp` — the `epm` executable: `Apps::runConsole` plus manual
   subcommand dispatch on `argv[1]`, `Args::Parser` per subcommand.
 - `CMake/` — vendored `CPM.cmake`, `Find<dep>.cmake` shims (one
-  `CPMAddPackage` each), `epm.cmake` (the consumer module) and
-  `epm-export.cmake` (injected into child builds).
-- `Tests/` — NanoTest, one `<Area>Tests.cpp` per area.
+  `CPMAddPackage` each), `get_epm.cmake` (the file consumers vendor: finds
+  the binary), `epm.cmake` (the consumer module, installed with the binary)
+  and `epm-export.cmake` (injected into child builds).
+- `Tests/` — NanoTest, one `<Area>Tests.cpp` per area, plus
+  `GetEpmRanges.cmake`, a `cmake -P` self-test of get_epm's `EPM_VERSION`
+  range handling (ctest `get_epm_ranges`).
 - `Examples/` — consumer projects that exercise `epm.cmake`.
 
 ## Build
@@ -37,18 +40,18 @@ ctest --test-dir build --output-on-failure
 ```
 
 `cmake --install build --prefix <dir>` installs only `bin/epm` and
-`share/epm/cmake/epm.cmake`. Consumers need neither: `epm.cmake` downloads the
-pinned release binary into `<cache>/tool/<ref>/`, or builds it there through
-those same install rules (`Docs/PoC.md` §8).
+`share/epm/cmake/epm.cmake`. Consumers vendor `CMake/get_epm.cmake`, which uses
+an in-range epm on PATH, else downloads the latest release (its
+`manifest.json`) into `<cache>/tool/<tag>/`, or builds it there through those
+same install rules, then includes that entry's `epm.cmake` (`Docs/PoC.md` §8).
+`CMake/epm.cmake` requires `EPM_EXECUTABLE` and has no bootstrap of its own.
 
-Two versions: `project(epm VERSION ...)` is the source version
-(`Apps/epm/Version.h.in` carries it into `epm --version`, release.yml names the
-assets after it and checks it against a `v*` tag). `EPM_VERSION` in
-`CMake/epm.cmake` is the binary version consumers get, with the five
-`EPM_RELEASE_SHA256_<platform>` hashes of exactly that release. To release:
-bump `project(VERSION)`, push to main, tag `vX.Y.Z`, wait for release.yml, then
-set `EPM_VERSION` and paste the hashes from the release's `SHA256SUMS` (or
-copy them from its `epm.cmake` asset).
+One version: `project(epm VERSION ...)` (`Apps/epm/Version.h.in` carries it
+into `epm --version`, release.yml names the assets after it and checks it
+against a `v*` tag). No version or hash is kept anywhere else, and CI never
+commits. To release: bump `project(VERSION)`, merge to main, tag `vX.Y.Z` and
+push the tag; release.yml publishes the archives, `SHA256SUMS`,
+`manifest.json` and `get_epm.cmake`. Never move or delete a published tag.
 
 `EPM_ENABLE_TESTS` defaults ON when epm is the top-level project.
 `EPM_VERBOSE_CONFIGURE=ON` brings back the configure detail hidden by default.

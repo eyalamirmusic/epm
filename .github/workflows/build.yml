@@ -27,8 +27,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `platform` is the release asset suffix and must match the
-        # EPM_RELEASE_SHA256_<platform> keys in CMake/epm.cmake.
+        # `platform` is the release asset suffix and must match the manifest
+        # keys get_epm.cmake looks up (get_epm_host_platform).
         # `cmake-flags` apply to epm and to the HelloEacp smoke build,
         # `epm-flags` to epm only. Linux links with lld: eacp's
         # set_default_target_setting turns on LTO for Release, and GNU ld
@@ -131,8 +131,10 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
-      # The full consumer path: epm.cmake with this epm, MODE auto, so eacp is
-      # fetched and built Debug + Release into a cache inside the workspace.
+      # (a) The full consumer path with this epm: get_epm.cmake takes
+      # EPM_EXECUTABLE and, finding no module installed beside it, the
+      # repository's CMake/epm.cmake. MODE auto, so eacp is fetched and built
+      # Debug + Release into a cache inside the workspace.
       - name: HelloEacp smoke test
         if: inputs.smoke
         run: |
@@ -143,22 +145,76 @@ jobs:
           cmake --build build-hello
           "./build-hello/hello$EXE_SUFFIX"
 
-      # The consumer path with no epm at all: epm.cmake must download the pinned
-      # release binary for this platform (bootstrap step 3) into a fresh cache,
-      # not build it. Skipped until CMake/epm.cmake pins release hashes.
-      - name: HelloEacp release download smoke test
+      # The consumer smoke tests below share one cache: (b) starts it empty,
+      # (c) and (d) delete only its tool/ directory, so each picks its epm from
+      # scratch but reuses the eacp build of the step before. (b) and (d) need
+      # a release that ships manifest.json and skip until there is one.
+      - name: Check for a release manifest
         if: inputs.smoke
         run: |
-          if ! grep -Eq '^set\(EPM_RELEASE_SHA256_[a-z0-9-]+ "[0-9a-fA-F]{64}"\)' CMake/epm.cmake; then
-            echo "::notice::CMake/epm.cmake pins no release hashes; skipping the download smoke test"
-            exit 0
+          code="$(curl -sL -o /dev/null -w '%{http_code}' \
+            https://github.com/eyalamirmusic/epm/releases/latest/download/manifest.json)"
+          echo "releases/latest/download/manifest.json: HTTP $code"
+          case "$code" in
+            200) echo "HAVE_MANIFEST=1" >> "$GITHUB_ENV" ;;
+            404) echo "::notice::the latest epm release has no manifest.json; skipping the download smoke tests" ;;
+            *) exit 1 ;;
+          esac
+          echo "CONSUMER_CACHE=$ROOT/.epm-cache-consumer" >> "$GITHUB_ENV"
+
+      # (b) A consumer with nothing set and no epm on PATH: get_epm.cmake must
+      # download the latest release into the empty cache.
+      - name: HelloEacp latest release smoke test
+        if: inputs.smoke && env.HAVE_MANIFEST == '1'
+        run: |
+          if command -v epm; then
+            echo "::error::an epm is on PATH; this test needs none"
+            exit 1
           fi
-          cmake -S Examples/HelloEacp -B build-hello-download -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            "-DEPM_CACHE=$ROOT/.epm-cache-download" \
-            ${{ matrix.cmake-flags }} 2>&1 | tee configure-download.log
-          grep -q 'epm: downloaded epm' configure-download.log
-          cmake --build build-hello-download
-          "./build-hello-download/hello$EXE_SUFFIX"
+          rm -rf "$CONSUMER_CACHE"
+          cmake -S Examples/HelloEacp -B build-hello-latest -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            "-DEPM_CACHE=$CONSUMER_CACHE" \
+            ${{ matrix.cmake-flags }} 2>&1 | tee configure-latest.log
+          grep -q 'epm: downloaded epm' configure-latest.log
+          cmake --build build-hello-latest
+          "./build-hello-latest/hello$EXE_SUFFIX"
+
+      # (c) An epm 0.1.1 installed on PATH is preferred when no range is given.
+      - name: HelloEacp PATH smoke test
+        if: inputs.smoke
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then ext=zip; else ext=tar.gz; fi
+          curl -fsSL -o "epm-0.1.1.$ext" \
+            "https://github.com/eyalamirmusic/epm/releases/download/v0.1.1/epm-0.1.1-${{ matrix.platform }}.$ext"
+          rm -rf .epm-path && mkdir .epm-path
+          (cd .epm-path && cmake -E tar xf "../epm-0.1.1.$ext")
+          export PATH="$PWD/.epm-path/bin:$PATH"
+          epm --version
+          rm -rf "$CONSUMER_CACHE/tool"
+          cmake -S Examples/HelloEacp -B build-hello-path -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            "-DEPM_CACHE=$CONSUMER_CACHE" \
+            ${{ matrix.cmake-flags }} 2>&1 | tee configure-path.log
+          grep -q 'using epm 0.1.1 from' configure-path.log
+          cmake --build build-hello-path
+          "./build-hello-path/hello$EXE_SUFFIX"
+
+      # (d) The same PATH, but EPM_VERSION 0.1.2 (>= 0.1.2) rules it out: the
+      # latest release is downloaded instead.
+      - name: HelloEacp version range smoke test
+        if: inputs.smoke && env.HAVE_MANIFEST == '1'
+        run: |
+          export PATH="$PWD/.epm-path/bin:$PATH"
+          rm -rf "$CONSUMER_CACHE/tool"
+          cmake -S Examples/HelloEacp -B build-hello-range -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            "-DEPM_CACHE=$CONSUMER_CACHE" -DEPM_VERSION=0.1.2 \
+            ${{ matrix.cmake-flags }} 2>&1 | tee configure-range.log
+          if grep -q 'using epm 0.1.1 from' configure-range.log; then
+            echo "::error::EPM_VERSION 0.1.2 still used the epm 0.1.1 on PATH"
+            exit 1
+          fi
+          grep -q 'epm: downloaded epm' configure-range.log
+          cmake --build build-hello-range
+          "./build-hello-range/hello$EXE_SUFFIX"
 
       - name: Package
         if: inputs.package

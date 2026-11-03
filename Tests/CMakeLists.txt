@@ -11,3 +11,6 @@ nano_add_executable(epmTests
             SourceCacheTests.cpp
             SpecTests.cpp
         TARGETS epm-core)
+
+add_test(NAME get_epm_ranges
+        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/GetEpmRanges.cmake)

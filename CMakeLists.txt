@@ -38,7 +38,8 @@ add_subdirectory(Lib)
 add_subdirectory(Apps)
 
 # The whole install: the binary and the consumer module. eacp and Miro are
-# static and linked in. The bootstrap in epm.cmake installs through these rules.
+# static and linked in. A tool entry of get_epm.cmake is exactly this install,
+# whether unpacked from a release archive or built from source.
 install(FILES CMake/epm.cmake DESTINATION share/epm/cmake)
 
 option(EPM_ENABLE_TESTS "Enable Tests for epm" ${PROJECT_IS_TOP_LEVEL})
