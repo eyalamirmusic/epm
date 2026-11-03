@@ -1,0 +1,24 @@
+# A hand-written graph.cmake (Docs/Graph.md §7) over the fake packages in
+# Packages/. Tests/GraphProvider.cmake fills in @PACKAGES@.
+set(epm_PACKAGES "Pre;Leaf;Fetched")
+
+set(epm_Pre_MODE prebuilt)
+set(epm_Pre_SOURCE_DIR "@PACKAGES@/Pre/src")
+set(epm_Pre_DEPS "")
+set(epm_Pre_OPTIONS "")
+set(epm_Pre_PREFIX "@PACKAGES@/Pre/fake-platform/0123456789ab")
+set(epm_Pre_TARGETS_FILE "${epm_Pre_PREFIX}/epm-targets.cmake")
+set(epm_Pre_CONFIGS "Release")
+set(epm_Pre_NOTE "")
+
+set(epm_Leaf_MODE source)
+set(epm_Leaf_SOURCE_DIR "@PACKAGES@/Leaf")
+set(epm_Leaf_DEPS "Pre")
+set(epm_Leaf_OPTIONS "LEAF_FLAG=ON;LEAF_LEVEL=high;LEAF_NAME=two words=2")
+
+set(epm_Fetched_MODE source)
+set(epm_Fetched_SOURCE_DIR "@PACKAGES@/Fetched")
+set(epm_Fetched_DEPS "")
+set(epm_Fetched_OPTIONS "")
+
+set(epm_NOTES "Leaf: Other declares 1.0, root declares 2.0")

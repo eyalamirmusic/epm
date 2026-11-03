@@ -1,10 +1,20 @@
-# epm.cmake -- the module that defines epm_add_package.
+# epm.cmake -- the module that drives the epm binary from CMake.
 #
-# Projects do not include this file directly: they include get_epm.cmake, which
-# finds (or downloads, or builds) an epm binary, sets EPM_EXECUTABLE and then
-# includes the epm.cmake installed with that binary, so the two always match.
+# Projects do not include this file directly: they list get_epm.cmake in
+# CMAKE_PROJECT_TOP_LEVEL_INCLUDES (or include it), and it finds (or downloads,
+# or builds) an epm binary, sets EPM_EXECUTABLE and then includes the epm.cmake
+# installed with that binary, so the two always match. epm-provider.cmake must
+# sit beside this file.
 #
-#   include(path/to/get_epm.cmake)
+# Two flows, while the second replaces the first (Docs/Graph.md):
+#
+# 1. A manifest, epm.json beside the top-level CMakeLists.txt. get_epm.cmake
+#    calls epm_use_manifest, which registers the dependency provider of
+#    epm-provider.cmake. The provider's first call writes env.json and
+#    overrides.json, runs `epm configure` for the whole graph and reads the
+#    graph.cmake it writes; find_package(<name>) then loads each package.
+#
+# 2. epm_add_package, one package per call (Docs/PoC.md):
 #
 #   epm_add_package(
 #       NAME eacp
@@ -27,14 +37,15 @@
 #
 # Variables read:
 #   EPM_EXECUTABLE              the epm binary (required; set by get_epm.cmake)
-#   EPM_BUILD_MISSING_BINARIES  ON (default): `auto` builds a missing binary
-#                               entry; OFF: `auto` falls back to source instead
+#   EPM_BUILD_MISSING_BINARIES  ON (the default when unset): `auto` builds a
+#                               missing binary entry; OFF: `auto` falls back to
+#                               source instead
 #   EPM_CACHE                   cache root handed to the binary as --cache
 #                               (else the EPM_CACHE environment variable, else the
 #                               platform cache directory, as the binary does)
 #   EPM_VERBOSE                 pass --verbose and echo the binary's output
-#   EPM_CONFIGS                 auto (default): a single-config generator gets
-#                               CMAKE_BUILD_TYPE (empty, RelWithDebInfo and
+#   EPM_CONFIGS                 auto (the default): a single-config generator
+#                               gets CMAKE_BUILD_TYPE (empty, RelWithDebInfo and
 #                               MinSizeRel mean Release), a multi-config one
 #                               Debug;Release. Or a list of Debug, Release,
 #                               RelWithDebInfo, MinSizeRel (the last two are
@@ -47,12 +58,22 @@
 #                               recorded detail, compiler path and full version
 #                               included) or any (platform, options, source)
 #
+# With a manifest, EPM_CONFIGS, EPM_ABI_MATCH and EPM_BUILD_MISSING_BINARIES are
+# overrides: unset or empty, the manifest (or the binary's default) decides.
+# The manifest flow also reads EPM_PROFILE, EPM_MODE, EPM_STRICT and
+# EPM_<name>_MODE, _SOURCE, _CONFIGS and _OPTIONS (KEY=VALUE list); see
+# epm_write_overrides.
+#
 # Files exchanged with the binary live under ${CMAKE_BINARY_DIR}/epm/:
 #   env.json                    toolchain description, written once per configure
-#   requests/<name>.json        one per package
-#   responses/<name>.cmake      written by the binary, included here
+#   overrides.json              the overrides above (manifest flow)
+#   graph.cmake, graph.json     written by `epm configure` (manifest flow)
+#   requests/<name>.json        one per epm_add_package
+#   responses/<name>.cmake      written by `epm resolve`, included here
 
 include_guard(GLOBAL)
+
+include("${CMAKE_CURRENT_LIST_DIR}/epm-provider.cmake")
 
 # Resolves an EPM_CONFIGS value into the configs to build and cache, each one
 # Debug or Release (RelWithDebInfo and MinSizeRel are built as Release), Debug
@@ -110,49 +131,6 @@ function(epm_resolve_configs spec is_multi_config build_type out_var error_var)
     set(${error_var} "${error}" PARENT_SCOPE)
 endfunction()
 
-# Tests/EpmConfigsAuto.cmake wants the functions above only.
-if (EPM_FUNCTIONS_ONLY)
-    return()
-endif ()
-
-if (NOT EPM_EXECUTABLE)
-    message(FATAL_ERROR
-            "epm: EPM_EXECUTABLE is not set. Include get_epm.cmake instead of "
-            "epm.cmake: it finds the epm binary and includes the epm.cmake that "
-            "belongs to it.")
-endif ()
-
-# The same policies CPM sets (cpm_set_policies in CPM.cmake 0.40.2): with CMP0077
-# and CMP0126 NEW a plain variable set before add_subdirectory wins over the
-# subproject's option() / set(CACHE), so OPTIONS take effect without touching the
-# cache. The CMAKE_POLICY_DEFAULT_* variables carry the setting into subprojects
-# whose own cmake_minimum_required predates the policies.
-macro(epm_set_policies)
-    cmake_policy(SET CMP0077 NEW)
-    set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
-
-    if (POLICY CMP0126)
-        cmake_policy(SET CMP0126 NEW)
-        set(CMAKE_POLICY_DEFAULT_CMP0126 NEW)
-    endif ()
-endmacro()
-
-epm_set_policies()
-
-option(EPM_BUILD_MISSING_BINARIES
-        "Let MODE auto build a missing binary cache entry (OFF: fall back to source)"
-        ON)
-
-set(EPM_CONFIGS "auto" CACHE STRING
-        "Configs to build and cache: auto (single-config: CMAKE_BUILD_TYPE; \
-multi-config: Debug;Release) or a list of Debug, Release, RelWithDebInfo, MinSizeRel")
-
-set(EPM_ABI_MATCH "compatible" CACHE STRING
-        "Which cached build may be used: compatible, strict or any")
-set_property(CACHE EPM_ABI_MATCH PROPERTY STRINGS compatible strict any)
-
-set(EPM_DIR "${CMAKE_BINARY_DIR}/epm")
-
 # Quotes `value` as a JSON string literal, for string(JSON ... SET), which takes
 # JSON text and so cannot be handed a raw string.
 function(epm_json_quote value out_var)
@@ -170,6 +148,158 @@ function(epm_json_set_string json_var key value)
     string(JSON json SET "${${json_var}}" "${key}" "${quoted}")
     set(${json_var} "${json}" PARENT_SCOPE)
 endfunction()
+
+# A JSON array of the strings in ARGN.
+function(epm_json_string_array out_var)
+    set(array "[]")
+    set(index 0)
+
+    foreach (item IN LISTS ARGN)
+        epm_json_quote("${item}" quoted)
+        string(JSON array SET "${array}" ${index} "${quoted}")
+        math(EXPR index "${index} + 1")
+    endforeach ()
+
+    set(${out_var} "${array}" PARENT_SCOPE)
+endfunction()
+
+# Writes overrides.json (Docs/Graph.md §3) from the EPM_* variables visible
+# here, normal or cache, a normal one winning as ${} has it. Empty values are
+# left out; EPM_<name>_SOURCE is made absolute against CMAKE_SOURCE_DIR.
+# buildMissingBinaries (EPM_BUILD_MISSING_BINARIES) is written only when set.
+function(epm_write_overrides file)
+    set(json "{}")
+    string(JSON json SET "${json}" schema 1)
+    epm_json_set_string(json profile "${EPM_PROFILE}")
+    epm_json_set_string(json mode "${EPM_MODE}")
+    epm_json_string_array(configs ${EPM_CONFIGS})
+    string(JSON json SET "${json}" configs "${configs}")
+    epm_json_set_string(json abiMatch "${EPM_ABI_MATCH}")
+
+    if (EPM_STRICT)
+        string(JSON json SET "${json}" strict true)
+    else ()
+        string(JSON json SET "${json}" strict false)
+    endif ()
+
+    if (NOT "${EPM_BUILD_MISSING_BINARIES}" STREQUAL "")
+        if (EPM_BUILD_MISSING_BINARIES)
+            string(JSON json SET "${json}" buildMissingBinaries true)
+        else ()
+            string(JSON json SET "${json}" buildMissingBinaries false)
+        endif ()
+    endif ()
+
+    get_cmake_property(normal_names VARIABLES)
+    get_cmake_property(cache_names CACHE_VARIABLES)
+    set(names ${normal_names} ${cache_names})
+    list(REMOVE_DUPLICATES names)
+    list(SORT names)
+
+    set(packages "{}")
+    set(empty_package [=[{"mode": "", "source": "", "configs": [], "options": {}}]=])
+
+    foreach (var IN LISTS names)
+        # Only matching names are read: reading some others warns (CMP0218).
+        if (NOT var MATCHES "^EPM_(.+)_(MODE|SOURCE|CONFIGS|OPTIONS)$")
+            continue()
+        endif ()
+
+        set(name "${CMAKE_MATCH_1}")
+        set(field "${CMAKE_MATCH_2}")
+        set(value "${${var}}")
+
+        if (value STREQUAL "")
+            continue()
+        endif ()
+
+        string(JSON package ERROR_VARIABLE missing GET "${packages}" "${name}")
+
+        if (missing)
+            set(package "${empty_package}")
+        endif ()
+
+        if (field STREQUAL "MODE")
+            epm_json_set_string(package mode "${value}")
+        elseif (field STREQUAL "SOURCE")
+            if (value MATCHES "^~([/\\]|$)")
+                set(home "$ENV{HOME}")
+
+                if (home STREQUAL "" AND CMAKE_HOST_WIN32)
+                    set(home "$ENV{USERPROFILE}")
+                endif ()
+
+                string(REGEX REPLACE "^~" "${home}" value "${value}")
+            endif ()
+
+            file(TO_CMAKE_PATH "${value}" value)
+            cmake_path(ABSOLUTE_PATH value BASE_DIRECTORY "${CMAKE_SOURCE_DIR}"
+                    NORMALIZE)
+            epm_json_set_string(package source "${value}")
+        elseif (field STREQUAL "CONFIGS")
+            epm_json_string_array(configs ${value})
+            string(JSON package SET "${package}" configs "${configs}")
+        else ()
+            set(options "{}")
+
+            foreach (option IN LISTS value)
+                string(FIND "${option}" "=" equals)
+
+                if (equals EQUAL -1)
+                    set(key "${option}")
+                    set(option_value "ON")
+                else ()
+                    string(SUBSTRING "${option}" 0 ${equals} key)
+                    math(EXPR equals "${equals} + 1")
+                    string(SUBSTRING "${option}" ${equals} -1 option_value)
+                endif ()
+
+                if (key STREQUAL "")
+                    message(FATAL_ERROR "epm: ${var} has an option without a name: "
+                            "'${option}' (give KEY=VALUE)")
+                endif ()
+
+                epm_json_set_string(options "${key}" "${option_value}")
+            endforeach ()
+
+            string(JSON package SET "${package}" options "${options}")
+        endif ()
+
+        string(JSON packages SET "${packages}" "${name}" "${package}")
+    endforeach ()
+
+    string(JSON json SET "${json}" packages "${packages}")
+    file(WRITE "${file}" "${json}\n")
+endfunction()
+
+# Tests/EpmConfigsAuto.cmake and Tests/EpmOverrides.cmake want the functions
+# above only.
+if (EPM_FUNCTIONS_ONLY)
+    return()
+endif ()
+
+if (NOT EPM_EXECUTABLE)
+    message(FATAL_ERROR
+            "epm: EPM_EXECUTABLE is not set. Include get_epm.cmake instead of "
+            "epm.cmake: it finds the epm binary and includes the epm.cmake that "
+            "belongs to it.")
+endif ()
+
+epm_set_policies()
+
+# These three are empty by default (EPM_BUILD_MISSING_BINARIES unset), so a
+# default never overrides a manifest's setting.
+set(EPM_CONFIGS "" CACHE STRING
+        "Configs to build and cache: auto (single-config: CMAKE_BUILD_TYPE; \
+multi-config: Debug;Release) or a list of Debug, Release, RelWithDebInfo, \
+MinSizeRel. Empty: the manifest's, else auto")
+
+set(EPM_ABI_MATCH "" CACHE STRING
+        "Which cached build may be used: compatible, strict or any. Empty: the \
+manifest's, else compatible")
+set_property(CACHE EPM_ABI_MATCH PROPERTY STRINGS compatible strict any)
+
+set(EPM_DIR "${CMAKE_BINARY_DIR}/epm")
 
 # Splits a CPM-style option, "KEY VALUE" (or a bare "KEY", meaning ON). The value
 # keeps any spaces after the first one.
@@ -189,8 +319,9 @@ function(epm_parse_option option)
     set(EPM_OPTION_VALUE "${value}" PARENT_SCOPE)
 endfunction()
 
-# Writes ${EPM_DIR}/env.json, once per configure (on the first epm_add_package,
-# so a CMAKE_CXX_STANDARD set after the include is still seen).
+# Writes ${EPM_DIR}/env.json, once per configure, as late as it can: on the
+# first epm_add_package or the provider's first call, so a CMAKE_CXX_STANDARD
+# set after the include is still seen.
 function(epm_write_env)
     get_property(written GLOBAL PROPERTY EPM_ENV_WRITTEN)
 
@@ -222,16 +353,7 @@ function(epm_write_env)
 
     string(JSON json SET "${json}" isMultiConfig ${is_multi_config})
     epm_json_set_string(json buildType "${CMAKE_BUILD_TYPE}")
-
-    set(config_types "[]")
-    set(index 0)
-
-    foreach (config IN LISTS CMAKE_CONFIGURATION_TYPES)
-        epm_json_quote("${config}" quoted)
-        string(JSON config_types SET "${config_types}" ${index} "${quoted}")
-        math(EXPR index "${index} + 1")
-    endforeach ()
-
+    epm_json_string_array(config_types ${CMAKE_CONFIGURATION_TYPES})
     string(JSON json SET "${json}" configurationTypes "${config_types}")
 
     foreach (pair IN ITEMS
@@ -264,6 +386,73 @@ function(epm_write_env)
 
     file(WRITE "${EPM_DIR}/env.json" "${json}\n")
     set_property(GLOBAL PROPERTY EPM_ENV_WRITTEN TRUE)
+endfunction()
+
+# Runs the epm binary with `arguments` plus --cache and --verbose as asked for.
+# Fails the configure with `what` and the binary's output on a non-zero exit.
+function(epm_run_binary what)
+    set(command "${EPM_EXECUTABLE}" ${ARGN})
+
+    if (EPM_CACHE)
+        list(APPEND command --cache "${EPM_CACHE}")
+    endif ()
+
+    set(echo_args "")
+
+    if (EPM_VERBOSE)
+        list(APPEND command --verbose)
+        set(echo_args ECHO_OUTPUT_VARIABLE ECHO_ERROR_VARIABLE)
+    endif ()
+
+    # The project's directory, for paths given relative to it (a profile file).
+    execute_process(COMMAND ${command}
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            RESULT_VARIABLE result
+            OUTPUT_VARIABLE output
+            ERROR_VARIABLE error
+            ${echo_args})
+
+    if (NOT result EQUAL 0)
+        string(STRIP "${error}" error)
+        string(STRIP "${output}" output)
+
+        if (output AND NOT EPM_VERBOSE)
+            set(error "${output}\n${error}")
+        endif ()
+
+        message(FATAL_ERROR "epm: ${what} failed (exit ${result}): ${error}")
+    endif ()
+endfunction()
+
+# The provider's PREPARE step: env.json, overrides.json, then `epm configure`
+# over the manifest, which writes graph.cmake and graph.json.
+function(epm_configure_graph)
+    get_property(manifest GLOBAL PROPERTY EPM_MANIFEST)
+    set(graph_file "${EPM_DIR}/graph.cmake")
+
+    epm_write_env()
+    epm_write_overrides("${EPM_DIR}/overrides.json")
+    file(REMOVE "${graph_file}")
+
+    epm_run_binary("epm configure"
+            configure
+            --manifest "${manifest}"
+            --env "${EPM_DIR}/env.json"
+            --overrides "${EPM_DIR}/overrides.json"
+            --out "${EPM_DIR}")
+
+    if (NOT EXISTS "${graph_file}")
+        message(FATAL_ERROR "epm: epm configure succeeded but wrote no "
+                "${graph_file}")
+    endif ()
+endfunction()
+
+# The manifest flow, from get_epm.cmake while the first project() processes
+# CMAKE_PROJECT_TOP_LEVEL_INCLUDES: the graph is resolved at the provider's
+# first call.
+function(epm_use_manifest manifest)
+    set_property(GLOBAL PROPERTY EPM_MANIFEST "${manifest}")
+    epm_provider_register("${EPM_DIR}/graph.cmake" PREPARE epm_configure_graph)
 endfunction()
 
 # A function, as CPMAddPackage is: OPTIONS stay local to the add_subdirectory
@@ -324,17 +513,19 @@ function(epm_add_package)
                 "got '${mode}'")
     endif ()
 
-    if (EPM_BUILD_MISSING_BINARIES)
+    if ("${EPM_BUILD_MISSING_BINARIES}" STREQUAL "" OR EPM_BUILD_MISSING_BINARIES)
         set(build_missing true)
     else ()
         set(build_missing false)
     endif ()
 
     set(options_json "{}")
+    set(options "")
 
     foreach (option IN LISTS EPM_ARGS_OPTIONS)
         epm_parse_option("${option}")
         epm_json_set_string(options_json "${EPM_OPTION_KEY}" "${EPM_OPTION_VALUE}")
+        list(APPEND options "${EPM_OPTION_KEY}=${EPM_OPTION_VALUE}")
     endforeach ()
 
     get_property(is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
@@ -345,18 +536,18 @@ function(epm_add_package)
         message(FATAL_ERROR "epm_add_package(${name}): ${configs_error}")
     endif ()
 
-    set(configs_json "[]")
-    set(index 0)
+    epm_json_string_array(configs_json ${configs})
 
-    foreach (config IN LISTS configs)
-        string(JSON configs_json SET "${configs_json}" ${index} "\"${config}\"")
-        math(EXPR index "${index} + 1")
-    endforeach ()
+    set(abi_match "${EPM_ABI_MATCH}")
 
-    if (NOT EPM_ABI_MATCH MATCHES "^(compatible|strict|any)$")
+    if (abi_match STREQUAL "")
+        set(abi_match "compatible")
+    endif ()
+
+    if (NOT abi_match MATCHES "^(compatible|strict|any)$")
         message(FATAL_ERROR
                 "epm_add_package(${name}): EPM_ABI_MATCH must be compatible, "
-                "strict or any, got '${EPM_ABI_MATCH}'")
+                "strict or any, got '${abi_match}'")
     endif ()
 
     set(request "{}")
@@ -368,7 +559,7 @@ function(epm_add_package)
     string(JSON request SET "${request}" options "${options_json}")
     string(JSON request SET "${request}" buildMissingBinaries ${build_missing})
     string(JSON request SET "${request}" configs "${configs_json}")
-    epm_json_set_string(request abiMatch "${EPM_ABI_MATCH}")
+    epm_json_set_string(request abiMatch "${abi_match}")
 
     # A package already added in this configure: hand back the first result.
     get_property(previous_request GLOBAL PROPERTY EPM_PACKAGE_${name}_REQUEST)
@@ -405,33 +596,11 @@ function(epm_add_package)
     file(MAKE_DIRECTORY "${EPM_DIR}/responses")
     file(REMOVE "${response_file}")
 
-    set(command "${EPM_EXECUTABLE}" resolve
+    epm_run_binary("resolving ${name}"
+            resolve
             --request "${request_file}"
             --env "${EPM_DIR}/env.json"
             --response "${response_file}")
-
-    if (EPM_CACHE)
-        list(APPEND command --cache "${EPM_CACHE}")
-    endif ()
-
-    set(echo_args "")
-
-    if (EPM_VERBOSE)
-        list(APPEND command --verbose)
-        set(echo_args ECHO_OUTPUT_VARIABLE ECHO_ERROR_VARIABLE)
-    endif ()
-
-    execute_process(COMMAND ${command}
-            RESULT_VARIABLE result
-            OUTPUT_VARIABLE output
-            ERROR_VARIABLE error
-            ${echo_args})
-
-    if (NOT result EQUAL 0)
-        string(STRIP "${error}" error)
-        message(FATAL_ERROR
-                "epm: resolving ${name} failed (exit ${result}): ${error}")
-    endif ()
 
     if (NOT EXISTS "${response_file}")
         message(FATAL_ERROR
@@ -441,66 +610,20 @@ function(epm_add_package)
 
     include("${response_file}")
 
-    set(resolved_mode "${epm_${name}_MODE}")
-    set(source_dir "${epm_${name}_SOURCE_DIR}")
-    set(binary_dir "")
-
-    if (resolved_mode STREQUAL "prebuilt")
-        set(targets_file "${epm_${name}_TARGETS_FILE}")
-
-        if (NOT EXISTS "${targets_file}")
-            message(FATAL_ERROR
-                    "epm: ${name} resolved to prebuilt, but its targets file "
-                    "'${targets_file}' does not exist")
-        endif ()
-
-        # Imported targets are local to the directory that creates them; make the
-        # new ones global so they are seen everywhere, as add_subdirectory'd
-        # targets would be.
-        get_property(imported_before DIRECTORY PROPERTY IMPORTED_TARGETS)
-        include("${targets_file}")
-        get_property(imported_after DIRECTORY PROPERTY IMPORTED_TARGETS)
-
-        foreach (target IN LISTS imported_after)
-            if (NOT target IN_LIST imported_before)
-                set_property(TARGET ${target} PROPERTY IMPORTED_GLOBAL TRUE)
-            endif ()
-        endforeach ()
-
-        get_filename_component(id "${epm_${name}_PREFIX}" NAME)
-        set(id "${epm_${name}_PLATFORM}, ${id}")
-
-        if (epm_${name}_NOTE)
-            string(APPEND id ", ${epm_${name}_NOTE}")
-        endif ()
-    elseif (resolved_mode STREQUAL "source")
-        if (NOT EXISTS "${source_dir}/CMakeLists.txt")
-            message(FATAL_ERROR
-                    "epm: ${name} resolved to source, but '${source_dir}' has no "
-                    "CMakeLists.txt")
-        endif ()
-
-        foreach (option IN LISTS EPM_ARGS_OPTIONS)
-            epm_parse_option("${option}")
-            set(${EPM_OPTION_KEY} "${EPM_OPTION_VALUE}")
-        endforeach ()
-
-        set(binary_dir "${CMAKE_BINARY_DIR}/_deps/${name}-build")
-        add_subdirectory("${source_dir}" "${binary_dir}")
-
-        get_filename_component(id "${source_dir}" NAME)
-    else ()
-        message(FATAL_ERROR
-                "epm: the response for ${name} has an unknown mode "
-                "'${resolved_mode}' (${response_file})")
-    endif ()
-
-    message(STATUS "epm: ${name} (${resolved_mode}, ${id})")
+    epm_load_package("${name}"
+            MODE "${epm_${name}_MODE}"
+            SOURCE_DIR "${epm_${name}_SOURCE_DIR}"
+            TARGETS_FILE "${epm_${name}_TARGETS_FILE}"
+            PREFIX "${epm_${name}_PREFIX}"
+            PLATFORM "${epm_${name}_PLATFORM}"
+            NOTE "${epm_${name}_NOTE}"
+            OPTIONS ${options}
+            ORIGIN "${response_file}")
 
     set_property(GLOBAL PROPERTY EPM_PACKAGE_${name}_REQUEST "${request}")
-    set_property(GLOBAL PROPERTY EPM_PACKAGE_${name}_MODE "${resolved_mode}")
-    set_property(GLOBAL PROPERTY EPM_PACKAGE_${name}_SOURCE_DIR "${source_dir}")
-    set_property(GLOBAL PROPERTY EPM_PACKAGE_${name}_BINARY_DIR "${binary_dir}")
+    get_property(resolved_mode GLOBAL PROPERTY EPM_PACKAGE_${name}_MODE)
+    get_property(source_dir GLOBAL PROPERTY EPM_PACKAGE_${name}_SOURCE_DIR)
+    get_property(binary_dir GLOBAL PROPERTY EPM_PACKAGE_${name}_BINARY_DIR)
 
     set(${name}_SOURCE_DIR "${source_dir}" PARENT_SCOPE)
     set(${name}_MODE "${resolved_mode}" PARENT_SCOPE)

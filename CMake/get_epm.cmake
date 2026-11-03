@@ -1,13 +1,43 @@
 # get_epm.cmake -- the one file a project vendors to use epm.
 #
-#   set(EPM_VERSION "0.1...<0.2")    # optional; default: the latest release
-#   include(cmake/get_epm.cmake)
+# With a manifest (Docs/Graph.md): list this file in
+# CMAKE_PROJECT_TOP_LEVEL_INCLUDES before project(), and keep epm.json beside
+# the top-level CMakeLists.txt:
+#
+#   cmake_minimum_required(VERSION 3.25)
+#   set(EPM_VERSION "0.2...<0.3")    # optional; default: the latest release
+#   list(APPEND CMAKE_PROJECT_TOP_LEVEL_INCLUDES cmake/get_epm.cmake)
+#   project(App CXX)
+#   find_package(fmt REQUIRED)
+#
+# The first project() then includes this file, which bootstraps the binary (below)
+# and registers epm's dependency provider. At the first find_package() or
+# FetchContent_MakeAvailable(), the provider writes ${CMAKE_BINARY_DIR}/epm/
+# env.json and overrides.json, runs `epm configure` over epm.json and loads each
+# package the graph names, dependencies first; other names are left to CMake.
+# With EPM_NESTED set (a child build epm runs) this file does nothing at all;
+# without an epm.json, nothing is registered.
+#
+# Without a manifest, the older form still works, for epm_add_package only:
+#
+#   include(cmake/get_epm.cmake)     # after project()
 #   epm_add_package(NAME ... GITHUB_REPOSITORY ... GIT_TAG ...)
 #
-# Finds an epm binary, then includes the epm.cmake installed with that binary, so
-# module and binary always match. First in-range match wins:
+# Either way it finds an epm binary, then includes the epm.cmake installed with
+# that binary, so module and binary always match. First in-range match wins:
 #
 #   1. EPM_EXECUTABLE, when set.
+#      Then EPM_SOURCE_DIR, when set (skips 2-5): that epm checkout, built and
+#      installed into <cache>/tool/local-<sha256(real path)[:12]>/ with the
+#      consumer's generator (and its compilers, when known and native). The
+#      build directory stays in the entry, so later configures are incremental
+#      `cmake --build` runs. Its version is printed, not checked against
+#      EPM_VERSION. For testing an unreleased epm from a consumer.
+#      Else, when this file is <dir>/CMake/get_epm.cmake of an epm checkout
+#      (<dir>/CMakeLists.txt has project(epm), as for the examples in the epm
+#      repository) and no EPM_EXECUTABLE, EPM_SOURCE_REF or EPM_SOURCE_URL is
+#      given: EPM_SOURCE_DIR defaults to <dir>. A copy vendored into a consumer
+#      never matches.
 #   2. epm on PATH, with <prefix>/share/epm/cmake/epm.cmake beside it.
 #   3. The newest entry an earlier configure left in <cache>/tool/v<version>/,
 #      unless the latest release (4) is newer and also in range.
@@ -21,29 +51,36 @@
 #      installed into <cache>/tool/<ref>/.
 #
 # A tool entry is exactly what `cmake --install` of epm produces (bin/epm and
-# share/epm/cmake/epm.cmake), whether unpacked from a release or built.
+# share/epm/cmake/epm.cmake with epm-provider.cmake), whether unpacked from a
+# release or built.
 #
 # Variables read, all optional (set before the include, or with -D):
 #   EPM_VERSION               "0.1.2" (meaning >= 0.1.2, as in find_package),
 #                             "0.1...<0.2" or "0.1...0.2"; unset: any version
 #   EPM_EXECUTABLE            an epm binary to try first
+#   EPM_SOURCE_DIR            an epm checkout to build and use (else the
+#                             EPM_SOURCE_DIR environment variable; a relative
+#                             path is relative to the top-level source dir)
 #   EPM_UPDATE                ON: look for a newer release now (a -D value is
 #                             cleared from the cache afterwards)
 #   EPM_BOOTSTRAP_NO_DOWNLOAD ON: never download a release binary (skips 4)
 #   EPM_SOURCE_REF            build this epm tag, branch or commit (skips 2-4)
 #   EPM_SOURCE_URL            build this source tarball (skips 2-4)
-#   EPM_BOOTSTRAP_SOURCE_DIR  build this local checkout and use its
-#                             CMake/epm.cmake (for working on epm; skips 2-4)
-#   EPM_CACHE                 cache root (else the EPM_CACHE environment
+#   EPM_BOOTSTRAP_SOURCE_DIR  deprecated: read as EPM_SOURCE_DIR when that is
+#                             unset
+#   EPM_CACHE                cache root (else the EPM_CACHE environment
 #                             variable, else the platform cache directory)
 #   EPM_VERBOSE               say what is tried; stream the build output
+#   EPM_NESTED                set by epm for its child builds: do nothing
 #
-# The binary ends up in EPM_EXECUTABLE (cache INTERNAL). See Docs/PoC.md §8.
+# The binary ends up in EPM_EXECUTABLE (cache INTERNAL). See Docs/PoC.md §8 and
+# Docs/Graph.md §8.
 
 include_guard(GLOBAL)
 
 set(GET_EPM_REPOSITORY "https://github.com/eyalamirmusic/epm")
 set(GET_EPM_DIR "${CMAKE_CURRENT_LIST_DIR}")
+set(GET_EPM_FILE "${CMAKE_CURRENT_LIST_FILE}")
 
 if (CMAKE_HOST_WIN32)
     set(GET_EPM_SUFFIX ".exe")
@@ -374,45 +411,14 @@ function(get_epm_download cache tool_dir manifest)
             PARENT_SCOPE)
 endfunction()
 
-# Step 5: builds `source` (a tarball URL or a local checkout) on the host and
-# installs it into `tool_dir` with epm's own install rules. Sets get_epm_error
-# when the source cannot be had; a failed build is fatal.
-function(get_epm_build cache tool_dir ref source description)
-    message(STATUS "epm: building ${description} into ${tool_dir} (first time only)")
-    file(REMOVE_RECURSE "${tool_dir}")
-    set(build_dir "${tool_dir}/build")
-    set(log "${build_dir}/epm-bootstrap.log")
-    file(MAKE_DIRECTORY "${build_dir}")
-    set(staging "")
-
-    if (IS_DIRECTORY "${source}")
-        set(source_dir "${source}")
-    else ()
-        string(RANDOM LENGTH 12 ALPHABET "0123456789abcdef" id)
-        set(staging "${cache}/tmp/epm-bootstrap-${id}")
-        get_epm_note("downloading ${source}")
-        file(DOWNLOAD "${source}" "${staging}/epm.tar.gz" STATUS status TLS_VERIFY ON)
-        list(GET status 0 code)
-        list(GET status 1 text)
-
-        if (code EQUAL 0)
-            file(ARCHIVE_EXTRACT INPUT "${staging}/epm.tar.gz"
-                    DESTINATION "${staging}/extract")
-            file(GLOB source_dir LIST_DIRECTORIES true "${staging}/extract/*")
-        endif ()
-
-        list(LENGTH source_dir count)
-
-        if (NOT count EQUAL 1 OR NOT EXISTS "${source_dir}/CMakeLists.txt")
-            file(REMOVE_RECURSE "${staging}" "${tool_dir}")
-            set(get_epm_error "no epm source at ${source} (${text})" PARENT_SCOPE)
-            return()
-        endif ()
-    endif ()
-
-    # A host build: nothing from the consumer's toolchain, generator or target
-    # architectures reaches it, so it works while the consumer targets iOS or
-    # Android. CMake reads these variables from the environment too.
+# Runs one step (configure, build or install) of a source build of epm, the
+# command in ARGN, appending its output to `log`. A failure is fatal.
+#
+# A host build: nothing from the consumer's toolchain, generator or target
+# architectures reaches it unless passed on the command line, so it works while
+# the consumer targets iOS or Android. CMake reads these variables from the
+# environment too.
+function(get_epm_run_step step log)
     set(clean_env "${CMAKE_COMMAND}" -E env
             --unset=CMAKE_TOOLCHAIN_FILE
             --unset=CMAKE_GENERATOR
@@ -422,38 +428,72 @@ function(get_epm_build cache tool_dir ref source description)
             --unset=CMAKE_OSX_ARCHITECTURES
             --unset=CMAKE_INSTALL_PREFIX
             --unset=DESTDIR)
-    set(configure "${CMAKE_COMMAND}" -S "${source_dir}" -B "${build_dir}"
-            -DCMAKE_BUILD_TYPE=Release -DEPM_ENABLE_TESTS=OFF
-            "-DCMAKE_INSTALL_PREFIX=${tool_dir}")
-    set(build "${CMAKE_COMMAND}" --build "${build_dir}" --config Release --parallel)
-    set(install "${CMAKE_COMMAND}" --install "${build_dir}" --config Release)
     set(echo "")
 
     if (EPM_VERBOSE)
         set(echo ECHO_OUTPUT_VARIABLE ECHO_ERROR_VARIABLE)
     endif ()
 
+    string(JOIN " " command_line ${ARGN})
+    file(APPEND "${log}" "\n$ ${command_line}\n")
+    execute_process(COMMAND ${clean_env} ${ARGN}
+            RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE output
+            ${echo})
+    file(APPEND "${log}" "${output}")
+
+    if (NOT result EQUAL 0)
+        string(LENGTH "${output}" length)
+
+        if (length GREATER 4000)
+            math(EXPR start "${length} - 4000")
+            string(SUBSTRING "${output}" ${start} -1 output)
+        endif ()
+
+        message(FATAL_ERROR "epm: building epm from source failed at the ${step} "
+                "step (${result}).\n${output}\n\nFull log: ${log}")
+    endif ()
+endfunction()
+
+# Step 5: builds the source tarball at `source` on the host and installs it into
+# `tool_dir` with epm's own install rules. Sets get_epm_error when the source
+# cannot be had; a failed build is fatal.
+function(get_epm_build cache tool_dir ref source description)
+    message(STATUS "epm: building ${description} into ${tool_dir} (first time only)")
+    file(REMOVE_RECURSE "${tool_dir}")
+    set(build_dir "${tool_dir}/build")
+    set(log "${build_dir}/epm-bootstrap.log")
+    file(MAKE_DIRECTORY "${build_dir}")
+    string(RANDOM LENGTH 12 ALPHABET "0123456789abcdef" id)
+    set(staging "${cache}/tmp/epm-bootstrap-${id}")
+    set(source_dir "")
+    get_epm_note("downloading ${source}")
+    file(DOWNLOAD "${source}" "${staging}/epm.tar.gz" STATUS status TLS_VERIFY ON)
+    list(GET status 0 code)
+    list(GET status 1 text)
+
+    if (code EQUAL 0)
+        file(ARCHIVE_EXTRACT INPUT "${staging}/epm.tar.gz"
+                DESTINATION "${staging}/extract")
+        file(GLOB source_dir LIST_DIRECTORIES true "${staging}/extract/*")
+    endif ()
+
+    list(LENGTH source_dir count)
+
+    if (NOT count EQUAL 1 OR NOT EXISTS "${source_dir}/CMakeLists.txt")
+        file(REMOVE_RECURSE "${staging}" "${tool_dir}")
+        set(get_epm_error "no epm source at ${source} (${text})" PARENT_SCOPE)
+        return()
+    endif ()
+
+    set(configure "${CMAKE_COMMAND}" -S "${source_dir}" -B "${build_dir}"
+            -DCMAKE_BUILD_TYPE=Release -DEPM_ENABLE_TESTS=OFF
+            "-DCMAKE_INSTALL_PREFIX=${tool_dir}")
+    set(build "${CMAKE_COMMAND}" --build "${build_dir}" --config Release --parallel)
+    set(install "${CMAKE_COMMAND}" --install "${build_dir}" --config Release)
     file(WRITE "${log}" "epm bootstrap of ${source}\n")
 
     foreach (step configure build install)
-        string(JOIN " " command_line ${${step}})
-        file(APPEND "${log}" "\n$ ${command_line}\n")
-        execute_process(COMMAND ${clean_env} ${${step}}
-                RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE output
-                ${echo})
-        file(APPEND "${log}" "${output}")
-
-        if (NOT result EQUAL 0)
-            string(LENGTH "${output}" length)
-
-            if (length GREATER 4000)
-                math(EXPR start "${length} - 4000")
-                string(SUBSTRING "${output}" ${start} -1 output)
-            endif ()
-
-            message(FATAL_ERROR "epm: building epm from source failed at the ${step} "
-                    "step (${result}).\n${output}\n\nFull log: ${log}")
-        endif ()
+        get_epm_run_step(${step} "${log}" ${${step}})
     endforeach ()
 
     get_epm_version("${tool_dir}/bin/epm${GET_EPM_SUFFIX}" version)
@@ -497,6 +537,186 @@ function(get_epm_install cache key kind source description)
     set(get_epm_message "${get_epm_message}" PARENT_SCOPE)
 endfunction()
 
+# Checks that `dir` is an epm checkout: a CMakeLists.txt with project(epm. Sets
+# source_dir (absolute, symlinks resolved) and source_error (empty when it is
+# one).
+function(get_epm_check_source_dir dir)
+    get_filename_component(absolute "${dir}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+    set(source_dir "")
+    set(error "")
+
+    if (NOT IS_DIRECTORY "${absolute}")
+        set(error "EPM_SOURCE_DIR '${dir}' is not a directory")
+    else ()
+        file(REAL_PATH "${absolute}" source_dir)
+        set(lists "${source_dir}/CMakeLists.txt")
+        set(project_epm "^[ \t]*[Pp][Rr][Oo][Jj][Ee][Cc][Tt][ \t]*\\([ \t]*epm([ \t)]|$)")
+
+        if (NOT EXISTS "${lists}")
+            set(error "EPM_SOURCE_DIR '${source_dir}' is not an epm checkout "
+                    "(no CMakeLists.txt)")
+        else ()
+            file(STRINGS "${lists}" project_lines REGEX "${project_epm}")
+
+            if (project_lines STREQUAL "")
+                set(error "EPM_SOURCE_DIR '${source_dir}' is not an epm checkout "
+                        "(its CMakeLists.txt has no project(epm ...))")
+            endif ()
+        endif ()
+    endif ()
+
+    string(JOIN "" error ${error})
+    set(source_dir "${source_dir}" PARENT_SCOPE)
+    set(source_error "${error}" PARENT_SCOPE)
+endfunction()
+
+# Whether EPM_EXECUTABLE is one the user gave: not the one an earlier configure
+# picked, nor one the pre-get_epm epm.cmake bootstrapped.
+function(get_epm_user_executable out_var)
+    if (EPM_EXECUTABLE AND NOT EPM_EXECUTABLE STREQUAL "${EPM_SELECTED_EXECUTABLE}"
+            AND NOT EPM_EXECUTABLE STREQUAL "${EPM_BOOTSTRAPPED_EXECUTABLE}")
+        set(${out_var} TRUE PARENT_SCOPE)
+    else ()
+        set(${out_var} FALSE PARENT_SCOPE)
+    endif ()
+endfunction()
+
+# The epm checkout to build, empty for none: the EPM_SOURCE_DIR CMake variable,
+# else the environment variable, else the deprecated EPM_BOOTSTRAP_SOURCE_DIR,
+# else the checkout this file belongs to (<checkout>/CMake/get_epm.cmake) when
+# nothing else asks for a particular epm. Sets `out_var` and `${out_var}_origin`
+# (variable, environment, deprecated, enclosing or empty).
+function(get_epm_source_dir_setting out_var)
+    set(setting "")
+    set(origin "")
+
+    if (NOT "${EPM_SOURCE_DIR}" STREQUAL "")
+        set(setting "${EPM_SOURCE_DIR}")
+        set(origin variable)
+    elseif (NOT "$ENV{EPM_SOURCE_DIR}" STREQUAL "")
+        set(setting "$ENV{EPM_SOURCE_DIR}")
+        set(origin environment)
+    elseif (NOT "${EPM_BOOTSTRAP_SOURCE_DIR}" STREQUAL "")
+        set(setting "${EPM_BOOTSTRAP_SOURCE_DIR}")
+        set(origin deprecated)
+    else ()
+        get_epm_user_executable(user_executable)
+
+        if (NOT user_executable AND NOT EPM_SOURCE_REF AND NOT EPM_SOURCE_URL)
+            get_epm_check_source_dir("${GET_EPM_DIR}/..")
+
+            if (source_error STREQUAL "")
+                set(setting "${source_dir}")
+                set(origin enclosing)
+            endif ()
+        endif ()
+    endif ()
+
+    set(${out_var} "${setting}" PARENT_SCOPE)
+    set(${out_var}_origin "${origin}" PARENT_SCOPE)
+endfunction()
+
+# The tool entry of a checkout: <cache>/tool/local-<sha256(source_dir)[:12]>.
+function(get_epm_source_entry cache source_dir out_var)
+    string(SHA256 hash "${source_dir}")
+    string(SUBSTRING "${hash}" 0 12 hash)
+    set(${out_var} "${cache}/tool/local-${hash}" PARENT_SCOPE)
+endfunction()
+
+# The consumer's generator, make program and compilers, for building a checkout
+# (the same toolchain, and Ninja's speed when the consumer uses it). Sets
+# toolchain_args and build_name (the build directory: one per generator, since a
+# build directory cannot change generator). The generator always runs on the
+# host; the compilers are left out when they may be a cross toolchain's: with a
+# toolchain file or a foreign CMAKE_SYSTEM_NAME. get_epm, as a top-level include,
+# runs before languages are enabled, so the compilers are often not known yet.
+function(get_epm_consumer_toolchain)
+    set(args "")
+    set(name "build")
+
+    if (NOT "${CMAKE_GENERATOR}" STREQUAL "")
+        list(APPEND args -G "${CMAKE_GENERATOR}")
+        string(TOLOWER "${CMAKE_GENERATOR}" generator)
+        string(REGEX REPLACE "[^a-z0-9]+" "-" generator "${generator}")
+        string(APPEND name "-${generator}")
+
+        if (CMAKE_GENERATOR_TOOLSET)
+            list(APPEND args -T "${CMAKE_GENERATOR_TOOLSET}")
+        endif ()
+
+        if (CMAKE_MAKE_PROGRAM)
+            list(APPEND args "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}")
+        endif ()
+    endif ()
+
+    if (NOT CMAKE_CROSSCOMPILING AND NOT CMAKE_TOOLCHAIN_FILE
+            AND (NOT CMAKE_SYSTEM_NAME OR CMAKE_SYSTEM_NAME STREQUAL CMAKE_HOST_SYSTEM_NAME))
+        foreach (variable CMAKE_C_COMPILER CMAKE_CXX_COMPILER)
+            if (${variable})
+                list(APPEND args "-D${variable}=${${variable}}")
+            endif ()
+        endforeach ()
+    endif ()
+
+    set(toolchain_args "${args}" PARENT_SCOPE)
+    set(build_name "${name}" PARENT_SCOPE)
+endfunction()
+
+# The EPM_SOURCE_DIR step: builds the checkout `source_dir` and installs it into
+# its entry, under the entry's lock. The build directory stays in the entry, so
+# a later configure is an incremental build; it is configured only the first
+# time, so the compilers of that configure stay (delete the entry to change
+# them). A failed build is fatal. Sets checkout_dir (the entry) and
+# checkout_version.
+function(get_epm_build_checkout cache source_dir)
+    get_epm_source_entry("${cache}" "${source_dir}" tool_dir)
+    get_filename_component(key "${tool_dir}" NAME)
+    get_epm_consumer_toolchain()
+    set(build_dir "${tool_dir}/${build_name}")
+    set(log "${build_dir}/epm-bootstrap.log")
+    file(MAKE_DIRECTORY "${cache}/tool")
+    file(LOCK "${tool_dir}.lock" GUARD FUNCTION TIMEOUT 3600 RESULT_VARIABLE locked)
+
+    if (NOT locked EQUAL 0)
+        message(FATAL_ERROR "epm: cannot lock ${tool_dir}.lock: ${locked}")
+    endif ()
+
+    set(configure "${CMAKE_COMMAND}" -S "${source_dir}" -B "${build_dir}"
+            ${toolchain_args} -DCMAKE_BUILD_TYPE=Release -DEPM_ENABLE_TESTS=OFF
+            "-DCMAKE_INSTALL_PREFIX=${tool_dir}")
+    set(build "${CMAKE_COMMAND}" --build "${build_dir}" --config Release --parallel)
+    set(install "${CMAKE_COMMAND}" --install "${build_dir}" --config Release
+            --prefix "${tool_dir}")
+
+    # Written after a configure succeeds: a cache left by a failed one is redone.
+    set(configured "${build_dir}/epm-configured")
+
+    if (EXISTS "${configured}")
+        get_epm_note("updating epm from ${source_dir} in ${build_dir}")
+        file(WRITE "${log}" "epm build of ${source_dir}\n")
+    else ()
+        message(STATUS "epm: building epm from ${source_dir} into ${tool_dir}")
+        file(REMOVE_RECURSE "${build_dir}")
+        file(MAKE_DIRECTORY "${build_dir}")
+        file(WRITE "${log}" "epm build of ${source_dir}\n")
+        get_epm_run_step(configure "${log}" ${configure})
+        file(WRITE "${configured}" "")
+    endif ()
+
+    get_epm_run_step(build "${log}" ${build})
+    get_epm_run_step(install "${log}" ${install})
+    get_epm_version("${tool_dir}/bin/epm${GET_EPM_SUFFIX}" version)
+
+    if (version STREQUAL "")
+        message(FATAL_ERROR "epm: the epm built from ${source_dir} "
+                "(${tool_dir}/bin/epm${GET_EPM_SUFFIX}) does not run.\nLog: ${log}")
+    endif ()
+
+    get_epm_write_marker("${tool_dir}" "${key}" source "${source_dir}" "${version}")
+    set(checkout_dir "${tool_dir}" PARENT_SCOPE)
+    set(checkout_version "${version}" PARENT_SCOPE)
+endfunction()
+
 # Hands the choice to the file scope of get_epm.cmake. `remember` is OFF for a
 # binary the user gave.
 macro(get_epm_found executable module remember text)
@@ -511,31 +731,15 @@ function(get_epm_select)
     get_epm_exact_lower_bound("${EPM_VERSION}" exact_min)
     set(cached_dir "")
     set(manifest "")
-    set(local_module "")
 
-    if (EPM_BOOTSTRAP_SOURCE_DIR)
-        get_filename_component(local_dir "${EPM_BOOTSTRAP_SOURCE_DIR}" ABSOLUTE)
-        set(local_module "${local_dir}/CMake/epm.cmake")
+    # 1. A binary the user gave. Its module: the one installed beside it, else
+    # the one beside this file (true inside the epm repository).
+    get_epm_user_executable(user_executable)
 
-        if (NOT EXISTS "${local_module}")
-            message(FATAL_ERROR "epm: EPM_BOOTSTRAP_SOURCE_DIR '${local_dir}' is not an "
-                    "epm checkout (no CMake/epm.cmake)")
-        endif ()
-    endif ()
-
-    # 1. A binary the user gave (not the one an earlier configure picked, nor one
-    # the pre-get_epm epm.cmake bootstrapped). Its module: the dev checkout's, the
-    # one installed beside it, or the one beside this file (true inside the epm
-    # repository).
-    if (EPM_EXECUTABLE AND NOT EPM_EXECUTABLE STREQUAL "${EPM_SELECTED_EXECUTABLE}"
-            AND NOT EPM_EXECUTABLE STREQUAL "${EPM_BOOTSTRAPPED_EXECUTABLE}")
+    if (user_executable)
         get_epm_version("${EPM_EXECUTABLE}" version)
         epm_version_in_range("${version}" "${EPM_VERSION}" in_range)
-        set(module "${local_module}")
-
-        if (module STREQUAL "")
-            get_epm_module_beside("${EPM_EXECUTABLE}" module)
-        endif ()
+        get_epm_module_beside("${EPM_EXECUTABLE}" module)
 
         if (module STREQUAL "" AND EXISTS "${GET_EPM_DIR}/epm.cmake")
             set(module "${GET_EPM_DIR}/epm.cmake")
@@ -551,7 +755,39 @@ function(get_epm_select)
                 "'${version}', EPM_VERSION '${EPM_VERSION}', module '${module}')")
     endif ()
 
-    if (NOT EPM_BOOTSTRAP_SOURCE_DIR AND NOT EPM_SOURCE_REF AND NOT EPM_SOURCE_URL)
+    # An epm checkout, rebuilt (incrementally) at every configure. Unreleased by
+    # nature, so its version is reported rather than checked.
+    get_epm_source_dir_setting(source_setting)
+
+    if (source_setting_origin STREQUAL "deprecated")
+        message(STATUS "epm: EPM_BOOTSTRAP_SOURCE_DIR is deprecated; "
+                "using it as EPM_SOURCE_DIR")
+    elseif (source_setting_origin STREQUAL "enclosing")
+        message(STATUS "epm: get_epm.cmake is inside the epm checkout "
+                "${source_setting}; building epm from it (-DEPM_EXECUTABLE or "
+                "-DEPM_SOURCE_DIR to use another)")
+    endif ()
+
+    if (NOT source_setting STREQUAL "")
+        get_epm_check_source_dir("${source_setting}")
+
+        if (NOT source_error STREQUAL "")
+            message(FATAL_ERROR "epm: ${source_error}")
+        endif ()
+
+        get_epm_build_checkout("${cache}" "${source_dir}")
+        set(text "using epm ${checkout_version} built from ${source_dir}")
+
+        if (NOT "${EPM_VERSION}" STREQUAL "")
+            string(APPEND text " (EPM_VERSION '${EPM_VERSION}' not checked)")
+        endif ()
+
+        get_epm_found("${checkout_dir}/bin/epm${GET_EPM_SUFFIX}"
+                "${checkout_dir}/share/epm/cmake/epm.cmake" ON "${text}")
+        return()
+    endif ()
+
+    if (NOT EPM_SOURCE_REF AND NOT EPM_SOURCE_URL)
         # 2. epm on PATH (and only PATH: never re-rooted by a cross toolchain).
         find_program(path_epm NAMES epm NO_CACHE NO_PACKAGE_ROOT_PATH NO_CMAKE_PATH
                 NO_CMAKE_ENVIRONMENT_PATH NO_CMAKE_SYSTEM_PATH NO_CMAKE_INSTALL_PREFIX
@@ -621,41 +857,31 @@ function(get_epm_select)
         endif ()
     endif ()
 
-    # 5. A source build: the local checkout, the forced ref or URL, else the
-    # release chosen above, else the lower bound, else main.
-    if (EPM_BOOTSTRAP_SOURCE_DIR)
-        string(SHA256 key "${local_dir}")
-        string(SUBSTRING "${key}" 0 12 key)
-        set(key "local-${key}")
-        set(source "${local_dir}")
-        set(description "epm from ${local_dir}")
+    # 5. A source build: the forced ref or URL, else the release chosen above,
+    # else the lower bound, else main.
+    if (EPM_SOURCE_REF)
+        set(ref "${EPM_SOURCE_REF}")
+    elseif (EPM_SOURCE_URL)
+        set(ref "url")
+    elseif (NOT manifest STREQUAL "")
+        string(JSON ref GET "${manifest}" tag)
+    elseif (NOT exact_min STREQUAL "")
+        set(ref "v${exact_min}")
     else ()
-        if (EPM_SOURCE_REF)
-            set(ref "${EPM_SOURCE_REF}")
-        elseif (EPM_SOURCE_URL)
-            set(ref "url")
-        elseif (NOT manifest STREQUAL "")
-            string(JSON ref GET "${manifest}" tag)
-        elseif (NOT exact_min STREQUAL "")
-            set(ref "v${exact_min}")
-        else ()
-            set(ref "main")
-        endif ()
-
-        string(REGEX REPLACE "[^A-Za-z0-9._-]" "_" key "${ref}")
-        set(source "${GET_EPM_REPOSITORY}/archive/${ref}.tar.gz")
-
-        if (EPM_SOURCE_URL)
-            set(source "${EPM_SOURCE_URL}")
-            string(SHA256 url_hash "${EPM_SOURCE_URL}")
-            string(SUBSTRING "${url_hash}" 0 12 url_hash)
-            string(APPEND key "-${url_hash}")
-        endif ()
-
-        set(description "epm ${ref} from source")
+        set(ref "main")
     endif ()
 
-    get_epm_install("${cache}" "${key}" source "${source}" "${description}")
+    string(REGEX REPLACE "[^A-Za-z0-9._-]" "_" key "${ref}")
+    set(source "${GET_EPM_REPOSITORY}/archive/${ref}.tar.gz")
+
+    if (EPM_SOURCE_URL)
+        set(source "${EPM_SOURCE_URL}")
+        string(SHA256 url_hash "${EPM_SOURCE_URL}")
+        string(SUBSTRING "${url_hash}" 0 12 url_hash)
+        string(APPEND key "-${url_hash}")
+    endif ()
+
+    get_epm_install("${cache}" "${key}" source "${source}" "epm ${ref} from source")
     set(executable "${cache}/tool/${key}/bin/epm${GET_EPM_SUFFIX}")
 
     if (NOT get_epm_error STREQUAL "")
@@ -670,17 +896,38 @@ function(get_epm_select)
                 "Configure with -DEPM_EXECUTABLE=/path/to/epm or put epm on PATH.")
     endif ()
 
-    if (local_module STREQUAL "")
-        set(module "${cache}/tool/${key}/share/epm/cmake/epm.cmake")
-    else ()
-        set(module "${local_module}")
-    endif ()
-
-    get_epm_found("${executable}" "${module}" ON "${get_epm_message}")
+    get_epm_found("${executable}" "${cache}/tool/${key}/share/epm/cmake/epm.cmake" ON
+            "${get_epm_message}")
 endfunction()
 
-# Tests/GetEpmRanges.cmake wants the functions only.
-if (GET_EPM_FUNCTIONS_ONLY)
+# Whether this file is being included by the first project(), from
+# CMAKE_PROJECT_TOP_LEVEL_INCLUDES (whose relative entries CMake resolves
+# against the top-level source directory), rather than by an include().
+function(get_epm_is_top_level_include out_var)
+    set(listed FALSE)
+    file(REAL_PATH "${GET_EPM_FILE}" this_file)
+
+    foreach (entry IN LISTS CMAKE_PROJECT_TOP_LEVEL_INCLUDES)
+        file(REAL_PATH "${entry}" entry BASE_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+        if (entry STREQUAL this_file)
+            set(listed TRUE)
+        endif ()
+    endforeach ()
+
+    if (listed AND DEFINED PROJECT_NAME
+            AND CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+        set(${out_var} TRUE PARENT_SCOPE)
+    else ()
+        set(${out_var} FALSE PARENT_SCOPE)
+    endif ()
+endfunction()
+
+# Tests/GetEpmRanges.cmake wants the functions only. A child build epm runs
+# (Docs/Graph.md §10) has the provider injected by its parent and needs no
+# binary: bootstrapping one there could find no module beside an EPM_EXECUTABLE
+# in a build tree and go on to download a release.
+if (GET_EPM_FUNCTIONS_ONLY OR EPM_NESTED)
     return()
 endif ()
 
@@ -702,3 +949,28 @@ endif ()
 unset(EPM_UPDATE CACHE)
 
 include("${get_epm_module}")
+
+# The manifest flow (Docs/Graph.md §8). A project without epm.json may still
+# call epm_add_package.
+if (NOT EXISTS "${CMAKE_SOURCE_DIR}/epm.json")
+    return()
+endif ()
+
+get_epm_is_top_level_include(get_epm_top_level)
+
+if (NOT get_epm_top_level)
+    message(FATAL_ERROR "epm: ${CMAKE_SOURCE_DIR}/epm.json needs ${GET_EPM_FILE} "
+            "listed in CMAKE_PROJECT_TOP_LEVEL_INCLUDES before project(), not "
+            "include()d:\n  list(APPEND CMAKE_PROJECT_TOP_LEVEL_INCLUDES "
+            "path/to/get_epm.cmake)")
+endif ()
+
+if (NOT COMMAND epm_use_manifest)
+    message(FATAL_ERROR "epm: the epm at ${EPM_EXECUTABLE} predates epm.json "
+            "manifests (its module ${get_epm_module} has no epm_use_manifest). Use "
+            "a newer one: -DEPM_EXECUTABLE=/path/to/epm, -DEPM_SOURCE_DIR=/path/to/"
+            "epm-checkout (built from source), or EPM_VERSION once a release with "
+            "manifests exists.")
+endif ()
+
+epm_use_manifest("${CMAKE_SOURCE_DIR}/epm.json")
