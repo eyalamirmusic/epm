@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "packages": [
+    { "name": "Mid", "git": "@MID_URL@", "tag": "v1" }
+  ]
+}

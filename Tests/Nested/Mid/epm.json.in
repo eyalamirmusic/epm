@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "packages": [
+    { "name": "Leaf", "git": "@LEAF_URL@", "tag": "v1" }
+  ]
+}

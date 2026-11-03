@@ -50,15 +50,28 @@ add_library(epm-core STATIC
         Util/Timestamp.cpp
         Util/Timestamp.h)
 
-# epm-export.cmake is compiled into the binary, so an installed epm writes the
-# script into child builds without needing this repository at runtime.
-set(epm_export_script "${CMAKE_CURRENT_SOURCE_DIR}/../../CMake/epm-export.cmake")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${epm_export_script}")
-file(READ "${epm_export_script}" EPM_EXPORT_SCRIPT)
-configure_file(Build/EmbeddedExport.cpp.in
-        "${CMAKE_CURRENT_BINARY_DIR}/Generated/EmbeddedExport.cpp" @ONLY)
+# epm-export.cmake and epm-provider.cmake (the core of epm-nested.cmake) are
+# compiled into the binary, so an installed epm writes them into child builds
+# without needing this repository at runtime.
+foreach (script IN ITEMS export provider)
+    set(script_file "${CMAKE_CURRENT_SOURCE_DIR}/../../CMake/epm-${script}.cmake")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${script_file}")
+    string(TOUPPER "${script}" upper)
+    file(READ "${script_file}" EPM_${upper}_SCRIPT)
+
+    # MSVC rejects a string literal over 16380 bytes (C2026).
+    string(LENGTH "${EPM_${upper}_SCRIPT}" length)
+
+    if (length GREATER 15000)
+        message(FATAL_ERROR "${script_file} is ${length} bytes; split it into "
+                "several literals in Build/EmbeddedScripts.cpp.in")
+    endif ()
+endforeach ()
+
+configure_file(Build/EmbeddedScripts.cpp.in
+        "${CMAKE_CURRENT_BINARY_DIR}/Generated/EmbeddedScripts.cpp" @ONLY)
 target_sources(epm-core PRIVATE
-        "${CMAKE_CURRENT_BINARY_DIR}/Generated/EmbeddedExport.cpp")
+        "${CMAKE_CURRENT_BINARY_DIR}/Generated/EmbeddedScripts.cpp")
 
 target_include_directories(epm-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 

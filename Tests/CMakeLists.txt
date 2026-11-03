@@ -32,3 +32,14 @@ add_test(NAME epm_graph_provider
             "-DTEST_GENERATOR=${CMAKE_GENERATOR}"
             "-DTEST_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/GraphProvider.cmake)
+
+add_test(NAME epm_graph_nested
+        COMMAND ${CMAKE_COMMAND}
+            "-DEPM_BINARY=$<TARGET_FILE:epm>"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/epm-graph-nested"
+            "-DTEST_GENERATOR=${CMAKE_GENERATOR}"
+            "-DTEST_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+            "-DTEST_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/GraphNested.cmake)
+set_tests_properties(epm_graph_nested PROPERTIES
+        SKIP_REGULAR_EXPRESSION "epm-graph-nested: skipped")

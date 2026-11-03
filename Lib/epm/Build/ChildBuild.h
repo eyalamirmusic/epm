@@ -47,13 +47,19 @@ struct ChildBuild
 };
 
 // The `cmake -S -B` arguments of PoC §5. Toolchain values the consumer left
-// empty are not passed at all.
+// empty are not passed at all. With a dependencyGraph also EPM_NESTED,
+// EPM_GRAPH, EPM_EXECUTABLE and epm-nested.cmake after epm-export.cmake in
+// CMAKE_PROJECT_TOP_LEVEL_INCLUDES (Docs/Graph.md §10).
 eacp::Vector<std::string> configureArguments(const ChildBuild& build);
 
 eacp::Vector<std::string> buildArguments(const ChildBuild& build);
 
 // epm-export.cmake as it was when this binary was built.
 std::string_view embeddedExportScript();
+
+// epm-nested.cmake: epm-provider.cmake as it was when this binary was built,
+// plus a tail registering the provider over ${EPM_GRAPH}.
+std::string_view embeddedNestedScript();
 
 struct ChildBuildResult
 {
@@ -65,6 +71,7 @@ struct ChildBuildResult
     std::string details;
 };
 
-// Writes epm-export.cmake into the build directory, then configures and builds.
+// Writes epm-export.cmake into the build directory (with dependencies also
+// epm-nested.cmake and epm-graph.cmake), then configures and builds.
 ChildBuildResult runChildBuild(const ChildBuild& build);
 } // namespace epm

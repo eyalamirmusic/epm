@@ -15,6 +15,24 @@ using namespace eacp;
 namespace
 {
 constexpr auto failureTailLines = 40;
+constexpr auto exportScriptName = "epm-export.cmake";
+constexpr auto nestedScriptName = "epm-nested.cmake";
+constexpr auto nestedGraphName = "epm-graph.cmake";
+
+bool hasDependencies(const ChildBuild& build)
+{
+    return !build.dependencyGraph.empty();
+}
+
+std::string topLevelIncludes(const ChildBuild& build)
+{
+    const auto exportScript = (build.buildDirectory / exportScriptName).str();
+
+    if (!hasDependencies(build))
+        return exportScript;
+
+    return exportScript + ";" + (build.buildDirectory / nestedScriptName).str();
+}
 
 void addDefinition(Vector<std::string>& arguments,
                    std::string_view name,
@@ -86,11 +104,18 @@ Vector<std::string> configureArguments(const ChildBuild& build)
                   "CMAKE_ARCHIVE_OUTPUT_DIRECTORY",
                   (build.prefix / "lib" / build.config).str());
     addDefinition(arguments, "CPM_SOURCE_CACHE", build.cpmCache.str());
-    addDefinition(arguments,
-                  "CMAKE_PROJECT_TOP_LEVEL_INCLUDES",
-                  (build.buildDirectory / "epm-export.cmake").str());
+    addDefinition(
+        arguments, "CMAKE_PROJECT_TOP_LEVEL_INCLUDES", topLevelIncludes(build));
     addDefinition(arguments, "EPM_EXPORT_FILE", exportFile.str());
     addDefinition(arguments, "EPM_EXPORT_NAMESPACE", exportNamespace(build.config));
+
+    if (hasDependencies(build))
+    {
+        addDefinition(arguments, "EPM_NESTED", "ON");
+        addDefinition(
+            arguments, "EPM_GRAPH", (build.buildDirectory / nestedGraphName).str());
+        addDefinition(arguments, "EPM_EXECUTABLE", build.epmExecutable.str());
+    }
 
     for (const auto& [key, value]: build.request.options)
         arguments.add("-D" + key + "=" + value);
@@ -105,10 +130,18 @@ Vector<std::string> buildArguments(const ChildBuild& build)
 
 ChildBuildResult runChildBuild(const ChildBuild& build)
 {
-    const auto script = build.buildDirectory / "epm-export.cmake";
+    auto files = Vector<std::pair<FilePath, std::string_view>> {
+        {build.buildDirectory / exportScriptName, embeddedExportScript()}};
 
-    if (!writeTextFile(script, embeddedExportScript()))
-        return {false, "cannot write " + script.str(), {}};
+    if (hasDependencies(build))
+    {
+        files.add({build.buildDirectory / nestedScriptName, embeddedNestedScript()});
+        files.add({build.buildDirectory / nestedGraphName, build.dependencyGraph});
+    }
+
+    for (const auto& [path, text]: files)
+        if (!writeTextFile(path, text))
+            return {false, "cannot write " + path.str(), {}};
 
     auto configured = runStep(build, "configure", configureArguments(build));
 
