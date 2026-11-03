@@ -41,6 +41,9 @@ struct GitTreeListing
     std::string commit;
     EA::Vector<GitLink> gitlinks;
     EA::Vector<std::string> attributeFiles;
+
+    // Paths whose mode is 120000, a symlink in git's terms.
+    EA::Vector<std::string> symlinks;
 };
 
 GitTreeListing listTree(const eacp::FilePath& mirror, const std::string& commit);

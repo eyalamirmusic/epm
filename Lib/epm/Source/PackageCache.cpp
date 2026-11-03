@@ -7,6 +7,7 @@
 #include <epm/Lock/Messages.h>
 #include <epm/Util/Sha256.h>
 #include <epm/Util/Status.h>
+#include <epm/Util/Text.h>
 
 #include <eacp/Core/Process/Process.h>
 #include <eacp/Core/Utils/Console.h>
@@ -33,9 +34,74 @@ std::string computeUrlKey(const std::string& url)
     return computeSha256Hex(url).substr(0, urlKeyLength);
 }
 
+constexpr auto symlinkModeLetter = 'l';
+constexpr auto symlinkArrowLength = std::string_view {" -> "}.size();
+
 eacp::FilePath getStampPath(const eacp::FilePath& sourceDirectory)
 {
     return getSiblingWithSuffix(sourceDirectory, ".stamp");
+}
+
+// src/<hash>.symlinks: the tree's declared symlinks, one per line, which a
+// later rehash needs where they were checked out as plain files.
+eacp::FilePath getSymlinksPath(const eacp::FilePath& sourceDirectory)
+{
+    return getSiblingWithSuffix(sourceDirectory, ".symlinks");
+}
+
+DeclaredSymlinks readDeclaredSymlinks(const eacp::FilePath& sourceDirectory)
+{
+    auto path = getSymlinksPath(sourceDirectory);
+    auto symlinks = DeclaredSymlinks {};
+
+    if (!eacp::Files::isFile(path))
+        return symlinks;
+
+    for (const auto line: splitLines(eacp::Files::readFile(path)))
+        symlinks.insert(std::string {line});
+
+    return symlinks;
+}
+
+void writeDeclaredSymlinks(const eacp::FilePath& sourceDirectory,
+                           const DeclaredSymlinks& symlinks)
+{
+    auto text = std::string {};
+
+    for (const auto& path: symlinks)
+        text += path + '\n';
+
+    eacp::Files::writeFile(getSymlinksPath(sourceDirectory),
+                           std::string_view {text});
+}
+
+void addDeclaredSymlinks(DeclaredSymlinks& symlinks,
+                         const GitTreeListing& listing,
+                         const std::string& pathPrefix)
+{
+    for (const auto& path: listing.symlinks)
+        symlinks.insert(pathPrefix + path);
+}
+
+// An archive's paths start at its top directory, which is not part of the
+// stored tree when the archive has just one.
+DeclaredSymlinks getSymlinksUnder(const DeclaredSymlinks& symlinks,
+                                  const eacp::FilePath& extracted,
+                                  const eacp::FilePath& contentRoot)
+{
+    if (contentRoot == extracted)
+        return symlinks;
+
+    auto prefix = contentRoot.fileName() + "/";
+    auto under = DeclaredSymlinks {};
+
+    for (const auto& path: symlinks)
+    {
+        if (path.starts_with(prefix))
+            under.insert(path.substr(prefix.size()));
+    }
+
+    return under;
 }
 
 std::string readStamp(const eacp::FilePath& path)
@@ -180,7 +246,7 @@ bool PackageCache::hasIntactEntry(const std::string& hash,
     if (verification == Verification::trustStamp && readStamp(stampPath) == stamp)
         return true;
 
-    if (computeMerkleHash(directory) != hash)
+    if (computeMerkleHash(directory, readDeclaredSymlinks(directory)) != hash)
         return false;
 
     eacp::Files::writeFile(stampPath, std::string_view {stamp});
@@ -192,6 +258,7 @@ void PackageCache::removeEntry(const std::string& hash) const
     auto directory = getSourceDirectory(hash);
     removeTreeAtAnyLength(directory);
     eacp::Files::removeFile(getStampPath(directory));
+    eacp::Files::removeFile(getSymlinksPath(directory));
 }
 
 MaterializedPackage PackageCache::materialize(const PackageRequest& request,
@@ -208,22 +275,27 @@ MaterializedPackage PackageCache::materialize(const PackageRequest& request,
         auto resolvedCommit = std::string {};
         auto submodules = EA::Vector<LockedSubmodule> {};
         auto usesLfs = false;
+        auto symlinks = DeclaredSymlinks {};
 
         if (request.kind == PackageKind::archive)
-            fetchArchiveTree(request, network, tree);
+            symlinks = fetchArchiveTree(request, network, tree);
         else
-            resolvedCommit =
-                fetchGitTree(request, commit, network, tree, submodules, usesLfs);
+            resolvedCommit = fetchGitTree(
+                request, commit, network, tree, submodules, usesLfs, symlinks);
 
         auto contentRoot = tree;
 
         if (request.kind == PackageKind::archive)
+        {
             contentRoot = findArchiveContentRoot(tree);
+            symlinks = getSymlinksUnder(symlinks, tree, contentRoot);
+        }
 
         for (const auto& patch: request.patches)
             applyPatch(contentRoot, patch);
 
-        auto stored = storeTree(contentRoot, resolvedCommit, std::move(submodules));
+        auto stored =
+            storeTree(contentRoot, resolvedCommit, std::move(submodules), symlinks);
         stored.usesGitLfs = usesLfs;
         removeTreeAtAnyLength(staging);
         return stored;
@@ -266,7 +338,7 @@ eacp::FilePath PackageCache::fetchCommitIntoMirror(const std::string& name,
 }
 
 std::string PackageCache::resolveCommit(const PackageRequest& request,
-                                       Network network) const
+                                        Network network) const
 {
     if (request.kind != PackageKind::git)
         return request.archiveHash.hex;
@@ -275,9 +347,9 @@ std::string PackageCache::resolveCommit(const PackageRequest& request,
         return request.ref;
 
     if (network == Network::forbidden)
-        throw std::runtime_error("resolving " + request.name + "'s ref '"
-                                 + request.ref
-                                 + "' needs the network, which offline mode forbids");
+        throw std::runtime_error(
+            "resolving " + request.name + "'s ref '" + request.ref
+            + "' needs the network, which offline mode forbids");
 
     auto mirrorLock = MirrorLock {root, request.url};
     return fetchRefIntoMirror(getOrCreateMirror(request.url), request.ref);
@@ -288,7 +360,8 @@ std::string PackageCache::fetchGitTree(const PackageRequest& request,
                                        Network network,
                                        const eacp::FilePath& staging,
                                        EA::Vector<LockedSubmodule>& submodules,
-                                       bool& usesLfs) const
+                                       bool& usesLfs,
+                                       DeclaredSymlinks& symlinks) const
 {
     auto resolvedCommit = commit;
     auto mirror = eacp::FilePath {};
@@ -314,6 +387,7 @@ std::string PackageCache::fetchGitTree(const PackageRequest& request,
 
     auto listing = listTree(mirror, resolvedCommit);
     usesLfs = checkOutCommitWithLfs(listing, staging);
+    addDeclaredSymlinks(symlinks, listing, {});
     checkOutSubmodules(request.name,
                        request.url,
                        listing,
@@ -322,7 +396,8 @@ std::string PackageCache::fetchGitTree(const PackageRequest& request,
                        request.submoduleSelection,
                        network,
                        submodules,
-                       usesLfs);
+                       usesLfs,
+                       symlinks);
     return resolvedCommit;
 }
 
@@ -334,7 +409,8 @@ void PackageCache::checkOutSubmodules(const std::string& name,
                                       const SubmoduleSelection& selection,
                                       Network network,
                                       EA::Vector<LockedSubmodule>& submodules,
-                                      bool& usesLfs) const
+                                      bool& usesLfs,
+                                      DeclaredSymlinks& symlinks) const
 {
     for (const auto& submodule: listSubmodules(parentListing, tree))
     {
@@ -351,6 +427,7 @@ void PackageCache::checkOutSubmodules(const std::string& name,
         eacp::Files::createDirectories(destination);
         auto submoduleListing = listTree(mirror, submodule.commit);
         usesLfs = checkOutCommitWithLfs(submoduleListing, destination) || usesLfs;
+        addDeclaredSymlinks(symlinks, submoduleListing, fullPath + "/");
         submodules.push_back({fullPath, url, submodule.commit});
 
         if (selection.isRecursive)
@@ -363,14 +440,15 @@ void PackageCache::checkOutSubmodules(const std::string& name,
                                {},
                                network,
                                submodules,
-                               usesLfs);
+                               usesLfs,
+                               symlinks);
         }
     }
 }
 
-void PackageCache::fetchArchiveTree(const PackageRequest& request,
-                                    Network network,
-                                    const eacp::FilePath& staging) const
+DeclaredSymlinks PackageCache::fetchArchiveTree(const PackageRequest& request,
+                                                Network network,
+                                                const eacp::FilePath& staging) const
 {
     auto archive = getDownloadPath(request.url);
 
@@ -408,7 +486,7 @@ void PackageCache::fetchArchiveTree(const PackageRequest& request,
         }
     }
 
-    extractArchive(archive, staging);
+    return extractArchive(archive, staging);
 }
 
 // file(<algorithm>) knows every algorithm URL_HASH may name, SHA-3 included.
@@ -434,8 +512,9 @@ std::string PackageCache::computeArchiveHash(const eacp::FilePath& archive,
     return eacp::Strings::toLower(eacp::Strings::trim(result.errorOutput));
 }
 
-void PackageCache::extractArchive(const eacp::FilePath& archive,
-                                  const eacp::FilePath& destination) const
+DeclaredSymlinks
+    PackageCache::extractArchive(const eacp::FilePath& archive,
+                                 const eacp::FilePath& destination) const
 {
     if (archive.hasExtension("zip"))
     {
@@ -444,26 +523,106 @@ void PackageCache::extractArchive(const eacp::FilePath& archive,
         if (!reader.isValid() || !reader.extractAll(destination))
             throw std::runtime_error("cannot extract " + archive.str() + ": "
                                      + reader.errorMessage());
-        return;
+    }
+    else
+    {
+        auto result = runCMakeTar({"xf", archive.str()}, destination);
+
+        if (result.exitCode != 0)
+            throw std::runtime_error("cmake -E tar could not extract "
+                                     + archive.str() + ":\n" + result.errorOutput);
     }
 
-    auto options = eacp::Processes::ProcessOptions {};
-    options.executable = cmake.str();
-    options.arguments = {"-E", "tar", "xf", archive.str()};
-    options.workingDirectory = destination.str();
-    auto result = eacp::Processes::run(options);
+    auto symlinks = listArchiveSymlinks(archive);
+    placeArchiveSymlinks(symlinks, destination);
 
-    if (result.exitCode != 0)
-        throw std::runtime_error("cmake -E tar could not extract " + archive.str()
-                                 + ":\n" + result.errorOutput);
+    auto paths = DeclaredSymlinks {};
+
+    for (const auto& [path, target]: symlinks)
+        paths.insert(path);
+
+    return paths;
 }
 
-MaterializedPackage
-    PackageCache::storeTree(const eacp::FilePath& tree,
-                            const std::string& commit,
-                            EA::Vector<LockedSubmodule> submodules) const
+eacp::Processes::ProcessResult
+    PackageCache::runCMakeTar(const EA::Vector<std::string>& arguments,
+                              const eacp::FilePath& workingDirectory) const
 {
-    auto hash = computeMerkleHash(tree);
+    auto options = eacp::Processes::ProcessOptions {};
+    options.executable = cmake.str();
+    options.arguments = {"-E", "tar"};
+    options.arguments.addFrom(arguments);
+    options.workingDirectory = workingDirectory.str();
+    return eacp::Processes::run(options);
+}
+
+// cmake -E tar lists zips too. `tf` gives each entry's name and `tvf` the same
+// entries in the same order, with a mode column and "name -> target" for a
+// symlink, so the names never have to be parsed out of the long form.
+std::map<std::string, std::string>
+    PackageCache::listArchiveSymlinks(const eacp::FilePath& archive) const
+{
+    auto names = runCMakeTar({"tf", archive.str()}, archive.parentDirectory());
+    auto details = runCMakeTar({"tvf", archive.str()}, archive.parentDirectory());
+
+    if (names.exitCode != 0 || details.exitCode != 0)
+        throw std::runtime_error("cmake -E tar could not list " + archive.str());
+
+    auto nameLines = splitLines(names.output);
+    auto detailLines = splitLines(details.output);
+    auto symlinks = std::map<std::string, std::string> {};
+
+    for (auto index = 0; index < nameLines.size() && index < detailLines.size();
+         ++index)
+    {
+        auto name = std::string {nameLines[index]};
+        auto detail = detailLines[index];
+        auto arrow = detail.find(" -> ", detail.rfind(name));
+
+        if (detail.empty() || detail.front() != symlinkModeLetter
+            || arrow == std::string_view::npos)
+            continue;
+
+        symlinks[name] = std::string {detail.substr(arrow + symlinkArrowLength)};
+    }
+
+    return symlinks;
+}
+
+// Each symlink the archive holds as the link where this machine makes links,
+// and on Windows as a plain file holding the link text, whatever extraction
+// left there, so the tree does not depend on the account's privileges.
+void PackageCache::placeArchiveSymlinks(
+    const std::map<std::string, std::string>& symlinks,
+    const eacp::FilePath& destination) const
+{
+    for (const auto& [path, target]: symlinks)
+    {
+        auto entry = destination / path;
+        auto entryPath = getLongPathSafeStdPath(entry);
+        auto error = std::error_code {};
+
+        if (!eacp::Platform::isWindows()
+            && std::filesystem::is_symlink(
+                std::filesystem::symlink_status(entryPath)))
+            continue;
+
+        std::filesystem::remove_all(entryPath, error);
+        eacp::Files::createDirectories(entry.parentDirectory());
+
+        if constexpr (eacp::Platform::isWindows())
+            eacp::Files::writeFile(entry, std::string_view {target});
+        else
+            std::filesystem::create_symlink(target, entryPath, error);
+    }
+}
+
+MaterializedPackage PackageCache::storeTree(const eacp::FilePath& tree,
+                                            const std::string& commit,
+                                            EA::Vector<LockedSubmodule> submodules,
+                                            const DeclaredSymlinks& symlinks) const
+{
+    auto hash = computeMerkleHash(tree, symlinks);
     auto destination = getSourceDirectory(hash);
 
     if (!eacp::Files::isDirectory(destination))
@@ -476,6 +635,7 @@ MaterializedPackage
                                      + destination.str());
     }
 
+    writeDeclaredSymlinks(destination, symlinks);
     eacp::Files::writeFile(getStampPath(destination),
                            std::string_view {computeTreeStamp(destination)});
     return {commit, hash, destination, std::move(submodules)};

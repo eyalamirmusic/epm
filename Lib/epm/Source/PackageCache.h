@@ -6,10 +6,14 @@
 #include <eacp/Core/Utils/FilePath.h>
 #include <eacp/Core/Utils/TemporaryFile.h>
 
+#include <epm/Lock/MerkleHash.h>
 #include <epm/Source/Mirror.h>
 #include <epm/Spec/PackageArguments.h>
 #include <epm/Source/Submodules.h>
 
+#include <eacp/Core/Process/Process.h>
+
+#include <map>
 #include <string>
 #include <eacp/Core/Utils/Containers.h>
 
@@ -83,7 +87,8 @@ private:
                              Network network,
                              const eacp::FilePath& staging,
                              EA::Vector<LockedSubmodule>& submodules,
-                             bool& usesLfs) const;
+                             bool& usesLfs,
+                             DeclaredSymlinks& symlinks) const;
     eacp::FilePath fetchCommitIntoMirror(const std::string& name,
                                          const std::string& url,
                                          const std::string& commit,
@@ -96,17 +101,28 @@ private:
                             const SubmoduleSelection& selection,
                             Network network,
                             EA::Vector<LockedSubmodule>& submodules,
-                            bool& usesLfs) const;
-    void fetchArchiveTree(const PackageRequest& request,
-                          Network network,
-                          const eacp::FilePath& staging) const;
+                            bool& usesLfs,
+                            DeclaredSymlinks& symlinks) const;
+
+    // The archive's symlinks, by the path the archive gives them.
+    DeclaredSymlinks fetchArchiveTree(const PackageRequest& request,
+                                      Network network,
+                                      const eacp::FilePath& staging) const;
     std::string computeArchiveHash(const eacp::FilePath& archive,
                                    const std::string& algorithm) const;
-    void extractArchive(const eacp::FilePath& archive,
-                        const eacp::FilePath& destination) const;
+    DeclaredSymlinks extractArchive(const eacp::FilePath& archive,
+                                    const eacp::FilePath& destination) const;
+    eacp::Processes::ProcessResult
+        runCMakeTar(const EA::Vector<std::string>& arguments,
+                    const eacp::FilePath& workingDirectory) const;
+    std::map<std::string, std::string>
+        listArchiveSymlinks(const eacp::FilePath& archive) const;
+    void placeArchiveSymlinks(const std::map<std::string, std::string>& symlinks,
+                              const eacp::FilePath& destination) const;
     MaterializedPackage storeTree(const eacp::FilePath& tree,
                                   const std::string& commit,
-                                  EA::Vector<LockedSubmodule> submodules) const;
+                                  EA::Vector<LockedSubmodule> submodules,
+                                  const DeclaredSymlinks& symlinks) const;
 
     CacheRoot root;
     eacp::FilePath cmake;

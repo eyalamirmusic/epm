@@ -39,3 +39,4 @@ add_consumer_test(lockIsAConfigureInputNinja RunLockInputProject.cmake lock-inpu
         -DGENERATOR=Ninja)
 add_consumer_test(requirementsAreSelectedMinimally RunRequirementsProject.cmake
         requirements)
+add_consumer_test(symlinksHashAlikeEverywhere RunSymlinksProject.cmake symlinks)

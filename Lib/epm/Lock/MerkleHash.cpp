@@ -95,16 +95,36 @@ std::string computeSymlinkHash(const std::filesystem::path& link)
     return computeSha256Hex(target.str());
 }
 
-std::string computeMerkleHashOfStdPath(const std::filesystem::path& directory);
+std::string computeMerkleHashOfStdPath(const std::filesystem::path& directory,
+                                       const std::string& relativeDirectory,
+                                       const DeclaredSymlinks& symlinks);
 
-std::string computeEntryHash(const TreeEntry& entry)
+std::string joinRelativePath(const std::string& directory, const std::string& name)
+{
+    if (directory.empty())
+        return name;
+
+    return directory + '/' + name;
+}
+
+// The file holds the link text, which is what a symlink's hash is taken over.
+bool isSymlinkCheckedOutAsFile(const TreeEntry& entry,
+                               const std::string& relativePath,
+                               const DeclaredSymlinks& symlinks)
+{
+    return entry.kind == TreeEntryKind::file && symlinks.contains(relativePath);
+}
+
+std::string computeEntryHash(const TreeEntry& entry,
+                             const std::string& relativePath,
+                             const DeclaredSymlinks& symlinks)
 {
     switch (entry.kind)
     {
         case TreeEntryKind::file:
             return computeFileSha256Hex(entry.path);
         case TreeEntryKind::directory:
-            return computeMerkleHashOfStdPath(entry.path);
+            return computeMerkleHashOfStdPath(entry.path, relativePath, symlinks);
         case TreeEntryKind::symlink:
             return computeSymlinkHash(entry.path);
     }
@@ -112,14 +132,23 @@ std::string computeEntryHash(const TreeEntry& entry)
     throw std::runtime_error("cannot hash a special file");
 }
 
-std::string computeMerkleHashOfStdPath(const std::filesystem::path& directory)
+std::string computeMerkleHashOfStdPath(const std::filesystem::path& directory,
+                                       const std::string& relativeDirectory,
+                                       const DeclaredSymlinks& symlinks)
 {
     auto hasher = Sha256 {};
 
     for (const auto& entry: listHashedEntries(directory))
     {
-        auto line = describeEntryKind(entry.kind) + ' ' + computeEntryHash(entry)
-                    + ' ' + entry.name + '\n';
+        auto relativePath = joinRelativePath(relativeDirectory, entry.name);
+        auto kind = entry.kind;
+
+        if (isSymlinkCheckedOutAsFile(entry, relativePath, symlinks))
+            kind = TreeEntryKind::symlink;
+
+        auto line = describeEntryKind(kind) + ' '
+                    + computeEntryHash(entry, relativePath, symlinks) + ' '
+                    + entry.name + '\n';
         hasher.update(line);
     }
 
@@ -156,9 +185,11 @@ void addTreeToStamp(Sha256& hasher,
 }
 } // namespace
 
-std::string computeMerkleHash(const eacp::FilePath& directory)
+std::string computeMerkleHash(const eacp::FilePath& directory,
+                              const DeclaredSymlinks& symlinks)
 {
-    return computeMerkleHashOfStdPath(getLongPathSafeStdPath(directory));
+    return computeMerkleHashOfStdPath(
+        getLongPathSafeStdPath(directory), {}, symlinks);
 }
 
 std::string computeTreeStamp(const eacp::FilePath& directory)

@@ -20,6 +20,7 @@ namespace
 {
 constexpr auto gitExecutable = "git";
 constexpr auto gitAttributesFileName = std::string_view {".gitattributes"};
+constexpr auto gitSymlinkMode = "120000";
 constexpr auto lfsFilterAttribute = std::string_view {"filter=lfs"};
 
 std::string joinArguments(const EA::Vector<std::string>& arguments)
@@ -51,6 +52,17 @@ bool isGitAttributesPath(const std::string& path)
 {
     return path == gitAttributesFileName
            || path.ends_with("/" + std::string {gitAttributesFileName});
+}
+
+// Windows checks symlinks out as plain files holding the link text, as Git for
+// Windows does by default, so a checkout never depends on whether the account
+// may create symlinks; the Merkle hash counts them as symlinks either way.
+std::string getSymlinksSetting()
+{
+    if constexpr (eacp::Platform::isWindows())
+        return "core.symlinks=false";
+
+    return "core.symlinks=true";
 }
 
 std::string getGitLfsInstallCommand()
@@ -168,8 +180,12 @@ GitTreeListing listTree(const eacp::FilePath& mirror, const std::string& commit)
         auto tab = line.find('\t');
         auto fields = eacp::Strings::split(line.substr(0, tab), ' ');
         auto path = std::string {line.substr(tab + 1)};
+        constexpr auto modeField = 0;
         constexpr auto typeField = 1;
         constexpr auto shaField = 2;
+
+        if (fields[modeField] == gitSymlinkMode)
+            listing.symlinks.push_back(path);
 
         if (fields[typeField] == "commit")
             listing.gitlinks.push_back({path, fields[shaField]});
@@ -226,7 +242,7 @@ void checkOutCommit(const eacp::FilePath& mirror,
                                             "-c",
                                             "core.eol=lf",
                                             "-c",
-                                            "core.symlinks=true",
+                                            getSymlinksSetting(),
                                             "-c",
                                             "filter.lfs.smudge=" + smudge,
                                             "-c",
