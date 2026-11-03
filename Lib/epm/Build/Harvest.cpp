@@ -59,6 +59,27 @@ Vector<std::string> parseTargetNames(std::string_view namesText)
     return names;
 }
 
+Vector<TargetAlias> parseTargetAliases(std::string_view aliasesText)
+{
+    auto aliases = Vector<TargetAlias> {};
+
+    for (const auto line: splitLines(aliasesText))
+    {
+        const auto fields = splitList(Strings::trim(line), ' ');
+
+        if (fields.size() != 2)
+            continue;
+
+        const auto& name = fields[0];
+
+        if (!aliases.findIf([&](const TargetAlias& alias)
+                            { return alias.name == name; }))
+            aliases.add({name, fields[1]});
+    }
+
+    return aliases;
+}
+
 Vector<std::string> buildTreePaths(std::string_view exportFileText,
                                    std::string_view buildDirectory)
 {
@@ -158,6 +179,7 @@ std::string sharedSourcePath(std::string_view contents, std::string_view relativ
 }
 
 std::string targetsFileText(const Vector<std::string>& targetNames,
+                            const Vector<TargetAlias>& aliases,
                             bool needsThreads,
                             const Vector<std::string>& configs)
 {
@@ -189,6 +211,15 @@ std::string targetsFileText(const Vector<std::string>& targetNames,
               "    endif ()\n"
               "endforeach ()\n";
 
+    for (const auto& alias: aliases)
+    {
+        if (!targetNames.contains(alias.target))
+            continue;
+
+        text += "\nif (NOT TARGET " + alias.name + ")\n    add_library(" + alias.name
+                + " ALIAS " + alias.target + ")\nendif ()\n";
+    }
+
     return text;
 }
 
@@ -196,12 +227,14 @@ std::optional<std::string> writeTargetsFile(const FilePath& prefix,
                                             const Vector<std::string>& configs)
 {
     auto targetNames = Vector<std::string> {};
+    auto aliasesText = std::string {};
     auto needsThreads = false;
 
     for (const auto& config: configs)
     {
         const auto exportFile = prefix / ("export-" + config + ".cmake");
         const auto namesFile = prefix / ("export-" + config + ".cmake.names");
+        const auto aliasesFile = prefix / ("export-" + config + ".cmake.aliases");
 
         if (!Files::isFile(exportFile) || !Files::isFile(namesFile))
             return "missing " + exportFile.str() + " or its .names";
@@ -209,13 +242,18 @@ std::optional<std::string> writeTargetsFile(const FilePath& prefix,
         for (const auto& name: parseTargetNames(Files::readFile(namesFile)))
             targetNames.addIfNotThere(name);
 
+        if (Files::isFile(aliasesFile))
+            aliasesText += Files::readFile(aliasesFile) + "\n";
+
         needsThreads = needsThreads || mentionsThreads(Files::readFile(exportFile));
     }
 
     const auto targetsFile = prefix / "epm-targets.cmake";
 
-    if (!writeTextFile(targetsFile,
-                       targetsFileText(targetNames, needsThreads, configs)))
+    const auto text = targetsFileText(
+        targetNames, parseTargetAliases(aliasesText), needsThreads, configs);
+
+    if (!writeTextFile(targetsFile, text))
         return "cannot write " + targetsFile.str();
 
     return std::nullopt;

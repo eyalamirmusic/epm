@@ -124,7 +124,7 @@ auto tThreads = test("Harvest/threads") = []
 auto tTargetsFile = test("Harvest/targetsFile") = []
 {
     const auto text =
-        targetsFileText({"eacp-core", "Miro"}, true, {"Release", "Debug"});
+        targetsFileText({"eacp-core", "Miro"}, {}, true, {"Release", "Debug"});
     const auto threads = text.find("find_package(Threads REQUIRED)");
     const auto debug =
         text.find(R"(include("${CMAKE_CURRENT_LIST_DIR}/export-Debug.cmake"))");
@@ -140,18 +140,78 @@ auto tTargetsFile = test("Harvest/targetsFile") = []
     check(text.find("$<IF:$<CONFIG:Debug>,epm_debug::${name},epm_release::${name}>")
           != std::string::npos);
 
-    check(targetsFileText({"fmt"}, false, {"Release"}).find("Threads")
+    check(targetsFileText({"fmt"}, {}, false, {"Release"}).find("Threads")
           == std::string::npos);
 };
 
 auto tTargetsFileOneConfig = test("Harvest/targetsFile/releaseOnly") = []
 {
-    const auto text = targetsFileText({"fmt"}, false, {"Release"});
+    const auto text = targetsFileText({"fmt"}, {}, false, {"Release"});
 
     check(text.find("export-Release.cmake") != std::string::npos);
     check(text.find("export-Debug.cmake") == std::string::npos);
     check(text.find("\"epm_release::${name}\"") != std::string::npos);
     check(text.find("$<IF:") == std::string::npos);
+    check(text.find("ALIAS") == std::string::npos);
+};
+
+auto tAliasesParse = test("Harvest/aliases/parse") = []
+{
+    const auto aliases = parseTargetAliases("fmt::fmt fmt\r\n\nbroken\n  Miro::Miro "
+                                            "Miro  \na b c\nfmt::fmt other\n");
+
+    check(aliases.size() == 2);
+    check(aliases[0] == TargetAlias {"fmt::fmt", "fmt"});
+    check(aliases[1] == TargetAlias {"Miro::Miro", "Miro"});
+    check(parseTargetAliases("").empty());
+};
+
+auto tTargetsFileAliases = test("Harvest/targetsFile/aliases") = []
+{
+    const auto text =
+        targetsFileText({"fmt", "ghc_filesystem"},
+                        {{"fmt::fmt", "fmt"},
+                         {"ghcFilesystem::ghc_filesystem", "ghc_filesystem"},
+                         {"other::other", "other"}},
+                        false,
+                        {"Debug", "Release"});
+    const auto loop = text.find("endforeach ()");
+    const auto fmt = text.find("if (NOT TARGET fmt::fmt)\n"
+                               "    add_library(fmt::fmt ALIAS fmt)\n"
+                               "endif ()\n");
+    const auto ghc = text.find(
+        "if (NOT TARGET ghcFilesystem::ghc_filesystem)\n"
+        "    add_library(ghcFilesystem::ghc_filesystem ALIAS ghc_filesystem)\n"
+        "endif ()\n");
+
+    check(fmt != std::string::npos && ghc != std::string::npos);
+    check(loop < fmt && fmt < ghc);
+    check(text.find("other") == std::string::npos);
+    check(text.find("$<IF:$<CONFIG:Debug>,epm_debug::${name},epm_release::${name}>")
+          != std::string::npos);
+};
+
+auto tWriteTargetsAliases = test("Harvest/writeTargetsFile/aliases") = []
+{
+    auto root = eacp::TemporaryFile {};
+    const auto prefix = root.path();
+
+    for (const auto config: {"Debug", "Release"})
+    {
+        const auto file = prefix / ("export-" + std::string {config} + ".cmake");
+
+        check(writeTextFile(file, "# export\n"));
+        check(writeTextFile(file.sibling(file.fileName() + ".names"), "fmt\n"));
+    }
+
+    // Debug predates alias recording: its .aliases is missing.
+    check(writeTextFile(prefix / "export-Release.cmake.aliases", "fmt::fmt fmt\n"));
+    check(!writeTargetsFile(prefix, {"Debug", "Release"}).has_value());
+
+    const auto text = eacp::Files::readFile(prefix / "epm-targets.cmake");
+
+    check(text.find("add_library(fmt::fmt ALIAS fmt)") != std::string::npos);
+    check(text.find("ALIAS") == text.rfind("ALIAS"));
 };
 
 auto tInterfaceSources = test("Harvest/scan/interfaceSourcePaths") = []

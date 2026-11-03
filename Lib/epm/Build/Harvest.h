@@ -12,6 +12,19 @@ namespace epm
 // The target names in an export file's `.names` companion, one per line.
 eacp::Vector<std::string> parseTargetNames(std::string_view namesText);
 
+// An ALIAS target the child build defined for one of its exported targets.
+struct TargetAlias
+{
+    std::string name;
+    std::string target;
+
+    bool operator==(const TargetAlias&) const = default;
+};
+
+// The aliases in an export file's `.aliases` companion, one `<alias> <target>`
+// per line; malformed lines are skipped.
+eacp::Vector<TargetAlias> parseTargetAliases(std::string_view aliasesText);
+
 // Every distinct path in the export file that lies under `buildDirectory`,
 // relative to it, in order of first appearance. A path ends at the quote,
 // list separator or generator-expression bracket that closes it.
@@ -49,13 +62,16 @@ std::string sharedSourcePath(std::string_view contents, std::string_view relativ
 
 // The epm-targets.cmake facade over the export-<Config>.cmake of every
 // config in `configs`; each target links the per-config one that
-// configSelector picks.
+// configSelector picks. Each alias of a facade target becomes an ALIAS of it.
 std::string targetsFileText(const eacp::Vector<std::string>& targetNames,
+                            const eacp::Vector<TargetAlias>& aliases,
                             bool needsThreads,
                             const eacp::Vector<std::string>& configs);
 
 // Rewrites <prefix>/epm-targets.cmake for `configs`, reading each config's
-// export file and .names. Returns the error when one is unreadable.
+// export file, .names and .aliases (absent in entries exported before aliases
+// were recorded). Returns the error when the export file or .names is
+// unreadable.
 std::optional<std::string>
     writeTargetsFile(const eacp::FilePath& prefix,
                      const eacp::Vector<std::string>& configs);

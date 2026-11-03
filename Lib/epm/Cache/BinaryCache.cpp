@@ -92,12 +92,14 @@ std::optional<BinaryEntry> createEntry(const CacheRoot& cache,
 bool clearConfig(const FilePath& prefix, const std::string& config)
 {
     const auto exportFile = prefix / ("export-" + config + ".cmake");
+    const auto companion = [&](const std::string& extension)
+    { return exportFile.sibling(exportFile.fileName() + extension); };
 
     return Files::removeAll(markerFor(prefix, config))
            && Files::removeAll(prefix / "lib" / config)
            && Files::removeAll(prefix / "gen" / config)
-           && Files::removeAll(exportFile)
-           && Files::removeAll(exportFile.sibling(exportFile.fileName() + ".names"));
+           && Files::removeAll(exportFile) && Files::removeAll(companion(".names"))
+           && Files::removeAll(companion(".aliases"));
 }
 
 BinaryResult failure(std::string error, std::string details = {})
