@@ -6,6 +6,10 @@ nano_add_executable(epmTests
             CacheRootTests.cpp
             GitTests.cpp
             HarvestTests.cpp
+            LockFileTests.cpp
+            MerkleHashTests.cpp
+            MessagesTests.cpp
+            PackageArgumentsTests.cpp
             ResolveTests.cpp
             Sha256Tests.cpp
             SourceCacheTests.cpp

@@ -7,7 +7,7 @@
 
 inline eacp::FilePath createEmptyTestDirectory(const std::string& name)
 {
-    auto directory = eacp::FilePath::tempDirectory() / ("lockstep-test-" + name);
+    auto directory = eacp::FilePath::tempDirectory() / ("epm-test-" + name);
     eacp::Files::removeAll(directory);
     eacp::Files::createDirectories(directory);
     return directory;
