@@ -1,3 +1,4 @@
+#include <epm/Cache/CacheListing.h>
 #include <epm/Cache/CacheRoot.h>
 #include <epm/Emit/Response.h>
 #include <epm/Resolve/Resolve.h>
@@ -23,6 +24,7 @@ constexpr auto usage = "usage: epm <command>\n"
                        "commands:\n"
                        "  resolve      resolve one package request for epm.cmake\n"
                        "  cache path   print the cache root\n"
+                       "  cache ls     list the cached binaries, sources and tools\n"
                        "  --version    print the version";
 
 Vector<std::string> argumentsAfter(int count)
@@ -121,7 +123,23 @@ int cache()
         return 0;
     }
 
-    Console::printError("usage: epm cache path");
+    if (!rest.empty() && rest[0] == "ls")
+    {
+        auto root = FilePath {};
+        auto cli = Args::Parser {"epm cache ls", "Lists what the cache holds."};
+        cli.option("--cache", root, "the cache root (default: $EPM_CACHE)");
+
+        if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(3))))
+            return *code;
+
+        const auto cacheRoot =
+            root.empty() ? epm::CacheRoot::fromEnvironment() : epm::CacheRoot {root};
+        Console::print(epm::cacheListing(canonical(cacheRoot)));
+        return 0;
+    }
+
+    Console::printError(
+        "usage: epm cache path\n       epm cache ls [--cache <dir>]");
     return Args::badArguments;
 }
 

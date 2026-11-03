@@ -134,7 +134,7 @@ jobs:
       # (a) The full consumer path with this epm: get_epm.cmake takes
       # EPM_EXECUTABLE and, finding no module installed beside it, the
       # repository's CMake/epm.cmake. MODE auto, so eacp is fetched and built
-      # Debug + Release into a cache inside the workspace.
+      # (Release only: EPM_CONFIGS auto) into a cache inside the workspace.
       - name: HelloEacp smoke test
         if: inputs.smoke
         run: |

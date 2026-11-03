@@ -19,6 +19,7 @@ Request modeRequest(std::string mode, bool buildMissing = true)
     request.gitRef = "main";
     request.mode = std::move(mode);
     request.buildMissingBinaries = buildMissing;
+    request.configs = {"Release"};
     return request;
 }
 
@@ -55,14 +56,34 @@ auto tResponsePrebuilt = test("Response/prebuilt") = []
     const auto text = responseText({"eacp",
                                     "prebuilt",
                                     "/c/src/eacp/3f1c0a9b2d4e",
-                                    "/c/bin/eacp/9a8b7c6d5e4f"});
+                                    "/c/bin/eacp/macos-arm64/9a8b7c6d5e4f",
+                                    "macos-arm64",
+                                    {"Debug", "Release"},
+                                    {}});
 
-    check(
-        text
-        == "set(epm_eacp_MODE \"prebuilt\")\n"
-           "set(epm_eacp_SOURCE_DIR \"/c/src/eacp/3f1c0a9b2d4e\")\n"
-           "set(epm_eacp_PREFIX \"/c/bin/eacp/9a8b7c6d5e4f\")\n"
-           "set(epm_eacp_TARGETS_FILE \"${epm_eacp_PREFIX}/epm-targets.cmake\")\n");
+    check(text
+          == "set(epm_eacp_MODE \"prebuilt\")\n"
+             "set(epm_eacp_SOURCE_DIR \"/c/src/eacp/3f1c0a9b2d4e\")\n"
+             "set(epm_eacp_PREFIX \"/c/bin/eacp/macos-arm64/9a8b7c6d5e4f\")\n"
+             "set(epm_eacp_TARGETS_FILE \"${epm_eacp_PREFIX}/epm-targets.cmake\")\n"
+             "set(epm_eacp_PLATFORM \"macos-arm64\")\n"
+             "set(epm_eacp_CONFIGS \"Debug;Release\")\n");
+};
+
+auto tResponseNote = test("Response/prebuiltWithNote") = []
+{
+    const auto text = responseText(
+        {"eacp",
+         "prebuilt",
+         "/c/src/eacp/3f1c0a9b2d4e",
+         "/c/bin/eacp/macos-arm64/9a8b7c6d5e4f",
+         "macos-arm64",
+         {"Release"},
+         "built with AppleClang 17.0.0.17000013, current 17.0.0.17000319"});
+
+    check(text.find("set(epm_eacp_CONFIGS \"Release\")\n") != std::string::npos);
+    check(text.ends_with("set(epm_eacp_NOTE \"built with AppleClang "
+                         "17.0.0.17000013, current 17.0.0.17000319\")\n"));
 };
 
 auto tResponseSource = test("Response/source") = []
@@ -106,6 +127,44 @@ auto tRequestErrors = test("Resolve/requestErrors") = []
     auto noRef = modeRequest("auto");
     noRef.gitRef.clear();
     check(requestError(noRef).has_value());
+
+    auto noConfigs = modeRequest("auto");
+    noConfigs.configs.clear();
+    check(requestError(noConfigs).has_value());
+
+    auto mapped = modeRequest("auto");
+    mapped.configs = {"Debug", "RelWithDebInfo", "MinSizeRel"};
+    check(!requestError(mapped).has_value());
+
+    auto unknownConfig = modeRequest("auto");
+    unknownConfig.configs = {"Debug", "Profile"};
+    check(requestError(unknownConfig).value_or("").find("'Profile'")
+          != std::string::npos);
+
+    auto unknownMatch = modeRequest("auto");
+    unknownMatch.abiMatch = "loose";
+    check(requestError(unknownMatch).value_or("").find("'loose'")
+          != std::string::npos);
+};
+
+auto tRequestSchema = test("Resolve/requestErrors/schema") = []
+{
+    for (const auto schema: {0, 1, 3})
+    {
+        auto request = modeRequest("auto");
+        request.schema = schema;
+
+        const auto error = requestError(request);
+
+        check(error.has_value());
+        check(error.value_or("").find("has schema " + std::to_string(schema)
+                                      + ", but this epm reads schema 2")
+              != std::string::npos);
+        check(error.value_or("").find("get_epm.cmake") != std::string::npos);
+    }
+
+    check(modeRequest("auto").schema == requestSchema);
+    check(requestSchema == 2);
 };
 
 auto tGeneratorSingleConfig = test("ChildBuild/generator/consumersSingleConfig") = []

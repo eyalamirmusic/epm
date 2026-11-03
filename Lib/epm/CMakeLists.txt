@@ -1,12 +1,18 @@
 add_library(epm-core STATIC
         Build/ChildBuild.cpp
         Build/ChildBuild.h
+        Build/Configs.cpp
+        Build/Configs.h
         Build/Harvest.cpp
         Build/Harvest.h
         Cache/BinaryCache.cpp
         Cache/BinaryCache.h
+        Cache/CacheListing.cpp
+        Cache/CacheListing.h
         Cache/CacheRoot.cpp
         Cache/CacheRoot.h
+        Cache/Fingerprint.cpp
+        Cache/Fingerprint.h
         Cache/PackageLock.cpp
         Cache/PackageLock.h
         Cache/SourceCache.cpp
@@ -17,6 +23,8 @@ add_library(epm-core STATIC
         Resolve/Resolve.h
         Spec/Env.h
         Spec/JsonFile.h
+        Spec/Platform.cpp
+        Spec/Platform.h
         Spec/Request.h
         Util/Command.cpp
         Util/Command.h

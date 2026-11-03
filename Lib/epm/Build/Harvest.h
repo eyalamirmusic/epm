@@ -35,9 +35,30 @@ bool referencesBuildTree(std::string_view exportFileText,
 
 bool mentionsThreads(std::string_view exportFileText);
 
-// The epm-targets.cmake facade over export-Debug.cmake and export-Release.cmake.
+// The buildTreePaths that appear in INTERFACE_SOURCES properties: files the
+// consumer compiles itself (ResEmbed registration .cpp files).
+eacp::Vector<std::string> interfaceSourcePaths(std::string_view exportFileText,
+                                               std::string_view buildDirectory);
+
+// Where, relative to the prefix, an INTERFACE_SOURCES file with `contents`
+// is kept: gen/shared/<sha256(contents)[:12]>/<relative>. Content-addressed,
+// so every config that generated the same file names the same path. Xcode
+// rejects a target whose sources vary by configuration, and a config added to
+// the entry later must not change a path an earlier config already uses.
+std::string sharedSourcePath(std::string_view contents, std::string_view relative);
+
+// The epm-targets.cmake facade over the export-<Config>.cmake of every
+// config in `configs`; each target links the per-config one that
+// configSelector picks.
 std::string targetsFileText(const eacp::Vector<std::string>& targetNames,
-                            bool needsThreads);
+                            bool needsThreads,
+                            const eacp::Vector<std::string>& configs);
+
+// Rewrites <prefix>/epm-targets.cmake for `configs`, reading each config's
+// export file and .names. Returns the error when one is unreadable.
+std::optional<std::string>
+    writeTargetsFile(const eacp::FilePath& prefix,
+                     const eacp::Vector<std::string>& configs);
 
 struct HarvestResult
 {
@@ -48,25 +69,19 @@ struct HarvestResult
     // What was copied into <prefix>/gen/<config>, relative to it.
     eacp::Vector<std::string> relocatedPaths;
 
+    // What went to <prefix>/gen/shared, relative to the prefix.
+    eacp::Vector<std::string> sharedPaths;
+
     // Set when the build tree had to be kept (a reference survived the rewrite).
     std::string warning;
     std::string error;
 };
 
-// After a child build of `config`: relocates what export-<config>.cmake still
-// takes from the build tree into <prefix>/gen/<config>, rewrites the export
-// file to match, and deletes the build tree.
+// After a child build of `config`: copies the INTERFACE_SOURCES files
+// export-<config>.cmake takes from the build tree to their sharedSourcePath,
+// relocates the rest of what it takes from there into <prefix>/gen/<config>,
+// rewrites the export file to match, and deletes the build tree.
 HarvestResult harvestConfig(const eacp::FilePath& buildDirectory,
                             const eacp::FilePath& prefix,
                             const std::string& config);
-
-// After every config is harvested: each relocated file that came out
-// byte-identical in all of them moves to <prefix>/gen/common, and every export
-// file points there. Xcode rejects a target whose sources vary by config, and
-// the registration .cpp files in INTERFACE_SOURCES are otherwise one path per
-// config. Returns the error when a file cannot be moved or rewritten.
-std::optional<std::string>
-    shareIdenticalFiles(const eacp::FilePath& prefix,
-                        const eacp::Vector<std::string>& configs,
-                        const eacp::Vector<std::string>& relocatedPaths);
 } // namespace epm

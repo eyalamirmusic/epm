@@ -4,8 +4,11 @@ nano_add_executable(epmTests
         SOURCES
             BinaryCacheTests.cpp
             CacheRootTests.cpp
+            ConfigsTests.cpp
+            FingerprintTests.cpp
             GitTests.cpp
             HarvestTests.cpp
+            PlatformTests.cpp
             ResolveTests.cpp
             Sha256Tests.cpp
             SourceCacheTests.cpp
@@ -14,3 +17,6 @@ nano_add_executable(epmTests
 
 add_test(NAME get_epm_ranges
         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/GetEpmRanges.cmake)
+
+add_test(NAME epm_configs_auto
+        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/EpmConfigsAuto.cmake)

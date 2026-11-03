@@ -1,8 +1,10 @@
 #include "Resolve.h"
 
+#include <epm/Build/Configs.h>
 #include <epm/Cache/BinaryCache.h>
 #include <epm/Cache/SourceCache.h>
 #include <epm/Util/Log.h>
+#include <epm/Util/Text.h>
 
 namespace epm
 {
@@ -31,9 +33,16 @@ Response sourceResponse(const Request& request, const SourceSnapshot& snapshot)
 
 Response binaryResponse(const Request& request,
                         const SourceSnapshot& snapshot,
-                        const BinaryEntry& entry)
+                        const BinaryEntry& entry,
+                        const AbiFingerprint& wanted)
 {
-    return {request.name, "prebuilt", snapshot.directory, entry.prefix};
+    return {request.name,
+            "prebuilt",
+            snapshot.directory,
+            entry.prefix,
+            entry.fingerprint.platform,
+            entry.configs,
+            abiNote(entry.fingerprint, wanted).value_or("")};
 }
 } // namespace
 
@@ -53,6 +62,13 @@ Decision decide(const Request& request, bool binaryExists)
 
 std::optional<std::string> requestError(const Request& request)
 {
+    if (request.schema != requestSchema)
+        return "the request" + (request.name.empty() ? "" : " for " + request.name)
+               + " has schema " + std::to_string(request.schema)
+               + ", but this epm reads schema " + std::to_string(requestSchema)
+               + ": epm.cmake and the epm binary come from different versions "
+                 "(include get_epm.cmake, which takes both from one install)";
+
     if (request.name.empty())
         return "the request has no name";
 
@@ -66,6 +82,18 @@ std::optional<std::string> requestError(const Request& request)
         && request.mode != "source")
         return "the request for " + request.name + " has an unknown mode '"
                + request.mode + "'";
+
+    if (request.configs.empty())
+        return "the request for " + request.name + " lists no configs";
+
+    for (const auto& config: request.configs)
+        if (!buildConfigFor(config))
+            return "the request for " + request.name + " has an unknown config '"
+                   + config + "' (Debug, Release, RelWithDebInfo or MinSizeRel)";
+
+    if (!parseAbiMatch(request.abiMatch))
+        return "the request for " + request.name + " has an unknown abiMatch '"
+               + request.abiMatch + "' (compatible, strict or any)";
 
     return std::nullopt;
 }
@@ -87,19 +115,28 @@ ResolveResult
     if (request.mode == "source")
         return success(sourceResponse(request, snapshot));
 
-    const auto key = binaryKey(makeManifest(request, env, snapshot.sourceId));
-    const auto existing = findBinary(cache, request.name, key);
+    const auto wanted = makeFingerprint(request, env, snapshot.sourceId);
+    const auto configs = buildConfigsFor(request.configs);
+    const auto existing =
+        pickEntry(findEntries(cache, request.name, wanted.platform),
+                  wanted,
+                  parseAbiMatch(request.abiMatch).value_or(AbiMatch::compatible),
+                  configs);
+    const auto missing =
+        existing ? missingConfigs(existing->configs, configs) : configs;
 
-    Log::step("epm: " + request.name + " binary key " + key.substr(0, 12) + " "
-              + (existing ? "found" : "missing"));
+    Log::step("epm: " + request.name + " " + wanted.platform + " "
+              + fingerprintId(wanted).substr(0, 12) + ": "
+              + (existing ? "entry " + existing->prefix.fileName() : "no entry")
+              + (missing.empty() ? "" : ", missing " + joinList(missing, ", ")));
 
-    switch (decide(request, existing.has_value()))
+    switch (decide(request, existing && missing.empty()))
     {
         case Decision::useSource:
             return success(sourceResponse(request, snapshot));
 
         case Decision::useBinary:
-            return success(binaryResponse(request, snapshot, *existing));
+            return success(binaryResponse(request, snapshot, *existing, wanted));
 
         case Decision::buildBinary:
             break;
@@ -110,6 +147,6 @@ ResolveResult
     if (!built.ok)
         return failure(built.error, built.details);
 
-    return success(binaryResponse(request, snapshot, built.entry));
+    return success(binaryResponse(request, snapshot, built.entry, wanted));
 }
 } // namespace epm

@@ -1,4 +1,5 @@
 #include "ChildBuild.h"
+#include "Configs.h"
 
 #include <epm/Util/Command.h>
 #include <epm/Util/Log.h>
@@ -89,9 +90,7 @@ Vector<std::string> configureArguments(const ChildBuild& build)
                   "CMAKE_PROJECT_TOP_LEVEL_INCLUDES",
                   (build.buildDirectory / "epm-export.cmake").str());
     addDefinition(arguments, "EPM_EXPORT_FILE", exportFile.str());
-    addDefinition(arguments,
-                  "EPM_EXPORT_NAMESPACE",
-                  "epm_" + Strings::toLower(build.config) + "::");
+    addDefinition(arguments, "EPM_EXPORT_NAMESPACE", exportNamespace(build.config));
 
     for (const auto& [key, value]: build.request.options)
         arguments.add("-D" + key + "=" + value);

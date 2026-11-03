@@ -33,6 +33,19 @@
 #                               (else the EPM_CACHE environment variable, else the
 #                               platform cache directory, as the binary does)
 #   EPM_VERBOSE                 pass --verbose and echo the binary's output
+#   EPM_CONFIGS                 auto (default): a single-config generator gets
+#                               CMAKE_BUILD_TYPE (empty, RelWithDebInfo and
+#                               MinSizeRel mean Release), a multi-config one
+#                               Debug;Release. Or a list of Debug, Release,
+#                               RelWithDebInfo, MinSizeRel (the last two are
+#                               built as Release). A cache entry gains configs
+#                               as they are asked for; it never rebuilds one.
+#   EPM_ABI_MATCH               which cached build may be used: compatible
+#                               (default: same platform, compiler id and major
+#                               version, deployment target, C++ standard,
+#                               options, source, toolchain file), strict (every
+#                               recorded detail, compiler path and full version
+#                               included) or any (platform, options, source)
 #
 # Files exchanged with the binary live under ${CMAKE_BINARY_DIR}/epm/:
 #   env.json                    toolchain description, written once per configure
@@ -40,6 +53,67 @@
 #   responses/<name>.cmake      written by the binary, included here
 
 include_guard(GLOBAL)
+
+# Resolves an EPM_CONFIGS value into the configs to build and cache, each one
+# Debug or Release (RelWithDebInfo and MinSizeRel are built as Release), Debug
+# first. `auto` (or empty) takes `build_type` for a single-config generator,
+# where an empty or unknown type means Release, and Debug;Release for a
+# multi-config one. Sets `error_var` instead for an unknown config name.
+function(epm_resolve_configs spec is_multi_config build_type out_var error_var)
+    set(configs "")
+    set(error "")
+    string(TOLOWER "${spec}" lower_spec)
+
+    if (lower_spec STREQUAL "auto" OR lower_spec STREQUAL "")
+        string(TOLOWER "${build_type}" lower_type)
+
+        if (is_multi_config)
+            set(configs Debug Release)
+        elseif (lower_type STREQUAL "debug")
+            set(configs Debug)
+        else ()
+            set(configs Release)
+        endif ()
+    else ()
+        set(debug FALSE)
+        set(release FALSE)
+
+        foreach (config IN LISTS spec)
+            string(TOLOWER "${config}" lower)
+
+            if (lower STREQUAL "debug")
+                set(debug TRUE)
+            elseif (lower MATCHES "^(release|relwithdebinfo|minsizerel)$")
+                set(release TRUE)
+            else ()
+                set(error "EPM_CONFIGS has an unknown configuration '${config}': "
+                        "give auto, or a list of Debug, Release, RelWithDebInfo "
+                        "and MinSizeRel")
+                break()
+            endif ()
+        endforeach ()
+
+        if (debug AND NOT error)
+            list(APPEND configs Debug)
+        endif ()
+
+        if (release AND NOT error)
+            list(APPEND configs Release)
+        endif ()
+
+        if (NOT configs AND NOT error)
+            set(error "EPM_CONFIGS lists no configuration")
+        endif ()
+    endif ()
+
+    set(${out_var} "${configs}" PARENT_SCOPE)
+    set(${error_var} "${error}" PARENT_SCOPE)
+endfunction()
+
+# Tests/EpmConfigsAuto.cmake wants the functions above only.
+if (EPM_FUNCTIONS_ONLY)
+    return()
+endif ()
 
 if (NOT EPM_EXECUTABLE)
     message(FATAL_ERROR
@@ -68,6 +142,14 @@ epm_set_policies()
 option(EPM_BUILD_MISSING_BINARIES
         "Let MODE auto build a missing binary cache entry (OFF: fall back to source)"
         ON)
+
+set(EPM_CONFIGS "auto" CACHE STRING
+        "Configs to build and cache: auto (single-config: CMAKE_BUILD_TYPE; \
+multi-config: Debug;Release) or a list of Debug, Release, RelWithDebInfo, MinSizeRel")
+
+set(EPM_ABI_MATCH "compatible" CACHE STRING
+        "Which cached build may be used: compatible, strict or any")
+set_property(CACHE EPM_ABI_MATCH PROPERTY STRINGS compatible strict any)
 
 set(EPM_DIR "${CMAKE_BINARY_DIR}/epm")
 
@@ -161,6 +243,7 @@ function(epm_write_env)
             "systemProcessor=CMAKE_SYSTEM_PROCESSOR"
             "osxArchitectures=CMAKE_OSX_ARCHITECTURES"
             "osxDeploymentTarget=CMAKE_OSX_DEPLOYMENT_TARGET"
+            "osxSysroot=CMAKE_OSX_SYSROOT"
             "cxxStandard=CMAKE_CXX_STANDARD"
             "toolchainFile=CMAKE_TOOLCHAIN_FILE")
         string(REPLACE "=" ";" pair "${pair}")
@@ -168,6 +251,16 @@ function(epm_write_env)
         list(GET pair 1 var)
         epm_json_set_string(json ${key} "${${var}}")
     endforeach ()
+
+    # CMake's own Android support sets CMAKE_ANDROID_ARCH_ABI; the NDK's
+    # legacy toolchain file only ANDROID_ABI.
+    set(android_abi "${CMAKE_ANDROID_ARCH_ABI}")
+
+    if (NOT android_abi)
+        set(android_abi "${ANDROID_ABI}")
+    endif ()
+
+    epm_json_set_string(json androidAbi "${android_abi}")
 
     file(WRITE "${EPM_DIR}/env.json" "${json}\n")
     set_property(GLOBAL PROPERTY EPM_ENV_WRITTEN TRUE)
@@ -244,14 +337,38 @@ function(epm_add_package)
         epm_json_set_string(options_json "${EPM_OPTION_KEY}" "${EPM_OPTION_VALUE}")
     endforeach ()
 
+    get_property(is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    epm_resolve_configs("${EPM_CONFIGS}" "${is_multi_config}" "${CMAKE_BUILD_TYPE}"
+            configs configs_error)
+
+    if (configs_error)
+        message(FATAL_ERROR "epm_add_package(${name}): ${configs_error}")
+    endif ()
+
+    set(configs_json "[]")
+    set(index 0)
+
+    foreach (config IN LISTS configs)
+        string(JSON configs_json SET "${configs_json}" ${index} "\"${config}\"")
+        math(EXPR index "${index} + 1")
+    endforeach ()
+
+    if (NOT EPM_ABI_MATCH MATCHES "^(compatible|strict|any)$")
+        message(FATAL_ERROR
+                "epm_add_package(${name}): EPM_ABI_MATCH must be compatible, "
+                "strict or any, got '${EPM_ABI_MATCH}'")
+    endif ()
+
     set(request "{}")
-    string(JSON request SET "${request}" schema 1)
+    string(JSON request SET "${request}" schema 2)
     epm_json_set_string(request name "${name}")
     epm_json_set_string(request gitUrl "${git_url}")
     epm_json_set_string(request gitRef "${EPM_ARGS_GIT_TAG}")
     epm_json_set_string(request mode "${mode}")
     string(JSON request SET "${request}" options "${options_json}")
     string(JSON request SET "${request}" buildMissingBinaries ${build_missing})
+    string(JSON request SET "${request}" configs "${configs_json}")
+    epm_json_set_string(request abiMatch "${EPM_ABI_MATCH}")
 
     # A package already added in this configure: hand back the first result.
     get_property(previous_request GLOBAL PROPERTY EPM_PACKAGE_${name}_REQUEST)
@@ -351,6 +468,11 @@ function(epm_add_package)
         endforeach ()
 
         get_filename_component(id "${epm_${name}_PREFIX}" NAME)
+        set(id "${epm_${name}_PLATFORM}, ${id}")
+
+        if (epm_${name}_NOTE)
+            string(APPEND id ", ${epm_${name}_NOTE}")
+        endif ()
     elseif (resolved_mode STREQUAL "source")
         if (NOT EXISTS "${source_dir}/CMakeLists.txt")
             message(FATAL_ERROR

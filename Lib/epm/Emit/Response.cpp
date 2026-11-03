@@ -28,10 +28,16 @@ std::string responseText(const Response& response)
     auto text = set("MODE", cmakeQuoted(response.mode))
                 + set("SOURCE_DIR", cmakeQuoted(response.sourceDirectory.str()));
 
-    if (response.mode == "prebuilt")
-        text +=
-            set("PREFIX", cmakeQuoted(response.prefix.str()))
-            + set("TARGETS_FILE", "\"${" + variable + "PREFIX}/epm-targets.cmake\"");
+    if (response.mode != "prebuilt")
+        return text;
+
+    text += set("PREFIX", cmakeQuoted(response.prefix.str()))
+            + set("TARGETS_FILE", "\"${" + variable + "PREFIX}/epm-targets.cmake\"")
+            + set("PLATFORM", cmakeQuoted(response.platform))
+            + set("CONFIGS", cmakeQuoted(joinList(response.configs, ";")));
+
+    if (!response.note.empty())
+        text += set("NOTE", cmakeQuoted(response.note));
 
     return text;
 }

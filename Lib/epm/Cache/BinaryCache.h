@@ -1,96 +1,92 @@
 #pragma once
 
 #include "CacheRoot.h"
+#include "Fingerprint.h"
 #include "SourceCache.h"
 
 #include <epm/Spec/Env.h>
 #include <epm/Spec/Request.h>
 
-#include <map>
 #include <optional>
 #include <string>
 
 namespace epm
 {
-// Everything that goes into a binary key, written beside the entry as
-// manifest.json.
-//
-// The canonical form that is hashed is Miro's compact output of this struct,
-// `Miro::toJSONString(manifest)`: Miro objects are std::maps, so keys come out
-// sorted (options included) with no whitespace, whatever order the request
-// listed them in.
-struct BuildManifest
+// bin/<name>/<platform>/<fp12>/manifest.json, written when the entry is
+// created, before its first config is built.
+struct EntryManifest
 {
-    int schema = 1;
-    std::string name;
+    int schema = 2;
+    AbiFingerprint fingerprint;
     std::string sourceId;
-    std::string cxxCompiler;
-    std::string cxxCompilerId;
-    std::string cxxCompilerVersion;
-    std::string systemName;
-    std::string systemProcessor;
-    std::string osxArchitectures;
-    std::string osxDeploymentTarget;
-    std::string cxxStandard;
-    std::map<std::string, std::string> options;
-    eacp::Vector<std::string> configs {"Debug", "Release"};
+    std::string createdAt;
 
-    MIRO_REFLECT(schema,
-                 name,
-                 sourceId,
-                 cxxCompiler,
-                 cxxCompilerId,
-                 cxxCompilerVersion,
-                 systemName,
-                 systemProcessor,
-                 osxArchitectures,
-                 osxDeploymentTarget,
-                 cxxStandard,
-                 options,
-                 configs)
+    MIRO_REFLECT(schema, fingerprint, sourceId, createdAt)
 };
 
-BuildManifest makeManifest(const Request& request,
-                           const Env& env,
-                           const std::string& sourceId);
-
-std::string canonicalManifest(const BuildManifest& manifest);
-
-// sha256 of the canonical manifest JSON, full hex; directories use the first 12.
-std::string binaryKey(const BuildManifest& manifest);
-
-// bin/<name>/<key12>.json, written last: the entry exists once this does.
-struct BinaryMarker
+// <prefix>/<Config>.json, written last for that config, after its harvest:
+// the config is in the entry once this exists. Records the compiler that
+// built it, which may differ from the manifest's for a config added through a
+// compatible match.
+struct ConfigMarker
 {
-    std::string key;
-    std::string commit;
+    std::string config;
     std::string builtAt;
+    std::string compilerPath;
+    std::string compilerVersion;
 
-    MIRO_REFLECT(key, commit, builtAt)
+    MIRO_REFLECT(config, builtAt, compilerPath, compilerVersion)
 };
 
 struct BinaryEntry
 {
     eacp::FilePath prefix;
-    eacp::FilePath targetsFile;
+    AbiFingerprint fingerprint;
+
+    // The configs whose markers exist, canonical.
+    eacp::Vector<std::string> configs;
+    std::string createdAt;
+
+    eacp::FilePath targetsFile() const;
 };
 
-// The entry at bin/<name>/<key12>, only once its completeness marker exists.
-std::optional<BinaryEntry> findBinary(const CacheRoot& cache,
+// bin/<name>/<platform>/<fp12>: fp12 is the first 12 hex of fingerprintId.
+eacp::FilePath entryPrefix(const CacheRoot& cache,
+                           const std::string& name,
+                           const AbiFingerprint& fingerprint);
+
+// Every entry of `name` under `platform` that has a manifest of this schema.
+// Entries of the old bin/<name>/<key12> layout are never seen.
+eacp::Vector<BinaryEntry> findEntries(const CacheRoot& cache,
                                       const std::string& name,
-                                      const std::string& key);
+                                      const std::string& platform);
+
+// Every entry in the cache, by name then platform.
+eacp::Vector<BinaryEntry> allEntries(const CacheRoot& cache);
+
+// The entry to use for `wanted` among those `policy` accepts, preferring an
+// exact (strict) match, then one holding every config in `configs`, then the
+// one holding most of them, then the newest.
+std::optional<BinaryEntry> pickEntry(const eacp::Vector<BinaryEntry>& entries,
+                                     const AbiFingerprint& wanted,
+                                     AbiMatch policy,
+                                     const eacp::Vector<std::string>& configs);
 
 struct BinaryResult
 {
     bool ok = false;
     BinaryEntry entry;
+
+    // What this call built and added to the entry.
+    eacp::Vector<std::string> builtConfigs;
     std::string error;
     std::string details;
 };
 
-// Builds Debug and Release of the snapshot into bin/<name>/<key12> and
-// harvests them, under the package lock. Returns the existing entry when
-// another process finished it first.
+// Under the package lock: picks the entry for the request again (another
+// process may have built it meanwhile) or creates the one for the current
+// fingerprint, then builds and harvests only the configs it lacks, adding
+// each to the entry as it completes.
 BinaryResult buildBinary(const CacheRoot& cache,
                          const Request& request,
                          const Env& env,

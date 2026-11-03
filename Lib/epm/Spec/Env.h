@@ -31,6 +31,12 @@ struct Env
     std::string systemProcessor;
     std::string osxArchitectures;
     std::string osxDeploymentTarget;
+
+    // CMAKE_OSX_SYSROOT: tells an iOS simulator build from a device build.
+    std::string osxSysroot;
+
+    // CMAKE_ANDROID_ARCH_ABI (or the NDK toolchain's ANDROID_ABI).
+    std::string androidAbi;
     std::string cxxStandard;
     std::string toolchainFile;
 
@@ -50,6 +56,8 @@ struct Env
                  systemProcessor,
                  osxArchitectures,
                  osxDeploymentTarget,
+                 osxSysroot,
+                 androidAbi,
                  cxxStandard,
                  toolchainFile)
 };

@@ -20,16 +20,20 @@ constexpr auto envFixture = R"({ "schema": 1,
   "cxxCompilerId": "AppleClang", "cxxCompilerVersion": "17.0.0.17000013",
   "systemName": "Darwin", "systemProcessor": "arm64",
   "osxArchitectures": "", "osxDeploymentTarget": "11.0",
+  "osxSysroot": "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+  "androidAbi": "",
   "cxxStandard": "20",
   "toolchainFile": "" })";
 
-constexpr auto requestFixture = R"({ "schema": 1,
+constexpr auto requestFixture = R"({ "schema": 2,
   "name": "eacp",
   "gitUrl": "https://github.com/eyalamirmusic/eacp.git",
   "gitRef": "main",
   "mode": "auto",
   "options": { "EACP_BUILD_GRAPHICS": "OFF", "EACP_ENABLE_TESTS": "OFF" },
-  "buildMissingBinaries": true })";
+  "buildMissingBinaries": true,
+  "configs": ["Debug"],
+  "abiMatch": "compatible" })";
 
 void writeText(const eacp::FilePath& path, std::string_view text)
 {
@@ -54,6 +58,8 @@ auto tEnvParses = test("Spec/env/parsesPoCFixture") = []
     check(env->configurationTypes.empty());
     check(env->cxxCompilerId == "AppleClang");
     check(env->osxDeploymentTarget == "11.0");
+    check(env->osxSysroot == "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk");
+    check(env->androidAbi.empty());
     check(env->cxxStandard == "20");
 };
 
@@ -93,6 +99,9 @@ auto tRequestParses = test("Spec/request/parsesPoCFixture") = []
     check(request->options.size() == 2);
     check(request->options.at("EACP_BUILD_GRAPHICS") == "OFF");
     check(request->buildMissingBinaries);
+    check(request->schema == 2);
+    check(request->configs.size() == 1 && request->configs[0] == "Debug");
+    check(request->abiMatch == "compatible");
 };
 
 auto tRequestRoundTrip = test("Spec/request/roundTrip") = []

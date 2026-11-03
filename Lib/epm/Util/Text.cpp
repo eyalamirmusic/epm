@@ -68,4 +68,40 @@ std::string
     result.append(text.substr(position));
     return result;
 }
+
+Vector<std::string> splitList(std::string_view text, char separator)
+{
+    auto items = Vector<std::string> {};
+
+    while (!text.empty())
+    {
+        const auto end = text.find(separator);
+        const auto item = text.substr(0, end);
+
+        if (!item.empty())
+            items.add(std::string {item});
+
+        if (end == std::string_view::npos)
+            break;
+
+        text.remove_prefix(end + 1);
+    }
+
+    return items;
+}
+
+std::string joinList(const Vector<std::string>& items, std::string_view separator)
+{
+    auto result = std::string {};
+
+    for (auto i = 0; i < items.size(); ++i)
+    {
+        if (i > 0)
+            result += separator;
+
+        result += items[i];
+    }
+
+    return result;
+}
 } // namespace epm

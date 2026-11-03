@@ -1,4 +1,8 @@
 #include <epm/Build/Harvest.h>
+#include <epm/Util/Text.h>
+
+#include <eacp/Core/Utils/Files.h>
+#include <eacp/Core/Utils/TemporaryFile.h>
 
 #include <NanoTest/NanoTest.h>
 
@@ -119,7 +123,8 @@ auto tThreads = test("Harvest/threads") = []
 
 auto tTargetsFile = test("Harvest/targetsFile") = []
 {
-    const auto text = targetsFileText({"eacp-core", "Miro"}, true);
+    const auto text =
+        targetsFileText({"eacp-core", "Miro"}, true, {"Release", "Debug"});
     const auto threads = text.find("find_package(Threads REQUIRED)");
     const auto debug =
         text.find(R"(include("${CMAKE_CURRENT_LIST_DIR}/export-Debug.cmake"))");
@@ -135,5 +140,94 @@ auto tTargetsFile = test("Harvest/targetsFile") = []
     check(text.find("$<IF:$<CONFIG:Debug>,epm_debug::${name},epm_release::${name}>")
           != std::string::npos);
 
-    check(targetsFileText({"fmt"}, false).find("Threads") == std::string::npos);
+    check(targetsFileText({"fmt"}, false, {"Release"}).find("Threads")
+          == std::string::npos);
+};
+
+auto tTargetsFileOneConfig = test("Harvest/targetsFile/releaseOnly") = []
+{
+    const auto text = targetsFileText({"fmt"}, false, {"Release"});
+
+    check(text.find("export-Release.cmake") != std::string::npos);
+    check(text.find("export-Debug.cmake") == std::string::npos);
+    check(text.find("\"epm_release::${name}\"") != std::string::npos);
+    check(text.find("$<IF:") == std::string::npos);
+};
+
+auto tInterfaceSources = test("Harvest/scan/interfaceSourcePaths") = []
+{
+    const auto paths = interfaceSourcePaths(exportFixture, harvestBuildDir);
+
+    check(paths.size() == 1);
+    check(paths[0]
+          == "_deps/miro-build/Lib/Miro-MiroResources-Generated/"
+             "MiroResources_Register.cpp");
+    check(interfaceSourcePaths(exportFixture, "/elsewhere").empty());
+};
+
+auto tSharedSourcePath = test("Harvest/sharedSourcePath/contentAddressed") = []
+{
+    const auto relative = "_deps/miro-build/Lib/Gen/MiroResources_Register.cpp";
+    const auto debug = sharedSourcePath("int registered = 1;\n", relative);
+    const auto release = sharedSourcePath("int registered = 1;\n", relative);
+    const auto other = sharedSourcePath("int registered = 2;\n", relative);
+
+    check(debug == release);
+    check(debug != other);
+    check(debug.rfind("gen/shared/", 0) == 0);
+    check(debug.size()
+          == std::string {"gen/shared/"}.size() + 12 + 1
+                 + std::string {relative}.size());
+    check(debug.substr(24) == relative);
+    check(debug.find("Debug") == std::string::npos);
+};
+
+auto tHarvestShares = test("Harvest/harvestConfig/sharesInterfaceSources") = []
+{
+    auto root = eacp::TemporaryFile {};
+    const auto prefix = root.path() / "prefix";
+    const auto generated = std::string {"Gen/Miro-Generated"};
+    const auto source = generated + "/Register.cpp";
+
+    // Two configs harvested one after the other, as when Debug is added to
+    // an entry that has Release: the registration file must land on one path.
+    for (const auto config: {"Release", "Debug"})
+    {
+        const auto build = root.path() / "build" / config;
+        const auto tree = build.str();
+
+        check(writeTextFile(build / source, "int registered = 1;\n"));
+        check(writeTextFile(build / generated / "Header.h", config));
+        check(writeTextFile(prefix / ("export-" + std::string {config} + ".cmake"),
+                            "  INTERFACE_INCLUDE_DIRECTORIES \"" + tree + "/"
+                                + generated + "\"\n  INTERFACE_SOURCES \"$<$<NOT:x>:"
+                                + tree + "/" + source + ">\"\n"));
+        check(writeTextFile(
+            prefix / ("export-" + std::string {config} + ".cmake.names"), "Miro\n"));
+
+        const auto result = harvestConfig(build, prefix, config);
+
+        check(result.ok);
+        check(result.sharedPaths.size() == 1);
+        check(result.relocatedPaths.size() == 1);
+        check(!eacp::Files::exists(build));
+    }
+
+    const auto release = eacp::Files::readFile(prefix / "export-Release.cmake");
+    const auto debug = eacp::Files::readFile(prefix / "export-Debug.cmake");
+    const auto shared =
+        prefix.str() + "/" + sharedSourcePath("int registered = 1;\n", source);
+
+    check(release.find(":" + shared + ">") != std::string::npos);
+    check(debug.find(":" + shared + ">") != std::string::npos);
+    check(eacp::Files::isFile(eacp::FilePath {shared}));
+    check(debug.find((prefix / "gen" / "Debug").str() + "/" + generated + "\"")
+          != std::string::npos);
+    check(eacp::Files::readFile(prefix / "gen" / "Debug" / generated / "Header.h")
+          == "Debug");
+
+    check(!writeTargetsFile(prefix, {"Debug", "Release"}).has_value());
+    check(eacp::Files::readFile(prefix / "epm-targets.cmake").find("export-Debug")
+          != std::string::npos);
+    check(writeTargetsFile(prefix, {"MinSizeRel"}).has_value());
 };
