@@ -780,6 +780,14 @@ int runBeginCommand(const CommandOptions& options)
             "cmake -B <build> -DEPM_LOCK_MODE=update"));
     }
 
+    if (options.isCI && isLockUsed(options) && options.mode == Mode::locked
+        && !eacp::Files::exists(options.lock))
+    {
+        throw std::runtime_error(formatUserError(
+            options.lock.str() + " does not exist, and EPM_CI forbids writing it.",
+            "Configure once without -DEPM_CI=ON and commit the lock it writes."));
+    }
+
     auto session = Session {};
     session.isWritingNewLock = isLockUsed(options) && options.mode == Mode::locked
                                && !eacp::Files::exists(options.lock);

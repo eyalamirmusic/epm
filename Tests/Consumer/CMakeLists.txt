@@ -31,3 +31,9 @@ add_consumer_test(archiveFetchedConcurrently RunConcurrentArchiveProject.cmake
         archive-concurrent)
 add_consumer_test(verifyFetchesAnUnrequestedPackage RunUnrequestedLockedProject.cmake
         unrequested-locked)
+
+# The platform's default generator (Visual Studio on Windows, Makefiles
+# elsewhere) and Ninja.
+add_consumer_test(lockIsAConfigureInput RunLockInputProject.cmake lock-input)
+add_consumer_test(lockIsAConfigureInputNinja RunLockInputProject.cmake lock-input
+        -DGENERATOR=Ninja)

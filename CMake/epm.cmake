@@ -182,6 +182,11 @@ endif ()
 if (EPM_LOCK_FILE)
     list(APPEND _EPM_OPTIONS "--lock=${EPM_LOCK_FILE}" "--mode=${EPM_LOCK_MODE}"
             "--ci=${EPM_CI}")
+
+    # The next build reconfigures when the lock is edited, pulled or deleted,
+    # so a missing lock is written again and a changed one is checked.
+    set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY
+            CMAKE_CONFIGURE_DEPENDS "${EPM_LOCK_FILE}")
 endif ()
 
 if (EPM_VERBOSE)
