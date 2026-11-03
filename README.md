@@ -136,8 +136,12 @@ builds a local checkout and uses its `CMake/epm.cmake` (for working on epm), and
 
 ## Building and installing epm
 
-epm needs CMake 3.31 and a C++20 compiler. Its own dependencies (eacp, Miro) are
-fetched with CPM and linked statically.
+epm needs CMake 3.31 and a C++20 compiler. It builds itself with epm: its
+`CMakeLists.txt` loads `CMake/get_epm.cmake` during `project()` with
+`EPM_LOCK_FILE` set to the committed `epm.lock`, so eacp, Miro and the rest
+come in locked. The epm that resolves them is a first host build of the same
+checkout, which fetches its own dependencies with CPM (`EPM_SELF_HOST=OFF`);
+`-DEPM_EXECUTABLE=<an epm>` skips that build. Everything is linked statically.
 
 ```bash
 cmake -S . -B build && cmake --build build && cmake --install build --prefix ~/.local
