@@ -13,7 +13,7 @@ namespace epm
 bool writeTextFile(const eacp::FilePath& path, std::string_view text);
 
 // The non-empty lines of `text`, without their line endings (\n or \r\n).
-eacp::Vector<std::string_view> splitLines(std::string_view text);
+EA::Vector<std::string_view> splitLines(std::string_view text);
 
 // `text` with every occurrence of `from` replaced by `to`.
 std::string

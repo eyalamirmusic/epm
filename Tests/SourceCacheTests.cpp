@@ -17,7 +17,7 @@ constexpr auto refsFixture =
     "1212121212121212121212121212121212121212\trefs/heads/v2.0\n"
     "3434343434343434343434343434343434343434\trefs/heads/release/3\n";
 
-eacp::Vector<Git::RemoteRef> fixtureRefs()
+EA::Vector<Git::RemoteRef> fixtureRefs()
 {
     return Git::parseLsRemote(refsFixture);
 }

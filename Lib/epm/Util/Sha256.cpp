@@ -7,7 +7,7 @@
 #include <algorithm>
 
 #include <stdexcept>
-#include <vector>
+#include <eacp/Core/Utils/Containers.h>
 
 namespace epm
 {
@@ -146,7 +146,7 @@ void Sha256::update(std::string_view text)
 Sha256Digest Sha256::finish()
 {
     auto totalBits = totalBytes * bitsPerByte;
-    auto padding = std::vector<std::uint8_t> {paddingStartByte};
+    auto padding = EA::Vector<std::uint8_t> {paddingStartByte};
     auto lengthOffset = sha256BlockSize - lengthFieldSize;
 
     while ((pendingSize + padding.size()) % sha256BlockSize != lengthOffset)
@@ -207,7 +207,7 @@ Sha256Digest computeFileSha256(const std::filesystem::path& file)
                                  + " to hash it");
 
     auto hasher = Sha256 {};
-    auto chunk = std::vector<char>(readChunkSize);
+    auto chunk = EA::Vector<char>(readChunkSize);
 
     while (stream.read(chunk.data(), static_cast<std::streamsize>(chunk.size()))
            || stream.gcount() > 0)

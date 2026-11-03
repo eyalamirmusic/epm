@@ -6,7 +6,7 @@
 #include <eacp/Core/Utils/FilePath.h>
 
 #include <string>
-#include <vector>
+#include <eacp/Core/Utils/Containers.h>
 
 namespace epm
 {
@@ -20,8 +20,8 @@ enum class Mode
 struct CommandOptions
 {
     std::string command;
-    eacp::Vector<std::string> names;
-    std::vector<std::string> packageArguments;
+    EA::Vector<std::string> names;
+    EA::Vector<std::string> packageArguments;
     Mode mode = Mode::locked;
     bool isCI = false;
     // Empty when the project uses no lock: refs are resolved on every
@@ -41,7 +41,7 @@ struct CommandOptions
     // the CPM and FetchContent commands, which always add_subdirectory.
     std::string defaultMode = "auto";
     bool buildMissingBinaries = true;
-    eacp::Vector<std::string> overrides;
+    EA::Vector<std::string> overrides;
     bool isFullVerify = false;
     bool shouldAnnounce = false;
 };

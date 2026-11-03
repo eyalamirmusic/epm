@@ -49,9 +49,9 @@ struct ChildBuild
 
 // The `cmake -S -B` arguments of PoC §5. Toolchain values the consumer left
 // empty are not passed at all.
-eacp::Vector<std::string> configureArguments(const ChildBuild& build);
+EA::Vector<std::string> configureArguments(const ChildBuild& build);
 
-eacp::Vector<std::string> buildArguments(const ChildBuild& build);
+EA::Vector<std::string> buildArguments(const ChildBuild& build);
 
 // epm-export.cmake as it was when this binary was built.
 std::string_view embeddedExportScript();

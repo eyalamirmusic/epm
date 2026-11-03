@@ -185,7 +185,7 @@ auto tMissingTagThrows = test("Arguments/gitWithoutTagOrVersionThrows") = []
 
 namespace PackageArgumentsTests
 {
-bool isRejected(const std::vector<std::string>& arguments,
+bool isRejected(const EA::Vector<std::string>& arguments,
                 const std::string& expected)
 {
     try
@@ -200,11 +200,11 @@ bool isRejected(const std::vector<std::string>& arguments,
     return false;
 }
 
-std::vector<std::string> withGitSource(std::vector<std::string> extra)
+EA::Vector<std::string> withGitSource(EA::Vector<std::string> extra)
 {
-    auto arguments = std::vector<std::string> {
+    auto arguments = EA::Vector<std::string> {
         "NAME", "a", "GITHUB_REPOSITORY", "o/a", "GIT_TAG", "v1"};
-    arguments.insert(arguments.end(), extra.begin(), extra.end());
+    arguments.addFrom(extra);
     return arguments;
 }
 } // namespace PackageArgumentsTests

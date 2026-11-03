@@ -25,7 +25,7 @@
 #include <eacp/Core/Utils/Time.h>
 
 #include <algorithm>
-#include <array>
+#include <ea_data_structures/Structures/Array.h>
 #include <filesystem>
 #include <stdexcept>
 
@@ -34,7 +34,7 @@ namespace epm
 namespace
 {
 constexpr auto overrideSuffix = std::string_view {"_SOURCE"};
-constexpr auto overridePrefixes = std::array<std::string_view, 2> {"EPM_", "CPM_"};
+constexpr auto overridePrefixes = EA::Array<std::string_view, 2> {"EPM_", "CPM_"};
 
 std::string getOverrideVariableName(std::string_view prefix, const std::string& name)
 {
@@ -126,7 +126,7 @@ PackageRequest createRequestFromLock(const eacp::FilePath& lockPath,
 
 LockedPackage resolvePackage(const PackageCache& cache,
                              const PackageRequest& request,
-                             const std::vector<std::string>& patchesForLock)
+                             const EA::Vector<std::string>& patchesForLock)
 {
     printStatus("resolving " + request.name + " at '" + request.ref + "' from "
                 + request.url);
@@ -235,10 +235,10 @@ PackageCache createPackageCache(const CommandOptions& options)
     return PackageCache {CacheRoot {options.cache}, options.cmake};
 }
 
-std::vector<std::string> getPatchesForLock(const CommandOptions& options,
-                                           const PackageSpec& spec)
+EA::Vector<std::string> getPatchesForLock(const CommandOptions& options,
+                                          const PackageSpec& spec)
 {
-    auto patches = std::vector<std::string> {};
+    auto patches = EA::Vector<std::string> {};
 
     for (const auto& patch: spec.patches)
     {
@@ -601,13 +601,13 @@ std::string createFindPackageRedirect(const PackageSpec& spec)
 std::string createPropagatingBlock(const std::string& name, const std::string& body)
 {
     auto propagated =
-        eacp::Vector<std::string> {name + "_SOURCE_DIR",
-                                   name + "_BINARY_DIR",
-                                   name + "_ADDED",
-                                   name + "_MODE",
-                                   "CPM_LAST_PACKAGE_NAME",
-                                   "CPM_PACKAGE_" + name + "_SOURCE_DIR",
-                                   "CPM_PACKAGE_" + name + "_BINARY_DIR"};
+        EA::Vector<std::string> {name + "_SOURCE_DIR",
+                                 name + "_BINARY_DIR",
+                                 name + "_ADDED",
+                                 name + "_MODE",
+                                 "CPM_LAST_PACKAGE_NAME",
+                                 "CPM_PACKAGE_" + name + "_SOURCE_DIR",
+                                 "CPM_PACKAGE_" + name + "_BINARY_DIR"};
     auto snippet = "block(SCOPE_FOR VARIABLES PROPAGATE "
                    + eacp::Strings::join(propagated, " ") + ")\n" + body
                    + "endblock()\n";
@@ -837,7 +837,7 @@ int runUpdateCommand(const CommandOptions& options)
     {
         if (!lock.findPackage(name))
         {
-            auto lockedNames = eacp::Vector<std::string> {};
+            auto lockedNames = EA::Vector<std::string> {};
 
             for (const auto& package: lock.packages)
                 lockedNames.add(package.name);

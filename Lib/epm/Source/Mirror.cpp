@@ -22,23 +22,22 @@ constexpr auto gitExecutable = "git";
 constexpr auto gitAttributesFileName = std::string_view {".gitattributes"};
 constexpr auto lfsFilterAttribute = std::string_view {"filter=lfs"};
 
-std::string joinArguments(const eacp::Vector<std::string>& arguments)
+std::string joinArguments(const EA::Vector<std::string>& arguments)
 {
     return std::string {gitExecutable} + ' ' + eacp::Strings::join(arguments, " ");
 }
 
-eacp::Vector<std::string>
-    createMirrorArguments(const eacp::FilePath& mirror,
-                          const eacp::Vector<std::string>& rest)
+EA::Vector<std::string> createMirrorArguments(const eacp::FilePath& mirror,
+                                              const EA::Vector<std::string>& rest)
 {
-    auto arguments = eacp::Vector<std::string> {"--git-dir=" + mirror.str()};
+    auto arguments = EA::Vector<std::string> {"--git-dir=" + mirror.str()};
     arguments.addFrom(rest);
     return arguments;
 }
 
 std::string runGitOrThrow(
-    const eacp::Vector<std::string>& arguments,
-    const eacp::Vector<eacp::Processes::EnvironmentVariable>& environment = {})
+    const EA::Vector<std::string>& arguments,
+    const EA::Vector<eacp::Processes::EnvironmentVariable>& environment = {})
 {
     auto output = runGit(arguments, environment);
 
@@ -99,8 +98,8 @@ void fetchEveryBranchAndTag(const eacp::FilePath& mirror)
 } // namespace
 
 std::optional<std::string>
-    runGit(const eacp::Vector<std::string>& arguments,
-           const eacp::Vector<eacp::Processes::EnvironmentVariable>& environment)
+    runGit(const EA::Vector<std::string>& arguments,
+           const EA::Vector<eacp::Processes::EnvironmentVariable>& environment)
 {
     auto result = Git::run(arguments, environment);
 
@@ -245,8 +244,8 @@ void checkOutCommit(const eacp::FilePath& mirror,
     eacp::Files::removeFile(indexFile);
 }
 
-std::vector<GitSubmodule> listSubmodules(const GitTreeListing& listing,
-                                         const eacp::FilePath& tree)
+EA::Vector<GitSubmodule> listSubmodules(const GitTreeListing& listing,
+                                        const eacp::FilePath& tree)
 {
     auto modulesFile = tree / ".gitmodules";
 
@@ -255,7 +254,7 @@ std::vector<GitSubmodule> listSubmodules(const GitTreeListing& listing,
 
     // --list rather than --get-regexp, which exits 1 for a file with no entries.
     auto settings = runGitOrThrow({"config", "--file", modulesFile.str(), "--list"});
-    auto submodules = std::vector<GitSubmodule> {};
+    auto submodules = EA::Vector<GitSubmodule> {};
 
     for (const auto& [gitlinkPath, commit]: listing.gitlinks)
     {

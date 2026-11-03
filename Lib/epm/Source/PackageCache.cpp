@@ -205,7 +205,7 @@ MaterializedPackage PackageCache::materialize(const PackageRequest& request,
         auto tree = staging / "tree";
         eacp::Files::createDirectories(tree);
         auto resolvedCommit = std::string {};
-        auto submodules = std::vector<LockedSubmodule> {};
+        auto submodules = EA::Vector<LockedSubmodule> {};
         auto usesLfs = false;
 
         if (request.kind == PackageKind::archive)
@@ -268,7 +268,7 @@ std::string PackageCache::fetchGitTree(const PackageRequest& request,
                                        const std::string& commit,
                                        Network network,
                                        const eacp::FilePath& staging,
-                                       std::vector<LockedSubmodule>& submodules,
+                                       EA::Vector<LockedSubmodule>& submodules,
                                        bool& usesLfs) const
 {
     auto resolvedCommit = commit;
@@ -314,7 +314,7 @@ void PackageCache::checkOutSubmodules(const std::string& name,
                                       const std::string& pathPrefix,
                                       const SubmoduleSelection& selection,
                                       Network network,
-                                      std::vector<LockedSubmodule>& submodules,
+                                      EA::Vector<LockedSubmodule>& submodules,
                                       bool& usesLfs) const
 {
     for (const auto& submodule: listSubmodules(parentListing, tree))
@@ -439,7 +439,7 @@ void PackageCache::extractArchive(const eacp::FilePath& archive,
 MaterializedPackage
     PackageCache::storeTree(const eacp::FilePath& tree,
                             const std::string& commit,
-                            std::vector<LockedSubmodule> submodules) const
+                            EA::Vector<LockedSubmodule> submodules) const
 {
     auto hash = computeMerkleHash(tree);
     auto destination = getSourceDirectory(hash);

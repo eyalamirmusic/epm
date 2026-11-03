@@ -22,7 +22,7 @@ struct Env
     std::string makeProgram;
     bool isMultiConfig = false;
     std::string buildType;
-    eacp::Vector<std::string> configurationTypes;
+    EA::Vector<std::string> configurationTypes;
     std::string cCompiler;
     std::string cxxCompiler;
     std::string cxxCompilerId;

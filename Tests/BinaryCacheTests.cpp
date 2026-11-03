@@ -162,13 +162,13 @@ ChildBuild createLockedChildBuild()
     return build;
 }
 
-bool hasArgument(const eacp::Vector<std::string>& arguments,
+bool hasArgument(const EA::Vector<std::string>& arguments,
                  const std::string& argument)
 {
     return arguments.contains(argument);
 }
 
-bool hasDefinitionNamed(const eacp::Vector<std::string>& arguments,
+bool hasDefinitionNamed(const EA::Vector<std::string>& arguments,
                         const std::string& name)
 {
     const auto prefix = "-D" + name + "=";

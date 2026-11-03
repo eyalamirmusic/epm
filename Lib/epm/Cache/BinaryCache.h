@@ -35,7 +35,7 @@ struct BuildManifest
     std::string osxDeploymentTarget;
     std::string cxxStandard;
     std::map<std::string, std::string> options;
-    eacp::Vector<std::string> configs {"Debug", "Release"};
+    EA::Vector<std::string> configs {"Debug", "Release"};
 
     MIRO_REFLECT(schema,
                  name,

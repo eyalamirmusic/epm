@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <stdexcept>
-#include <vector>
+#include <eacp/Core/Utils/Containers.h>
 
 namespace epm
 {
@@ -47,9 +47,9 @@ TreeEntryKind getTreeEntryKind(const std::filesystem::directory_entry& entry)
 }
 
 // Sorted by name and without .git, so the hash is the same on every platform.
-std::vector<TreeEntry> listHashedEntries(const std::filesystem::path& directory)
+EA::Vector<TreeEntry> listHashedEntries(const std::filesystem::path& directory)
 {
-    auto entries = std::vector<TreeEntry> {};
+    auto entries = EA::Vector<TreeEntry> {};
     auto error = std::error_code {};
 
     for (auto iterator = std::filesystem::directory_iterator {directory, error};

@@ -9,7 +9,7 @@
 #include <Miro/Reflect.h>
 
 #include <optional>
-#include <vector>
+#include <eacp/Core/Utils/Containers.h>
 #include <string>
 
 namespace epm
@@ -23,10 +23,10 @@ struct LockedPackage
     PackageKind kind = PackageKind::git;
     std::string url;
     std::string requestedRef;
-    std::vector<std::string> patches;
+    EA::Vector<std::string> patches;
     SubmoduleSelection submoduleSelection;
     std::string commit;
-    std::vector<LockedSubmodule> submodules;
+    EA::Vector<LockedSubmodule> submodules;
     bool usesGitLfs = false;
     std::string hash;
 
@@ -46,7 +46,7 @@ struct LockFile
 {
     int version = lockFileFormatVersion;
     std::string root;
-    std::vector<LockedPackage> packages;
+    EA::Vector<LockedPackage> packages;
 
     MIRO_REFLECT(version, root, packages)
 

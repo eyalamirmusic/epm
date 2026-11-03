@@ -4,7 +4,7 @@
 #include <eacp/Core/Utils/Strings.h>
 
 #include <algorithm>
-#include <array>
+#include <ea_data_structures/Structures/Array.h>
 #include <cctype>
 #include <string_view>
 
@@ -13,11 +13,11 @@ namespace epm
 namespace
 {
 constexpr auto packageCommands =
-    std::array<std::string_view, 5> {"epm_add_package(",
-                                     "cpmaddpackage(",
-                                     "cpmfindpackage(",
-                                     "cpmdeclarepackage(",
-                                     "fetchcontent_declare("};
+    EA::Array<std::string_view, 5> {"epm_add_package(",
+                                    "cpmaddpackage(",
+                                    "cpmfindpackage(",
+                                    "cpmdeclarepackage(",
+                                    "fetchcontent_declare("};
 
 std::string formatUpdateConfigureCommand(const std::string& buildDirectory)
 {

@@ -3,7 +3,7 @@
 #include <eacp/Core/Utils/Strings.h>
 
 #include <algorithm>
-#include <array>
+#include <ea_data_structures/Structures/Array.h>
 #include <map>
 #include <stdexcept>
 #include <string_view>
@@ -37,122 +37,122 @@ constexpr auto otherSourceReason =
 // take. The ignored ones change how or where a fetch or sub-build runs, never
 // which sources arrive: epm fetches exact commits, keys its cache by
 // content and runs no sub-build. Anything not listed is refused as unknown.
-constexpr auto keywordRules = std::to_array<KeywordRule>(
-    {{"NAME", KeywordGroup::value},
-     {"VERSION", KeywordGroup::value},
-     {"GIT_TAG", KeywordGroup::value},
-     {"GITHUB", KeywordGroup::value},
-     {"GITHUB_REPOSITORY", KeywordGroup::value},
-     {"GITLAB_REPOSITORY", KeywordGroup::value},
-     {"BITBUCKET_REPOSITORY", KeywordGroup::value},
-     {"GIT_REPOSITORY", KeywordGroup::value},
-     {"SOURCE_DIR", KeywordGroup::value},
-     {"SOURCE_SUBDIR", KeywordGroup::value},
-     {"URI", KeywordGroup::value},
-     {"URL_HASH", KeywordGroup::value},
-     {"URL_MD5", KeywordGroup::value},
-     {"GIT_SUBMODULES_RECURSE", KeywordGroup::value},
-     {"MODE", KeywordGroup::value},
-     {"DOWNLOAD_ONLY", KeywordGroup::flag},
-     {"EXCLUDE_FROM_ALL", KeywordGroup::flag},
-     {"SYSTEM", KeywordGroup::flag},
-     {"OVERRIDE_FIND_PACKAGE", KeywordGroup::flag},
-     {"EXTERNALPROJECT_INTERNAL_ARGUMENT_SEPARATOR", KeywordGroup::flag},
-     {"URL", KeywordGroup::list},
-     {"OPTIONS", KeywordGroup::list},
-     {"PATCHES", KeywordGroup::list},
-     {"GIT_SUBMODULES", KeywordGroup::list},
-     {"FIND_PACKAGE_ARGS", KeywordGroup::list},
-     {"QUIET", KeywordGroup::ignored},
-     {"DOWNLOAD_NO_PROGRESS", KeywordGroup::ignored},
-     {"DOWNLOAD_NAME", KeywordGroup::ignored},
-     {"DOWNLOAD_EXTRACT_TIMESTAMP", KeywordGroup::ignored},
-     {"DOWNLOAD_DIR", KeywordGroup::ignored},
-     {"GIT_SHALLOW", KeywordGroup::ignored},
-     {"GIT_PROGRESS", KeywordGroup::ignored},
-     {"GIT_REMOTE_UPDATE_STRATEGY", KeywordGroup::ignored},
-     {"GIT_REMOTE_NAME", KeywordGroup::ignored},
-     {"GIT_CONFIG", KeywordGroup::ignored},
-     {"NO_CACHE", KeywordGroup::ignored},
-     {"CUSTOM_CACHE_KEY", KeywordGroup::ignored},
-     {"FIND_PACKAGE_ARGUMENTS", KeywordGroup::ignored},
-     {"UPDATE_DISCONNECTED", KeywordGroup::ignored},
-     {"TLS_VERIFY", KeywordGroup::ignored},
-     {"TLS_CAINFO", KeywordGroup::ignored},
-     {"TLS_VERSION", KeywordGroup::ignored},
-     {"TIMEOUT", KeywordGroup::ignored},
-     {"INACTIVITY_TIMEOUT", KeywordGroup::ignored},
-     {"NETRC", KeywordGroup::ignored},
-     {"NETRC_FILE", KeywordGroup::ignored},
-     {"HTTP_USERNAME", KeywordGroup::ignored},
-     {"HTTP_PASSWORD", KeywordGroup::ignored},
-     {"HTTP_HEADER", KeywordGroup::ignored},
-     {"LOG_DOWNLOAD", KeywordGroup::ignored},
-     {"LOG_UPDATE", KeywordGroup::ignored},
-     {"LOG_PATCH", KeywordGroup::ignored},
-     {"LOG_CONFIGURE", KeywordGroup::ignored},
-     {"LOG_BUILD", KeywordGroup::ignored},
-     {"LOG_INSTALL", KeywordGroup::ignored},
-     {"LOG_TEST", KeywordGroup::ignored},
-     {"LOG_MERGED_STDOUTERR", KeywordGroup::ignored},
-     {"LOG_OUTPUT_ON_FAILURE", KeywordGroup::ignored},
-     {"USES_TERMINAL_DOWNLOAD", KeywordGroup::ignored},
-     {"USES_TERMINAL_UPDATE", KeywordGroup::ignored},
-     {"USES_TERMINAL_PATCH", KeywordGroup::ignored},
-     {"USES_TERMINAL_CONFIGURE", KeywordGroup::ignored},
-     {"USES_TERMINAL_BUILD", KeywordGroup::ignored},
-     {"USES_TERMINAL_INSTALL", KeywordGroup::ignored},
-     {"USES_TERMINAL_TEST", KeywordGroup::ignored},
-     {"PREFIX", KeywordGroup::ignored},
-     {"TMP_DIR", KeywordGroup::ignored},
-     {"STAMP_DIR", KeywordGroup::ignored},
-     {"LOG_DIR", KeywordGroup::ignored},
-     {"BINARY_DIR", KeywordGroup::ignored},
-     {"SUBBUILD_DIR", KeywordGroup::ignored},
-     {"INSTALL_DIR", KeywordGroup::ignored},
-     {"CONFIGURE_COMMAND", KeywordGroup::ignored},
-     {"BUILD_COMMAND", KeywordGroup::ignored},
-     {"INSTALL_COMMAND", KeywordGroup::ignored},
-     {"TEST_COMMAND", KeywordGroup::ignored},
-     {"CMAKE_COMMAND", KeywordGroup::ignored},
-     {"CMAKE_GENERATOR", KeywordGroup::ignored},
-     {"CMAKE_GENERATOR_PLATFORM", KeywordGroup::ignored},
-     {"CMAKE_GENERATOR_TOOLSET", KeywordGroup::ignored},
-     {"CMAKE_GENERATOR_INSTANCE", KeywordGroup::ignored},
-     {"CMAKE_ARGS", KeywordGroup::ignored},
-     {"CMAKE_CACHE_ARGS", KeywordGroup::ignored},
-     {"CMAKE_CACHE_DEFAULT_ARGS", KeywordGroup::ignored},
-     {"CONFIGURE_HANDLED_BY_BUILD", KeywordGroup::ignored},
-     {"BUILD_IN_SOURCE", KeywordGroup::ignored},
-     {"BUILD_ALWAYS", KeywordGroup::ignored},
-     {"BUILD_BYPRODUCTS", KeywordGroup::ignored},
-     {"BUILD_JOB_SERVER_AWARE", KeywordGroup::ignored},
-     {"INSTALL_BYPRODUCTS", KeywordGroup::ignored},
-     {"TEST_BEFORE_INSTALL", KeywordGroup::ignored},
-     {"TEST_AFTER_INSTALL", KeywordGroup::ignored},
-     {"TEST_EXCLUDE_FROM_MAIN", KeywordGroup::ignored},
-     {"DEPENDS", KeywordGroup::ignored},
-     {"STEP_TARGETS", KeywordGroup::ignored},
-     {"INDEPENDENT_STEP_TARGETS", KeywordGroup::ignored},
-     {"LIST_SEPARATOR", KeywordGroup::ignored},
-     {"COMMAND", KeywordGroup::ignored},
-     {"EXCLUDE_FROM_ALL_STEPS", KeywordGroup::ignored},
-     {"DOWNLOAD_COMMAND", KeywordGroup::refused, commandReason},
-     {"UPDATE_COMMAND", KeywordGroup::refused, commandReason},
-     {"PATCH_COMMAND",
-      KeywordGroup::refused,
-      "runs a command epm cannot hash; use PATCHES"},
-     {"DOWNLOAD_NO_EXTRACT",
-      KeywordGroup::refused,
-      "keeps the archive unextracted, and epm locks extracted trees"},
-     {"SVN_REPOSITORY", KeywordGroup::refused, otherSourceReason},
-     {"HG_REPOSITORY", KeywordGroup::refused, otherSourceReason},
-     {"CVS_REPOSITORY", KeywordGroup::refused, otherSourceReason},
-     {"FORCE",
-      KeywordGroup::refused,
-      "would add a second version of a package, and the lock holds one"}});
+constexpr auto keywordRules = EA::Array<KeywordRule, 106> {
+    {"NAME", KeywordGroup::value},
+    {"VERSION", KeywordGroup::value},
+    {"GIT_TAG", KeywordGroup::value},
+    {"GITHUB", KeywordGroup::value},
+    {"GITHUB_REPOSITORY", KeywordGroup::value},
+    {"GITLAB_REPOSITORY", KeywordGroup::value},
+    {"BITBUCKET_REPOSITORY", KeywordGroup::value},
+    {"GIT_REPOSITORY", KeywordGroup::value},
+    {"SOURCE_DIR", KeywordGroup::value},
+    {"SOURCE_SUBDIR", KeywordGroup::value},
+    {"URI", KeywordGroup::value},
+    {"URL_HASH", KeywordGroup::value},
+    {"URL_MD5", KeywordGroup::value},
+    {"GIT_SUBMODULES_RECURSE", KeywordGroup::value},
+    {"MODE", KeywordGroup::value},
+    {"DOWNLOAD_ONLY", KeywordGroup::flag},
+    {"EXCLUDE_FROM_ALL", KeywordGroup::flag},
+    {"SYSTEM", KeywordGroup::flag},
+    {"OVERRIDE_FIND_PACKAGE", KeywordGroup::flag},
+    {"EXTERNALPROJECT_INTERNAL_ARGUMENT_SEPARATOR", KeywordGroup::flag},
+    {"URL", KeywordGroup::list},
+    {"OPTIONS", KeywordGroup::list},
+    {"PATCHES", KeywordGroup::list},
+    {"GIT_SUBMODULES", KeywordGroup::list},
+    {"FIND_PACKAGE_ARGS", KeywordGroup::list},
+    {"QUIET", KeywordGroup::ignored},
+    {"DOWNLOAD_NO_PROGRESS", KeywordGroup::ignored},
+    {"DOWNLOAD_NAME", KeywordGroup::ignored},
+    {"DOWNLOAD_EXTRACT_TIMESTAMP", KeywordGroup::ignored},
+    {"DOWNLOAD_DIR", KeywordGroup::ignored},
+    {"GIT_SHALLOW", KeywordGroup::ignored},
+    {"GIT_PROGRESS", KeywordGroup::ignored},
+    {"GIT_REMOTE_UPDATE_STRATEGY", KeywordGroup::ignored},
+    {"GIT_REMOTE_NAME", KeywordGroup::ignored},
+    {"GIT_CONFIG", KeywordGroup::ignored},
+    {"NO_CACHE", KeywordGroup::ignored},
+    {"CUSTOM_CACHE_KEY", KeywordGroup::ignored},
+    {"FIND_PACKAGE_ARGUMENTS", KeywordGroup::ignored},
+    {"UPDATE_DISCONNECTED", KeywordGroup::ignored},
+    {"TLS_VERIFY", KeywordGroup::ignored},
+    {"TLS_CAINFO", KeywordGroup::ignored},
+    {"TLS_VERSION", KeywordGroup::ignored},
+    {"TIMEOUT", KeywordGroup::ignored},
+    {"INACTIVITY_TIMEOUT", KeywordGroup::ignored},
+    {"NETRC", KeywordGroup::ignored},
+    {"NETRC_FILE", KeywordGroup::ignored},
+    {"HTTP_USERNAME", KeywordGroup::ignored},
+    {"HTTP_PASSWORD", KeywordGroup::ignored},
+    {"HTTP_HEADER", KeywordGroup::ignored},
+    {"LOG_DOWNLOAD", KeywordGroup::ignored},
+    {"LOG_UPDATE", KeywordGroup::ignored},
+    {"LOG_PATCH", KeywordGroup::ignored},
+    {"LOG_CONFIGURE", KeywordGroup::ignored},
+    {"LOG_BUILD", KeywordGroup::ignored},
+    {"LOG_INSTALL", KeywordGroup::ignored},
+    {"LOG_TEST", KeywordGroup::ignored},
+    {"LOG_MERGED_STDOUTERR", KeywordGroup::ignored},
+    {"LOG_OUTPUT_ON_FAILURE", KeywordGroup::ignored},
+    {"USES_TERMINAL_DOWNLOAD", KeywordGroup::ignored},
+    {"USES_TERMINAL_UPDATE", KeywordGroup::ignored},
+    {"USES_TERMINAL_PATCH", KeywordGroup::ignored},
+    {"USES_TERMINAL_CONFIGURE", KeywordGroup::ignored},
+    {"USES_TERMINAL_BUILD", KeywordGroup::ignored},
+    {"USES_TERMINAL_INSTALL", KeywordGroup::ignored},
+    {"USES_TERMINAL_TEST", KeywordGroup::ignored},
+    {"PREFIX", KeywordGroup::ignored},
+    {"TMP_DIR", KeywordGroup::ignored},
+    {"STAMP_DIR", KeywordGroup::ignored},
+    {"LOG_DIR", KeywordGroup::ignored},
+    {"BINARY_DIR", KeywordGroup::ignored},
+    {"SUBBUILD_DIR", KeywordGroup::ignored},
+    {"INSTALL_DIR", KeywordGroup::ignored},
+    {"CONFIGURE_COMMAND", KeywordGroup::ignored},
+    {"BUILD_COMMAND", KeywordGroup::ignored},
+    {"INSTALL_COMMAND", KeywordGroup::ignored},
+    {"TEST_COMMAND", KeywordGroup::ignored},
+    {"CMAKE_COMMAND", KeywordGroup::ignored},
+    {"CMAKE_GENERATOR", KeywordGroup::ignored},
+    {"CMAKE_GENERATOR_PLATFORM", KeywordGroup::ignored},
+    {"CMAKE_GENERATOR_TOOLSET", KeywordGroup::ignored},
+    {"CMAKE_GENERATOR_INSTANCE", KeywordGroup::ignored},
+    {"CMAKE_ARGS", KeywordGroup::ignored},
+    {"CMAKE_CACHE_ARGS", KeywordGroup::ignored},
+    {"CMAKE_CACHE_DEFAULT_ARGS", KeywordGroup::ignored},
+    {"CONFIGURE_HANDLED_BY_BUILD", KeywordGroup::ignored},
+    {"BUILD_IN_SOURCE", KeywordGroup::ignored},
+    {"BUILD_ALWAYS", KeywordGroup::ignored},
+    {"BUILD_BYPRODUCTS", KeywordGroup::ignored},
+    {"BUILD_JOB_SERVER_AWARE", KeywordGroup::ignored},
+    {"INSTALL_BYPRODUCTS", KeywordGroup::ignored},
+    {"TEST_BEFORE_INSTALL", KeywordGroup::ignored},
+    {"TEST_AFTER_INSTALL", KeywordGroup::ignored},
+    {"TEST_EXCLUDE_FROM_MAIN", KeywordGroup::ignored},
+    {"DEPENDS", KeywordGroup::ignored},
+    {"STEP_TARGETS", KeywordGroup::ignored},
+    {"INDEPENDENT_STEP_TARGETS", KeywordGroup::ignored},
+    {"LIST_SEPARATOR", KeywordGroup::ignored},
+    {"COMMAND", KeywordGroup::ignored},
+    {"EXCLUDE_FROM_ALL_STEPS", KeywordGroup::ignored},
+    {"DOWNLOAD_COMMAND", KeywordGroup::refused, commandReason},
+    {"UPDATE_COMMAND", KeywordGroup::refused, commandReason},
+    {"PATCH_COMMAND",
+     KeywordGroup::refused,
+     "runs a command epm cannot hash; use PATCHES"},
+    {"DOWNLOAD_NO_EXTRACT",
+     KeywordGroup::refused,
+     "keeps the archive unextracted, and epm locks extracted trees"},
+    {"SVN_REPOSITORY", KeywordGroup::refused, otherSourceReason},
+    {"HG_REPOSITORY", KeywordGroup::refused, otherSourceReason},
+    {"CVS_REPOSITORY", KeywordGroup::refused, otherSourceReason},
+    {"FORCE",
+     KeywordGroup::refused,
+     "would add a second version of a package, and the lock holds one"}};
 
-constexpr auto hashAlgorithms = std::to_array<std::string_view>({"MD5",
+constexpr auto hashAlgorithms = EA::Array<std::string_view, 10> {"MD5",
                                                                  "SHA1",
                                                                  "SHA224",
                                                                  "SHA256",
@@ -161,10 +161,10 @@ constexpr auto hashAlgorithms = std::to_array<std::string_view>({"MD5",
                                                                  "SHA3_224",
                                                                  "SHA3_256",
                                                                  "SHA3_384",
-                                                                 "SHA3_512"});
+                                                                 "SHA3_512"};
 
-constexpr auto archiveExtensions = std::to_array<std::string_view>(
-    {".zip", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tar"});
+constexpr auto archiveExtensions = EA::Array<std::string_view, 7> {
+    ".zip", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tar"};
 
 constexpr auto githubPrefix = std::string_view {"gh:"};
 constexpr auto gitlabPrefix = std::string_view {"gl:"};
@@ -172,19 +172,19 @@ constexpr auto bitbucketPrefix = std::string_view {"bb:"};
 constexpr auto gitExtension = std::string_view {".git"};
 
 constexpr auto trueWords =
-    std::to_array<std::string_view>({"YES", "ON", "TRUE", "1", "Y"});
+    EA::Array<std::string_view, 5> {"YES", "ON", "TRUE", "1", "Y"};
 
 constexpr auto falseWords =
-    std::to_array<std::string_view>({"NO", "OFF", "FALSE", "0", "N", "IGNORE", ""});
+    EA::Array<std::string_view, 7> {"NO", "OFF", "FALSE", "0", "N", "IGNORE", ""};
 
-template <std::size_t Size>
-bool isOneOf(const std::array<std::string_view, Size>& words, std::string_view text)
+template <int Size>
+bool isOneOf(const EA::Array<std::string_view, Size>& words, std::string_view text)
 {
     return std::find(words.begin(), words.end(), text) != words.end();
 }
 
-template <std::size_t Size>
-bool isOneOfIgnoringCase(const std::array<std::string_view, Size>& words,
+template <int Size>
+bool isOneOfIgnoringCase(const EA::Array<std::string_view, Size>& words,
                          std::string_view text)
 {
     return std::any_of(words.begin(),
@@ -221,7 +221,7 @@ bool isArchiveUrl(std::string_view url)
 struct KeywordValues
 {
     std::map<std::string, std::string, std::less<>> values;
-    std::map<std::string, std::vector<std::string>, std::less<>> lists;
+    std::map<std::string, EA::Vector<std::string>, std::less<>> lists;
     std::map<std::string, bool, std::less<>> flags;
 
     std::optional<std::string> findValue(std::string_view keyword) const
@@ -232,7 +232,7 @@ struct KeywordValues
         return std::nullopt;
     }
 
-    std::vector<std::string> findList(std::string_view keyword) const
+    EA::Vector<std::string> findList(std::string_view keyword) const
     {
         if (auto found = lists.find(keyword); found != lists.end())
             return found->second;
@@ -249,10 +249,10 @@ struct KeywordValues
     }
 };
 
-KeywordValues collectKeywordValues(const std::vector<std::string>& arguments)
+KeywordValues collectKeywordValues(const EA::Vector<std::string>& arguments)
 {
     auto collected = KeywordValues {};
-    auto index = std::size_t {0};
+    auto index = 0;
 
     while (index < arguments.size())
     {
@@ -287,7 +287,7 @@ KeywordValues collectKeywordValues(const std::vector<std::string>& arguments)
         }
         else
         {
-            auto list = std::vector<std::string> {};
+            auto list = EA::Vector<std::string> {};
 
             while (index < arguments.size() && !isKeyword(arguments[index]))
                 list.push_back(arguments[index++]);
@@ -300,9 +300,9 @@ KeywordValues collectKeywordValues(const std::vector<std::string>& arguments)
     return collected;
 }
 
-std::vector<std::string> expandShorthand(std::string text)
+EA::Vector<std::string> expandShorthand(std::string text)
 {
-    auto expanded = std::vector<std::string> {};
+    auto expanded = EA::Vector<std::string> {};
     auto tag = std::string {};
     auto version = std::string {};
 
@@ -332,28 +332,27 @@ std::vector<std::string> expandShorthand(std::string text)
         expanded = {"GIT_REPOSITORY", text};
 
     if (!version.empty())
-        expanded.insert(expanded.end(), {"VERSION", version});
+        expanded.add({"VERSION", version});
 
     if (!tag.empty())
-        expanded.insert(expanded.end(), {"GIT_TAG", tag});
+        expanded.add({"GIT_TAG", tag});
 
     return expanded;
 }
 
-std::vector<std::string> expandArguments(const std::vector<std::string>& arguments)
+EA::Vector<std::string> expandArguments(const EA::Vector<std::string>& arguments)
 {
     if (arguments.size() == 1 && !isKeyword(arguments[0]))
         return expandShorthand(arguments[0]);
 
-    auto expanded = std::vector<std::string> {};
+    auto expanded = EA::Vector<std::string> {};
 
-    for (auto index = std::size_t {0}; index < arguments.size(); ++index)
+    for (auto index = 0; index < arguments.size(); ++index)
     {
         if (arguments[index] == "URI" && index + 1 < arguments.size())
         {
             auto uriArguments = expandShorthand(arguments[++index]);
-            expanded.insert(
-                expanded.end(), uriArguments.begin(), uriArguments.end());
+            expanded.addFrom(uriArguments);
             continue;
         }
 
@@ -438,9 +437,9 @@ void setSourceFromKeywords(PackageSpec& spec, const KeywordValues& keywords)
 }
 } // namespace
 
-std::vector<std::string_view> listIgnoredKeywords()
+EA::Vector<std::string_view> listIgnoredKeywords()
 {
-    auto ignored = std::vector<std::string_view> {};
+    auto ignored = EA::Vector<std::string_view> {};
 
     for (const auto& rule: keywordRules)
     {
@@ -487,7 +486,7 @@ std::string getPackageNameFromUrl(const std::string& url)
     return name;
 }
 
-PackageSpec parsePackageArguments(const std::vector<std::string>& arguments)
+PackageSpec parsePackageArguments(const EA::Vector<std::string>& arguments)
 {
     auto keywords = collectKeywordValues(expandArguments(arguments));
     auto spec = PackageSpec {};

@@ -10,13 +10,13 @@
 namespace epm
 {
 // The target names in an export file's `.names` companion, one per line.
-eacp::Vector<std::string> parseTargetNames(std::string_view namesText);
+EA::Vector<std::string> parseTargetNames(std::string_view namesText);
 
 // Every distinct path in the export file that lies under `buildDirectory`,
 // relative to it, in order of first appearance. A path ends at the quote,
 // list separator or generator-expression bracket that closes it.
-eacp::Vector<std::string> buildTreePaths(std::string_view exportFileText,
-                                         std::string_view buildDirectory);
+EA::Vector<std::string> buildTreePaths(std::string_view exportFileText,
+                                       std::string_view buildDirectory);
 
 // The export file with every `buildDirectory` prefix replaced by `replacement`.
 std::string relocateBuildTree(std::string_view exportFileText,
@@ -36,17 +36,17 @@ bool referencesBuildTree(std::string_view exportFileText,
 bool mentionsThreads(std::string_view exportFileText);
 
 // The epm-targets.cmake facade over export-Debug.cmake and export-Release.cmake.
-std::string targetsFileText(const eacp::Vector<std::string>& targetNames,
+std::string targetsFileText(const EA::Vector<std::string>& targetNames,
                             bool needsThreads);
 
 struct HarvestResult
 {
     bool ok = false;
-    eacp::Vector<std::string> targetNames;
+    EA::Vector<std::string> targetNames;
     bool needsThreads = false;
 
     // What was copied into <prefix>/gen/<config>, relative to it.
-    eacp::Vector<std::string> relocatedPaths;
+    EA::Vector<std::string> relocatedPaths;
 
     // Set when the build tree had to be kept (a reference survived the rewrite).
     std::string warning;
@@ -67,6 +67,6 @@ HarvestResult harvestConfig(const eacp::FilePath& buildDirectory,
 // config. Returns the error when a file cannot be moved or rewritten.
 std::optional<std::string>
     shareIdenticalFiles(const eacp::FilePath& prefix,
-                        const eacp::Vector<std::string>& configs,
-                        const eacp::Vector<std::string>& relocatedPaths);
+                        const EA::Vector<std::string>& configs,
+                        const EA::Vector<std::string>& relocatedPaths);
 } // namespace epm

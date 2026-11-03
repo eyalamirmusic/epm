@@ -3,7 +3,7 @@
 #include <Miro/Reflect.h>
 
 #include <string>
-#include <vector>
+#include <eacp/Core/Utils/Containers.h>
 
 namespace epm
 {
@@ -13,7 +13,7 @@ namespace epm
 struct SubmoduleSelection
 {
     bool isRestricted = false;
-    std::vector<std::string> paths;
+    EA::Vector<std::string> paths;
     bool isRecursive = true;
 
     MIRO_REFLECT(isRestricted, paths, isRecursive)

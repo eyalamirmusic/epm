@@ -11,7 +11,7 @@
 #include <epm/Source/Submodules.h>
 
 #include <string>
-#include <vector>
+#include <eacp/Core/Utils/Containers.h>
 
 namespace epm
 {
@@ -33,7 +33,7 @@ struct PackageRequest
     PackageKind kind = PackageKind::git;
     std::string url;
     std::string ref;
-    eacp::Vector<eacp::FilePath> patches;
+    EA::Vector<eacp::FilePath> patches;
     SubmoduleSelection submoduleSelection;
     ArchiveHash archiveHash;
 };
@@ -43,7 +43,7 @@ struct MaterializedPackage
     std::string commit;
     std::string hash;
     eacp::FilePath sourceDirectory;
-    std::vector<LockedSubmodule> submodules;
+    EA::Vector<LockedSubmodule> submodules;
     bool usesGitLfs = false;
 };
 
@@ -78,7 +78,7 @@ private:
                              const std::string& commit,
                              Network network,
                              const eacp::FilePath& staging,
-                             std::vector<LockedSubmodule>& submodules,
+                             EA::Vector<LockedSubmodule>& submodules,
                              bool& usesLfs) const;
     eacp::FilePath fetchCommitIntoMirror(const std::string& name,
                                          const std::string& url,
@@ -91,7 +91,7 @@ private:
                             const std::string& pathPrefix,
                             const SubmoduleSelection& selection,
                             Network network,
-                            std::vector<LockedSubmodule>& submodules,
+                            EA::Vector<LockedSubmodule>& submodules,
                             bool& usesLfs) const;
     void fetchArchiveTree(const PackageRequest& request,
                           Network network,
@@ -102,7 +102,7 @@ private:
                         const eacp::FilePath& destination) const;
     MaterializedPackage storeTree(const eacp::FilePath& tree,
                                   const std::string& commit,
-                                  std::vector<LockedSubmodule> submodules) const;
+                                  EA::Vector<LockedSubmodule> submodules) const;
 
     CacheRoot root;
     eacp::FilePath cmake;

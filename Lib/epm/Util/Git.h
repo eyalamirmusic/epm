@@ -23,9 +23,8 @@ struct Result
 
 // Runs git from the temp directory and waits. Never prompts for credentials:
 // a remote that needs them fails instead of hanging.
-Result
-    run(const eacp::Vector<std::string>& arguments,
-        const eacp::Vector<eacp::Processes::EnvironmentVariable>& environment = {});
+Result run(const EA::Vector<std::string>& arguments,
+           const EA::Vector<eacp::Processes::EnvironmentVariable>& environment = {});
 
 bool isAvailable();
 
@@ -38,12 +37,12 @@ struct RemoteRef
 struct RemoteRefs
 {
     bool ok = false;
-    eacp::Vector<RemoteRef> refs;
+    EA::Vector<RemoteRef> refs;
     std::string error;
 };
 
 // Parses `git ls-remote <url>` output, in the order git printed it.
-eacp::Vector<RemoteRef> parseLsRemote(std::string_view output);
+EA::Vector<RemoteRef> parseLsRemote(std::string_view output);
 
 RemoteRefs lsRemote(const std::string& url);
 } // namespace epm::Git

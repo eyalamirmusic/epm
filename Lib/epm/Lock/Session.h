@@ -6,7 +6,7 @@
 
 #include <optional>
 #include <string>
-#include <vector>
+#include <eacp/Core/Utils/Containers.h>
 
 namespace epm
 {
@@ -39,8 +39,8 @@ struct SessionOverride
 
 struct Session
 {
-    std::vector<SessionOverride> overrides;
-    std::vector<SessionPackage> packages;
+    EA::Vector<SessionOverride> overrides;
+    EA::Vector<SessionPackage> packages;
 
     // Locked mode with no lock yet: this configure writes it, as update would.
     bool isWritingNewLock = false;

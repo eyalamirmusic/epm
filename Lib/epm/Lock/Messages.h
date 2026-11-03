@@ -38,7 +38,7 @@ struct UnknownUpdateName
 {
     std::string name;
     std::string lockFile;
-    eacp::Vector<std::string> lockedNames;
+    EA::Vector<std::string> lockedNames;
 };
 
 struct FailedDownload
