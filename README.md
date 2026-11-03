@@ -81,6 +81,12 @@ checkout with a warning; `EPM_CI=ON` makes that an error in locked mode.
 `epm lock update [name...]`, `epm lock verify [--full]` (a locked package missing from the cache, as one only another platform asks for is, is fetched at its locked commit and checked) and `epm lock root`
 work on the lock from the command line.
 
+The lock holds one version of each package for the whole tree. When projects
+ask for different versions, the highest semantic version tag wins and anything
+else stops the configure until the root's `epm.json` overrides it, as Go's
+minimal version selection and `replace` do; [Docs/Resolution.md](Docs/Resolution.md)
+is the model.
+
 A binary cache entry's key includes the package's Merkle hash, and the entry
 records the hashes of the packages its child build added, so a cached library
 is only used with exactly the sources in the lock.

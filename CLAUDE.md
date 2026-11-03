@@ -20,7 +20,8 @@ repository layout. `PLAN.md` is the longer-term design and background.
   - `Source/` — `PackageCache` (bare mirrors under `git/`, archives under
     `downloads/`, trees under `src/<merkle hash>`), `Mirror` (git plumbing,
     git-lfs), `Submodules`, `Download`. Ported from lockstep.
-  - `Lock/` — `LockFile` (`epm.lock`), `MerkleHash`, `Session`
+  - `Lock/` — `LockFile` (`epm.lock`), `MerkleHash`, `Requirements`
+    (minimal version selection, `Docs/Resolution.md`), `Session`
     (`<build>/epm/session.json`), `Messages`. Ported from lockstep.
   - `Build/` — `ChildBuild`, `Harvest`. `CMake/epm-export.cmake` is compiled
     into the binary through `Build/EmbeddedExport.cpp.in`.
@@ -28,6 +29,7 @@ repository layout. `PLAN.md` is the longer-term design and background.
   - `Resolve/` — `Commands` (resolve, provide and the `lock` subcommands:
     overrides, lock modes, the CMake each call runs) and `Resolve` (the mode
     decision and the binary half).
+  - `Spec/Manifest` — the root's `epm.json` overrides.
   - `Spec/PackageArguments` — the one parser of CPMAddPackage /
     FetchContent_Declare / epm_add_package arguments, plus epm's `MODE`.
 - `Apps/epm/Main.cpp` — the `epm` executable: `Apps::runConsole` plus manual
