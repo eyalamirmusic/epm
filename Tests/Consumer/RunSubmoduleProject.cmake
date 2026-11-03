@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 3.25)
 # Builds three local repositories, top -> middle -> leaf, linked by relative
 # submodule URLs, then locks and re-fetches a project that uses top.
 # Expects WORK_DIR, EPM_EXECUTABLE, EPM_MODULE and PROJECT_DIR.

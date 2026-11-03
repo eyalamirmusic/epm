@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 3.25)
 # Configures one project in four build directories at once, sharing an empty
 # cache, so all of them fetch the same archive together; all must succeed.
 # Expects PROJECT_DIR, WORK_DIR, EPM_EXECUTABLE and EPM_MODULE. With COPY set,

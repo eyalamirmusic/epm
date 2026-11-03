@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 3.25)
 # Symlinks in an archive and in a git repository hash the same on every
 # platform: Windows checks them out as plain files holding the link text, and
 # the Merkle hash still counts them as symlinks. The git fixture's symlink is

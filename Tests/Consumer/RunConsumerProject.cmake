@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 3.25)
 # Configures a sample project twice, first in update mode to write its lock and
 # then in locked mode from a fresh build directory, then builds and runs it.
 # Expects PROJECT_DIR, WORK_DIR, EPM_EXECUTABLE, EPM_MODULE and

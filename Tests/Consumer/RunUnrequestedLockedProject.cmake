@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 3.25)
 # A lock holding a package this configure does not ask for, as a lock written
 # on another platform does: verify fetches it at its locked version and checks
 # its hash, and fails, naming it, when it cannot fetch it. Expects PROJECT_DIR,

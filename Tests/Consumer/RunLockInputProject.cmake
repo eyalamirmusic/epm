@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 3.25)
 # The lock is an input of the configure: a build after the lock is deleted
 # reconfigures and writes it again (or, with EPM_CI, fails saying to commit
 # it), and a build after it is edited reconfigures and checks it. Expects

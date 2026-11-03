@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 3.25)
 # Locks and re-fetches three local repositories: one with an empty
 # .gitmodules, one whose .gitmodules names a path with no gitlink, and one
 # storing a file in Git LFS, plus one patched with a patch whose context is a

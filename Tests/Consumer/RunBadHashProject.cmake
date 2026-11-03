@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 3.25)
 # Configures a project whose archive has a wrong URL_HASH, from an empty cache,
 # and checks the configure ends with the hash mismatch rather than a generic
 # download failure. Expects PROJECT_DIR, WORK_DIR, EPM_EXECUTABLE and
