@@ -1,5 +1,6 @@
 #include <epm/Lock/LockFile.h>
 #include <epm/Util/Sha256.h>
+#include <epm/Util/Text.h>
 
 #include <eacp/Core/Utils/Files.h>
 #include <ea_data_structures/Utilities/VectorUtilities.h>
@@ -89,9 +90,7 @@ bool isLockFileCurrent(const eacp::FilePath& path)
 
 void writeLockFile(const eacp::FilePath& path, LockFile lock)
 {
-    auto text = formatLockFile(std::move(lock));
-    auto textBytes = reinterpret_cast<const std::uint8_t*>(text.data());
-    auto bytes = eacp::Span<const std::uint8_t> {textBytes, int(text.size())};
-    eacp::Files::writeFileAtomically(path, bytes);
+    if (!writeTextFile(path, formatLockFile(std::move(lock))))
+        throw std::runtime_error("cannot write " + path.str());
 }
 } // namespace epm

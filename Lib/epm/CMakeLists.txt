@@ -53,9 +53,7 @@ add_library(epm-core STATIC
         Util/Status.cpp
         Util/Status.h
         Util/Text.cpp
-        Util/Text.h
-        Util/Timestamp.cpp
-        Util/Timestamp.h)
+        Util/Text.h)
 
 # epm-export.cmake is compiled into the binary, so an installed epm writes the
 # script into child builds without needing this repository at runtime.

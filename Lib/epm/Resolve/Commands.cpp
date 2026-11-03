@@ -22,7 +22,7 @@
 #include <epm/Spec/JsonFile.h>
 #include <epm/Util/Git.h>
 #include <epm/Util/Sha256.h>
-#include <epm/Util/Timestamp.h>
+#include <eacp/Core/Utils/Time.h>
 
 #include <algorithm>
 #include <array>
@@ -370,11 +370,12 @@ CachedSource resolveUnlockedSource(const CommandOptions& options,
     auto materialized = cache.materialize(request, gitCommit, Network::allowed);
 
     if (!commit.empty())
-        saveJsonFile(marker,
-                     SourceMarker {request.url,
-                                   materialized.commit,
-                                   materialized.hash,
-                                   utcTimestamp()});
+        saveJsonFile(
+            marker,
+            SourceMarker {request.url,
+                          materialized.commit,
+                          materialized.hash,
+                          eacp::Time::formatIso8601(eacp::Time::sinceEpoch())});
 
     return {materialized.sourceDirectory, materialized.commit};
 }

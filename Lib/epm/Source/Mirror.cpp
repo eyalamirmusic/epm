@@ -1,6 +1,8 @@
 #include <epm/Source/Mirror.h>
 #include <epm/Lock/Messages.h>
+#include <epm/Cache/SourceCache.h>
 #include <epm/Util/Git.h>
+#include <epm/Util/Text.h>
 #include <epm/Util/Status.h>
 
 #include <eacp/Core/Platform/Platform.h>
@@ -17,7 +19,6 @@ namespace epm
 namespace
 {
 constexpr auto gitExecutable = "git";
-constexpr auto fullShaLength = 40;
 constexpr auto gitAttributesFileName = std::string_view {".gitattributes"};
 constexpr auto lfsFilterAttribute = std::string_view {"filter=lfs"};
 
@@ -47,19 +48,6 @@ std::string runGitOrThrow(
     return *output;
 }
 
-eacp::Vector<std::string> splitLines(const std::string& text)
-{
-    auto lines = eacp::Vector<std::string> {};
-
-    for (const auto& line: eacp::Strings::split(text, '\n'))
-    {
-        if (auto trimmed = eacp::Strings::trim(line); !trimmed.empty())
-            lines.add(trimmed);
-    }
-
-    return lines;
-}
-
 bool isGitAttributesPath(const std::string& path)
 {
     return path == gitAttributesFileName
@@ -86,13 +74,6 @@ std::string_view removeSubmoduleKeySuffix(std::string_view key)
     }
 
     return {};
-}
-
-bool isFullSha(const std::string& ref)
-{
-    return ref.size() == fullShaLength
-           && std::all_of(
-               ref.begin(), ref.end(), [](char c) { return std::isxdigit(c); });
 }
 
 bool isRemoteRefName(const eacp::FilePath& mirror, const std::string& ref)
@@ -152,7 +133,7 @@ bool hasCommit(const eacp::FilePath& mirror, const std::string& commit)
 
 std::string fetchRefIntoMirror(const eacp::FilePath& mirror, const std::string& ref)
 {
-    if (isFullSha(ref) || isRemoteRefName(mirror, ref))
+    if (isFullCommitHash(ref) || isRemoteRefName(mirror, ref))
     {
         // A ref of this fetch's own rather than FETCH_HEAD, which configures
         // sharing the mirror would overwrite under each other.
@@ -183,11 +164,11 @@ GitTreeListing listTree(const eacp::FilePath& mirror, const std::string& commit)
     auto entries = runGitOrThrow(createMirrorArguments(
         mirror, {"-c", "core.quotepath=off", "ls-tree", "-r", commit}));
 
-    for (const auto& line: splitLines(entries))
+    for (const auto line: splitLines(entries))
     {
         auto tab = line.find('\t');
         auto fields = eacp::Strings::split(line.substr(0, tab), ' ');
-        auto path = line.substr(tab + 1);
+        auto path = std::string {line.substr(tab + 1)};
         constexpr auto typeField = 1;
         constexpr auto shaField = 2;
 
@@ -284,7 +265,7 @@ std::vector<GitSubmodule> listSubmodules(const GitTreeListing& listing,
         for (const auto& line: lines)
         {
             auto equals = line.find('=');
-            auto key = std::string_view {line}.substr(0, equals);
+            auto key = line.substr(0, equals);
 
             if (!key.ends_with(".path") || line.substr(equals + 1) != gitlinkPath)
                 continue;
@@ -294,7 +275,7 @@ std::vector<GitSubmodule> listSubmodules(const GitTreeListing& listing,
             for (const auto& candidate: lines)
             {
                 if (candidate.starts_with(urlKey))
-                    submodule.url = candidate.substr(urlKey.size());
+                    submodule.url = std::string {candidate.substr(urlKey.size())};
             }
         }
 

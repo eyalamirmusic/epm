@@ -1,11 +1,12 @@
 #pragma once
 
+#include <epm/Util/Text.h>
+
 #include <eacp/Core/Utils/Files.h>
 
 #include <Miro/Json.h>
 #include <Miro/Reflect.h>
 
-#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -30,21 +31,6 @@ std::optional<T> loadJsonFile(const eacp::FilePath& path)
 template <typename T>
 bool saveJsonFile(const eacp::FilePath& path, const T& value)
 {
-    const auto text = Miro::toJSONString(value, 2) + "\n";
-
-    if (!eacp::Files::createDirectories(path.parentDirectory()))
-        return false;
-
-    try
-    {
-        eacp::Files::writeFileAtomically(
-            path, {reinterpret_cast<const std::uint8_t*>(text.data()), text.size()});
-    }
-    catch (const std::exception&)
-    {
-        return false;
-    }
-
-    return true;
+    return writeTextFile(path, Miro::toJSONString(value, 2) + "\n");
 }
 } // namespace epm

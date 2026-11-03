@@ -11,7 +11,7 @@ repository layout. `PLAN.md` is the longer-term design and background.
   `<epm/Area/File.h>`.
   - `Util/` — `Sha256`, `Git` (git CLI through `eacp::Processes`, never
     interactive, always run from the temp directory), `LongPath`, `Status`, `Command` (child processes, `findExecutable`), `Log`
-    (`--verbose`), `Text`, `Timestamp`.
+    (`--verbose`), `Text`.
   - `Spec/` — `Env`, `Request`: Miro-reflected structs whose field names are the
     JSON keys; `JsonFile.h` loads and saves them.
   - `Cache/` — `CacheRoot`, `SourceCache` (ref resolution and the

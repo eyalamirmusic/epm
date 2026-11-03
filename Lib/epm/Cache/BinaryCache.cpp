@@ -10,7 +10,7 @@
 #include <epm/Util/Log.h>
 #include <epm/Util/Sha256.h>
 #include <epm/Util/Text.h>
-#include <epm/Util/Timestamp.h>
+#include <eacp/Core/Utils/Time.h>
 
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
@@ -212,7 +212,10 @@ BinaryResult buildBinary(const CacheRoot& cache,
         return failure("cannot write " + (prefix / "manifest.json").str());
 
     const auto marker =
-        BinaryMarker {key, snapshot.commit, utcTimestamp(), dependencies};
+        BinaryMarker {key,
+                      snapshot.commit,
+                      eacp::Time::formatIso8601(eacp::Time::sinceEpoch()),
+                      dependencies};
 
     if (!saveJsonFile(markerFor(cache, request.name, key), marker))
         return failure("cannot write the marker for " + prefix.str());
