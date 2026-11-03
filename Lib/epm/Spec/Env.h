@@ -34,6 +34,10 @@ struct Env
     std::string cxxStandard;
     std::string toolchainFile;
 
+    // CMAKE_PREFIX_PATH, so a child build finds what the consumer's
+    // find_package calls find.
+    std::string prefixPath;
+
     // The epm.cmake that wrote this file, loaded into child builds that
     // resolve their dependencies against the consumer's lock.
     std::string module;
@@ -56,6 +60,7 @@ struct Env
                  osxDeploymentTarget,
                  cxxStandard,
                  toolchainFile,
+                 prefixPath,
                  module)
 };
 } // namespace epm

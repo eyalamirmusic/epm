@@ -157,6 +157,7 @@ function(epm_write_env)
             "osxDeploymentTarget=CMAKE_OSX_DEPLOYMENT_TARGET"
             "cxxStandard=CMAKE_CXX_STANDARD"
             "toolchainFile=CMAKE_TOOLCHAIN_FILE"
+            "prefixPath=CMAKE_PREFIX_PATH"
             "module=_EPM_MODULE_FILE")
         string(REPLACE "=" ";" pair "${pair}")
         list(GET pair 0 key)

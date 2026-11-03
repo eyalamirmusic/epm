@@ -336,8 +336,16 @@ std::string resolveRemoteCommit(const PackageRequest& request)
 
 // Without a lock the ref is resolved on every configure, as CPM does, and
 // src/<sourceId>.json remembers which tree that commit unpacked to.
-eacp::FilePath resolveUnlockedSource(const CommandOptions& options,
-                                     const PackageSpec& spec)
+// A tree in the cache and the commit it was checked out at, empty for an
+// archive.
+struct CachedSource
+{
+    eacp::FilePath directory;
+    std::string commit;
+};
+
+CachedSource resolveUnlockedSource(const CommandOptions& options,
+                                   const PackageSpec& spec)
 {
     auto cache = createPackageCache(options);
     auto request = createRequest(options, spec);
@@ -352,7 +360,7 @@ eacp::FilePath resolveUnlockedSource(const CommandOptions& options,
         if (auto known = loadJsonFile<SourceMarker>(marker))
         {
             if (cache.hasIntactEntry(known->hash, Verification::trustStamp))
-                return cache.getSourceDirectory(known->hash);
+                return {cache.getSourceDirectory(known->hash), known->commit};
         }
     }
 
@@ -368,12 +376,12 @@ eacp::FilePath resolveUnlockedSource(const CommandOptions& options,
                                    materialized.hash,
                                    utcTimestamp()});
 
-    return materialized.sourceDirectory;
+    return {materialized.sourceDirectory, materialized.commit};
 }
 
-eacp::FilePath resolveLockedSource(const CommandOptions& options,
-                                   const PackageSpec& spec,
-                                   const Session& session)
+CachedSource resolveLockedSource(const CommandOptions& options,
+                                 const PackageSpec& spec,
+                                 const Session& session)
 {
     if (!isLockUsed(options))
         return resolveUnlockedSource(options, spec);
@@ -388,7 +396,7 @@ eacp::FilePath resolveLockedSource(const CommandOptions& options,
             resolvePackage(cache, request, getPatchesForLock(options, spec));
         lock.storePackage(resolved);
         writeLockFile(options.lock, lock);
-        return cache.getSourceDirectory(resolved.hash);
+        return {cache.getSourceDirectory(resolved.hash), resolved.commit};
     }
 
     auto locked = lock.findPackage(spec.name);
@@ -404,8 +412,9 @@ eacp::FilePath resolveLockedSource(const CommandOptions& options,
     }
 
     checkRequestMatchesLock(options, spec, *locked);
-    return ensureLockedPackageIsCached(
-        options, cache, request, *locked, getNetworkForMode(options.mode));
+    return {ensureLockedPackageIsCached(
+                options, cache, request, *locked, getNetworkForMode(options.mode)),
+            locked->commit};
 }
 
 std::optional<SessionOverride> findOverride(const PackageSpec& spec,
@@ -467,6 +476,7 @@ struct ResolvedSource
 {
     eacp::FilePath directory;
     std::string hash;
+    std::string commit;
 };
 
 ResolvedSource resolvePackageSource(const CommandOptions& options,
@@ -489,18 +499,22 @@ ResolvedSource resolvePackageSource(const CommandOptions& options,
         printStatus("WARNING: " + spec.name + " comes from the local override "
                     + setting + ", not from the lock");
         return {makeAbsolute(options.sourceDirectory, overridden->sourceDirectory),
+                {},
                 {}};
     }
 
     if (spec.kind == PackageKind::local)
-        return {makeAbsolute(options.requestedBy, spec.localSourceDirectory), {}};
+        return {
+            makeAbsolute(options.requestedBy, spec.localSourceDirectory), {}, {}};
 
     auto cached = resolveLockedSource(options, spec, session);
 
-    if (spec.checkoutDirectory.empty())
-        return {cached, cached.fileName()};
+    auto hash = cached.directory.fileName();
 
-    return {placeCheckout(options, spec, cached), cached.fileName()};
+    if (spec.checkoutDirectory.empty())
+        return {cached.directory, hash, cached.commit};
+
+    return {placeCheckout(options, spec, cached.directory), hash, cached.commit};
 }
 
 std::string getBinaryDirectory(const CommandOptions& options,
@@ -620,12 +634,10 @@ std::string getChildLockMode(const CommandOptions& options)
 
 // epm's binary cache: the request it keys on, then MODE's choice between the
 // cached libraries and add_subdirectory. nullopt means source.
-std::optional<eacp::FilePath>
-    findOrBuildBinary(const CommandOptions& options,
-                      const PackageSpec& spec,
-                      const std::string& mode,
-                      const eacp::FilePath& sourceDirectory,
-                      const std::string& sourceHash)
+std::optional<eacp::FilePath> findOrBuildBinary(const CommandOptions& options,
+                                                const PackageSpec& spec,
+                                                const std::string& mode,
+                                                const ResolvedSource& resolved)
 {
     auto request = Request {};
     request.name = spec.name;
@@ -637,7 +649,8 @@ std::optional<eacp::FilePath>
     for (const auto& [name, value]: spec.options)
         request.options[name] = value;
 
-    auto source = SourceSnapshot {{}, sourceHash, sourceDirectory};
+    auto source =
+        SourceSnapshot {resolved.commit, resolved.hash, resolved.directory};
     auto build = LockForChildBuilds {options.lock, getChildLockMode(options)};
     auto result = resolveBinary(
         request, options.env, CacheRoot {options.cache}, source, build);
@@ -687,8 +700,7 @@ std::string addPackage(const CommandOptions& options, const PackageSpec& spec)
     auto prefix = std::optional<eacp::FilePath> {};
 
     if (mode != "source" && !source.hash.empty() && !spec.isDownloadOnly)
-        prefix =
-            findOrBuildBinary(options, spec, mode, source.directory, source.hash);
+        prefix = findOrBuildBinary(options, spec, mode, source);
 
     if (prefix)
     {

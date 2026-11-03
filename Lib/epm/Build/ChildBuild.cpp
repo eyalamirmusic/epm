@@ -93,6 +93,7 @@ Vector<std::string> configureArguments(const ChildBuild& build)
     addDefinition(arguments, "CMAKE_MAKE_PROGRAM", build.generator.makeProgram);
     addDefinition(arguments, "CMAKE_BUILD_TYPE", build.config);
     addDefinition(arguments, "CMAKE_TOOLCHAIN_FILE", env.toolchainFile);
+    addDefinition(arguments, "CMAKE_PREFIX_PATH", env.prefixPath);
     addDefinition(arguments, "CMAKE_C_COMPILER", env.cCompiler);
     addDefinition(arguments, "CMAKE_CXX_COMPILER", env.cxxCompiler);
     addDefinition(arguments, "CMAKE_OSX_ARCHITECTURES", env.osxArchitectures);
