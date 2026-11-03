@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
-set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES ${LOCKSTEP_SHIM})
+set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES ${EPM_MODULE})
 project(ArchiveSample LANGUAGES CXX)
 
-lockstep_add_package(NAME adder
+epm_add_package(NAME adder
         URL https://github.com/cpm-cmake/testpack-adder/archive/refs/tags/v1.0.1.tar.gz)
-lockstep_add_package(NAME fibonacci
+epm_add_package(NAME fibonacci
         URL https://github.com/cpm-cmake/testpack-fibonacci/archive/refs/tags/v1.0.zip
         DOWNLOAD_ONLY)
 

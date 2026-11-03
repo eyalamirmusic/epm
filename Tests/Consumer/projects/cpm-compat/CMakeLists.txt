@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES ${LOCKSTEP_SHIM})
+set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES ${EPM_MODULE})
 project(CpmCompatSample LANGUAGES CXX)
 
 # SOURCE_DIR beside a repository is where CPM clones it, and the package is locked.

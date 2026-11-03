@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES ${LOCKSTEP_SHIM})
+set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES ${EPM_MODULE})
 project(CpmSample LANGUAGES CXX)
 
 CPMAddPackage("gh:cpm-cmake/testpack-fibadder@1.1.0")

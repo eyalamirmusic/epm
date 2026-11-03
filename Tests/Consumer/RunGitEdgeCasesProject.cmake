@@ -1,13 +1,13 @@
 # Locks and re-fetches three local repositories: one with an empty
 # .gitmodules, one whose .gitmodules names a path with no gitlink, and one
 # storing a file in Git LFS, plus one patched with a patch whose context is a
-# line short, which `patch -p1` applies (as CPM does) and `git apply` refuses. Expects WORK_DIR, LOCKSTEP_EXECUTABLE,
-# LOCKSTEP_SHIM and PROJECT_DIR.
+# line short, which `patch -p1` applies (as CPM does) and `git apply` refuses. Expects WORK_DIR, EPM_EXECUTABLE,
+# EPM_MODULE and PROJECT_DIR.
 
 set(lfs_payload "content that lives in lfs, not a pointer\n")
 
 function(git)
-    execute_process(COMMAND git -c user.name=lockstep -c user.email=lockstep@example.com ${ARGN}
+    execute_process(COMMAND git -c user.name=epm -c user.email=epm@example.com ${ARGN}
             RESULT_VARIABLE exit_code OUTPUT_VARIABLE output ERROR_VARIABLE output)
     if (NOT exit_code EQUAL 0)
         message(FATAL_ERROR "git ${ARGN} failed:\n${output}")
@@ -29,8 +29,8 @@ endfunction()
 
 function(configure expect_success)
     execute_process(COMMAND "${CMAKE_COMMAND}" -S "${PROJECT_DIR}" -B "${WORK_DIR}/build-${ARGV1}"
-            "-DLOCKSTEP_SHIM=${LOCKSTEP_SHIM}" "-DLOCKSTEP_EXECUTABLE=${LOCKSTEP_EXECUTABLE}"
-            "-DLOCKSTEP_CACHE=${WORK_DIR}/cache" "-DLOCKSTEP_LOCK_FILE=${WORK_DIR}/lockstep.lock"
+            "-DEPM_MODULE=${EPM_MODULE}" "-DEPM_EXECUTABLE=${EPM_EXECUTABLE}"
+            "-DEPM_CACHE=${WORK_DIR}/cache" "-DEPM_LOCK_FILE=${WORK_DIR}/epm.lock"
             "-DFIXTURE_URL=${fixture_url}" "-DLFS_PAYLOAD=${lfs_payload}" ${ARGN}
             RESULT_VARIABLE exit_code OUTPUT_VARIABLE output ERROR_VARIABLE output)
     message("${output}")
@@ -65,9 +65,9 @@ if (CMAKE_HOST_WIN32)
     set(fixture_url "file:///${WORK_DIR}/fixtures")
 endif ()
 
-configure(TRUE update -DLOCKSTEP_MODE=update)
+configure(TRUE update -DEPM_LOCK_MODE=update)
 
-file(READ "${WORK_DIR}/lockstep.lock" lock)
+file(READ "${WORK_DIR}/epm.lock" lock)
 string(JSON package_count LENGTH "${lock}" packages)
 math(EXPR last_package "${package_count} - 1")
 foreach (index RANGE ${last_package})

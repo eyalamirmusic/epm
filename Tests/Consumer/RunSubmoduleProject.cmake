@@ -1,9 +1,9 @@
 # Builds three local repositories, top -> middle -> leaf, linked by relative
 # submodule URLs, then locks and re-fetches a project that uses top.
-# Expects WORK_DIR, LOCKSTEP_EXECUTABLE, LOCKSTEP_SHIM and PROJECT_DIR.
+# Expects WORK_DIR, EPM_EXECUTABLE, EPM_MODULE and PROJECT_DIR.
 
 function(git)
-    execute_process(COMMAND git -c user.name=lockstep -c user.email=lockstep@example.com
+    execute_process(COMMAND git -c user.name=epm -c user.email=epm@example.com
             -c protocol.file.allow=always ${ARGN}
             RESULT_VARIABLE exit_code OUTPUT_VARIABLE output ERROR_VARIABLE output)
     if (NOT exit_code EQUAL 0)
@@ -25,8 +25,8 @@ endfunction()
 
 function(configure expect_success)
     execute_process(COMMAND "${CMAKE_COMMAND}" -S "${PROJECT_DIR}" -B "${WORK_DIR}/build-${ARGV1}"
-            "-DLOCKSTEP_SHIM=${LOCKSTEP_SHIM}" "-DLOCKSTEP_EXECUTABLE=${LOCKSTEP_EXECUTABLE}"
-            "-DLOCKSTEP_CACHE=${WORK_DIR}/cache" "-DLOCKSTEP_LOCK_FILE=${WORK_DIR}/lockstep.lock"
+            "-DEPM_MODULE=${EPM_MODULE}" "-DEPM_EXECUTABLE=${EPM_EXECUTABLE}"
+            "-DEPM_CACHE=${WORK_DIR}/cache" "-DEPM_LOCK_FILE=${WORK_DIR}/epm.lock"
             "-DFIXTURE_URL=${fixture_url}" ${ARGN}
             WORKING_DIRECTORY "${configure_working_directory}"
             RESULT_VARIABLE exit_code OUTPUT_VARIABLE output ERROR_VARIABLE output)
@@ -50,9 +50,9 @@ if (CMAKE_HOST_WIN32)
     set(fixture_url "file:///${WORK_DIR}/fixtures")
 endif ()
 
-configure(TRUE update -DLOCKSTEP_MODE=update)
+configure(TRUE update -DEPM_LOCK_MODE=update)
 
-file(READ "${WORK_DIR}/lockstep.lock" lock)
+file(READ "${WORK_DIR}/epm.lock" lock)
 string(JSON submodule_count LENGTH "${lock}" packages 0 submodules)
 string(JSON nested_path GET "${lock}" packages 0 submodules 1 path)
 if (NOT submodule_count EQUAL 2 OR NOT nested_path STREQUAL "middle/leaf")
@@ -74,7 +74,7 @@ set(configure_working_directory "${WORK_DIR}")
 
 string(JSON locked_commit GET "${lock}" packages 0 submodules 1 commit)
 string(REPLACE "${locked_commit}" "0000000000000000000000000000000000000000" tampered "${lock}")
-file(WRITE "${WORK_DIR}/lockstep.lock" "${tampered}")
+file(WRITE "${WORK_DIR}/epm.lock" "${tampered}")
 file(REMOVE_RECURSE "${WORK_DIR}/cache/src")
 configure(FALSE tampered)
 string(REGEX REPLACE "[ \n]+" " " flattened "${configure_output}")

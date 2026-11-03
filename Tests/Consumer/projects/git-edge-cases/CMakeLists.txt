@@ -1,14 +1,14 @@
 cmake_minimum_required(VERSION 3.25)
-set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES ${LOCKSTEP_SHIM})
+set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES ${EPM_MODULE})
 project(GitEdgeCasesSample LANGUAGES NONE)
 
-lockstep_add_package(NAME emptyModules GIT_REPOSITORY "${FIXTURE_URL}/emptyModules.git"
+epm_add_package(NAME emptyModules GIT_REPOSITORY "${FIXTURE_URL}/emptyModules.git"
         GIT_TAG main DOWNLOAD_ONLY)
-lockstep_add_package(NAME danglingModule GIT_REPOSITORY "${FIXTURE_URL}/danglingModule.git"
+epm_add_package(NAME danglingModule GIT_REPOSITORY "${FIXTURE_URL}/danglingModule.git"
         GIT_TAG main DOWNLOAD_ONLY)
-lockstep_add_package(NAME lfs GIT_REPOSITORY "${FIXTURE_URL}/lfs.git" GIT_TAG main
+epm_add_package(NAME lfs GIT_REPOSITORY "${FIXTURE_URL}/lfs.git" GIT_TAG main
         DOWNLOAD_ONLY)
-lockstep_add_package(NAME staleContext GIT_REPOSITORY "${FIXTURE_URL}/staleContext.git"
+epm_add_package(NAME staleContext GIT_REPOSITORY "${FIXTURE_URL}/staleContext.git"
         GIT_TAG main PATCHES "${CMAKE_CURRENT_LIST_DIR}/stale-context.patch" DOWNLOAD_ONLY)
 
 file(READ "${staleContext_SOURCE_DIR}/source.h" patched)
