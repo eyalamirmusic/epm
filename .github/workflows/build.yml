@@ -115,7 +115,6 @@ jobs:
         run: >
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           -DEPM_LOCK_MODE=locked "-DEPM_CACHE=${{ env.ROOT }}/.epm-self-cache"
-          -DEACP_BUILD_SPIRV=ON
           ${{ matrix.cmake-flags }} ${{ matrix.epm-flags }}
 
       - name: Build
@@ -134,13 +133,13 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
       # epm built itself in locked mode from epm.lock: every package must still
-      # hash to its lock entry (EACP_BUILD_SPIRV=ON above makes every lane
-      # fetch glslang, which eacp asks for on Linux only), the configure must not have changed one byte of
+      # hash to its lock entry (glslang, which eacp asks for on Linux only, is
+      # skipped elsewhere), the configure must not have changed one byte of
       # the lock, and the root is printed so the lanes can be compared.
       - name: Verify epm's own lock
         run: |
           git diff --exit-code epm.lock
-          "build/Apps/epm/epm$EXE_SUFFIX" lock verify --full --lock epm.lock \
+          "build/Apps/epm/epm$EXE_SUFFIX" lock verify --full --lock epm.lock --build-dir=build \
             "--cache=$ROOT/.epm-self-cache"
           echo "root: $("build/Apps/epm/epm$EXE_SUFFIX" lock root --lock epm.lock)"
 

@@ -77,7 +77,7 @@ written on the first configure, a lock that disagrees with the CMake stops the
 configure), `update` (re-resolve every ref and rewrite the lock) or `offline`
 (the cache only). `EPM_<Name>_SOURCE` or `CPM_<Name>_SOURCE` uses a local
 checkout with a warning; `EPM_CI=ON` makes that an error in locked mode.
-`epm lock update [name...]`, `epm lock verify [--full]` and `epm lock root`
+`epm lock update [name...]`, `epm lock verify [--full] [--build-dir <build>]` (a locked package that build did not ask for and that is not in the cache is skipped, so a lock written for every platform verifies on each) and `epm lock root`
 work on the lock from the command line.
 
 A binary cache entry's key includes the package's Merkle hash, and the entry

@@ -867,6 +867,7 @@ int runVerifyCommand(const CommandOptions& options)
 {
     auto cache = createPackageCache(options);
     auto lock = readLockFile(options.lock);
+    auto session = readSession(options.buildDirectory);
     auto failedCount = 0;
 
     for (const auto& package: lock.packages)
@@ -880,6 +881,17 @@ int runVerifyCommand(const CommandOptions& options)
             continue;
         }
 
+        // A cross-platform lock holds packages only another platform asks for.
+        auto isMissing =
+            !eacp::Files::isDirectory(cache.getSourceDirectory(package.hash));
+
+        if (isMissing && !session.findPackage(package.name))
+        {
+            printStatus("skipped " + package.name
+                        + ": not used on this platform, and not in the cache");
+            continue;
+        }
+
         printStatus(
             "FAILED " + package.name + ": "
             + describeDamagedCacheEntry(
@@ -890,7 +902,7 @@ int runVerifyCommand(const CommandOptions& options)
     if (!isLockFileCurrent(options.lock))
     {
         printStatus(formatUserError(options.lock.str()
-                                        + " is not in the form this lockstep "
+                                        + " is not in the form this epm "
                                           "writes. Rewrite it with:",
                                     "epm lock update"));
         ++failedCount;

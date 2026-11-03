@@ -31,7 +31,9 @@ constexpr auto usage =
     "  lock update  re-resolve the named packages' refs (all when none are\n"
     "               named) and rewrite the lock\n"
     "  lock verify  check each locked package's cache entry still hashes to\n"
-    "               its lock hash (--full rehashes every tree)\n"
+    "               its lock hash (--full rehashes every tree); one that\n"
+    "               --build-dir's configure did not ask for and that is not\n"
+    "               in the cache is skipped\n"
     "  lock root    print the root hash over every package in the lock\n"
     "  cache path   print the cache root\n"
     "  --version    print the version";
