@@ -57,7 +57,9 @@ DeclaredSymlinks readDeclaredSymlinks(const eacp::FilePath& sourceDirectory)
     if (!eacp::Files::isFile(path))
         return symlinks;
 
-    for (const auto line: splitLines(eacp::Files::readFile(path)))
+    auto text = eacp::Files::readFile(path);
+
+    for (const auto line: splitLines(text))
         symlinks.insert(std::string {line});
 
     return symlinks;
