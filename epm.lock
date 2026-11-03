@@ -1,0 +1,102 @@
+{
+  "packages": [
+    {
+      "commit": "9f26b4a120ef7e97a5f6d430c1bd9010d23e3709",
+      "hash": "efc3c23665509c858b1cf7da9aaa41ba1423fb3c89b6381a98da6a2cbff3d06c",
+      "kind": "git",
+      "name": "EADataStructures",
+      "patches": [],
+      "requestedRef": "main",
+      "submoduleSelection": {
+        "isRecursive": true,
+        "isRestricted": false,
+        "paths": []
+      },
+      "submodules": [],
+      "url": "https://github.com/eyalamirmusic/cpp_data_structures.git",
+      "usesGitLfs": false
+    },
+    {
+      "commit": "1712e729e6c292f7e73abf817bf511f35dcffe4c",
+      "hash": "99fe605149acc78215762e7f398a78f27057873450a473c51a9e9b13ea9455e3",
+      "kind": "git",
+      "name": "ESIMD",
+      "patches": [],
+      "requestedRef": "main",
+      "submoduleSelection": {
+        "isRecursive": true,
+        "isRestricted": false,
+        "paths": []
+      },
+      "submodules": [],
+      "url": "https://github.com/eyalamirmusic/ESIMD.git",
+      "usesGitLfs": false
+    },
+    {
+      "commit": "e6fc9b9acd899fbafc9431637a98198d484f6fd5",
+      "hash": "3128bcecc5b61f1e9af0b788a09221c7fd90333ce3dafd38438a5431f603ed5a",
+      "kind": "git",
+      "name": "Miro",
+      "patches": [],
+      "requestedRef": "main",
+      "submoduleSelection": {
+        "isRecursive": true,
+        "isRestricted": false,
+        "paths": []
+      },
+      "submodules": [],
+      "url": "https://github.com/eyalamirmusic/Miro.git",
+      "usesGitLfs": false
+    },
+    {
+      "commit": "1b193ebc095338c967af3d658e74b0d6f870bf9b",
+      "hash": "20700974bc778c949a252560f33f72275cfcc58a68904d98fabcb4e47d44bdf9",
+      "kind": "git",
+      "name": "NanoTest",
+      "patches": [],
+      "requestedRef": "main",
+      "submoduleSelection": {
+        "isRecursive": true,
+        "isRestricted": false,
+        "paths": []
+      },
+      "submodules": [],
+      "url": "https://github.com/eyalamirmusic/NanoTest.git",
+      "usesGitLfs": false
+    },
+    {
+      "commit": "8cfcbfa7bdf2214c8939502a349b7d4fb4ac73bb",
+      "hash": "1fb0ce608fe41c1ed15b0800fce2932c7ce63c4ad08e09d53e32a3c265fb231c",
+      "kind": "git",
+      "name": "ResEmbed",
+      "patches": [],
+      "requestedRef": "main",
+      "submoduleSelection": {
+        "isRecursive": true,
+        "isRestricted": false,
+        "paths": []
+      },
+      "submodules": [],
+      "url": "https://github.com/eyalamirmusic/ResEmbed.git",
+      "usesGitLfs": false
+    },
+    {
+      "commit": "57b2ef604bd12d340d7c62873da74525611e9071",
+      "hash": "5145faa9673a3b0de9b6638eeed80a0105a5218d53c3ea4ab66a69e8026b7941",
+      "kind": "git",
+      "name": "eacp",
+      "patches": [],
+      "requestedRef": "57b2ef604bd12d340d7c62873da74525611e9071",
+      "submoduleSelection": {
+        "isRecursive": true,
+        "isRestricted": false,
+        "paths": []
+      },
+      "submodules": [],
+      "url": "https://github.com/eyalamirmusic/eacp.git",
+      "usesGitLfs": false
+    }
+  ],
+  "root": "6eea5836c82799684d116372b7b2e28fd34515ee276a1488bd67aeffa2563c28",
+  "version": 1
+}

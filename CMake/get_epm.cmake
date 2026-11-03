@@ -423,7 +423,7 @@ function(get_epm_build cache tool_dir ref source description)
             --unset=CMAKE_INSTALL_PREFIX
             --unset=DESTDIR)
     set(configure "${CMAKE_COMMAND}" -S "${source_dir}" -B "${build_dir}"
-            -DCMAKE_BUILD_TYPE=Release -DEPM_ENABLE_TESTS=OFF
+            -DCMAKE_BUILD_TYPE=Release -DEPM_ENABLE_TESTS=OFF -DEPM_SELF_HOST=OFF
             "-DCMAKE_INSTALL_PREFIX=${tool_dir}")
     set(build "${CMAKE_COMMAND}" --build "${build_dir}" --config Release --parallel)
     set(install "${CMAKE_COMMAND}" --install "${build_dir}" --config Release)
