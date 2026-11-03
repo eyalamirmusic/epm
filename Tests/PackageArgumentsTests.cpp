@@ -1,20 +1,20 @@
-#include <PackageArguments.h>
+#include <epm/Spec/PackageArguments.h>
 
-#include <Submodules.h>
+#include <epm/Source/Submodules.h>
 
 #include <NanoTest/NanoTest.h>
 
 #include <stdexcept>
 
 using namespace nano;
-using lockstep::parsePackageArguments;
+using epm::parsePackageArguments;
 
 auto tGithubKeyword = test("Arguments/githubKeywordWithTag") = []
 {
     auto spec = parsePackageArguments(
         {"NAME", "Miro", "GITHUB", "eyalamirmusic/Miro", "GIT_TAG", "main"});
     check(spec.name == "Miro");
-    check(spec.kind == lockstep::PackageKind::git);
+    check(spec.kind == epm::PackageKind::git);
     check(spec.url == "https://github.com/eyalamirmusic/Miro.git");
     check(spec.ref == "main");
 };
@@ -59,7 +59,7 @@ auto tShorthandBitbucket = test("Arguments/shorthandBitbucketHashTag") = []
 auto tShorthandGitUrl = test("Arguments/shorthandGitUrlAtVersion") = []
 {
     auto spec = parsePackageArguments({"https://example.com/lib/thing.git@2.0"});
-    check(spec.kind == lockstep::PackageKind::git);
+    check(spec.kind == epm::PackageKind::git);
     check(spec.url == "https://example.com/lib/thing.git");
     check(spec.name == "thing");
     check(spec.ref == "v2.0");
@@ -76,7 +76,7 @@ auto tShorthandSshUrl = test("Arguments/shorthandSshUrlKeepsItsAt") = []
 auto tShorthandArchive = test("Arguments/shorthandArchiveIsUrl") = []
 {
     auto spec = parsePackageArguments({"https://example.com/zlib-1.3.1.tar.gz"});
-    check(spec.kind == lockstep::PackageKind::archive);
+    check(spec.kind == epm::PackageKind::archive);
     check(spec.name == "zlib-1.3.1");
 };
 
@@ -139,7 +139,7 @@ auto tFetchContentDetails = test("Arguments/fetchContentDeclareDetails") = []
                                "v1.0.1",
                                "SOURCE_DIR",
                                "/tmp/somewhere"});
-    check(spec.kind == lockstep::PackageKind::git);
+    check(spec.kind == epm::PackageKind::git);
     check(spec.name == "adder");
     check(spec.checkoutDirectory == "/tmp/somewhere");
 };
@@ -147,7 +147,7 @@ auto tFetchContentDetails = test("Arguments/fetchContentDeclareDetails") = []
 auto tSourceDirOnlyIsLocal = test("Arguments/sourceDirAloneIsLocal") = []
 {
     auto spec = parsePackageArguments({"NAME", "mine", "SOURCE_DIR", "../mine"});
-    check(spec.kind == lockstep::PackageKind::local);
+    check(spec.kind == epm::PackageKind::local);
     check(spec.localSourceDirectory == "../mine");
 };
 
@@ -308,14 +308,14 @@ auto tUnknown = test("Arguments/unknownOptionIsNamed") = []
 auto tCpmSourceDir = test("Arguments/sourceDirWithRepositoryIsWhereItIsCloned") = []
 {
     auto spec = parsePackageArguments(withGitSource({"SOURCE_DIR", "../a"}));
-    check(spec.kind == lockstep::PackageKind::git);
+    check(spec.kind == epm::PackageKind::git);
     check(spec.checkoutDirectory == "../a");
     check(spec.localSourceDirectory.empty());
 };
 
 auto tRelativeUrls = test("Submodules/relativeUrlsResolveAgainstParent") = []
 {
-    using lockstep::resolveSubmoduleUrl;
+    using epm::resolveSubmoduleUrl;
     check(resolveSubmoduleUrl("https://github.com/a/b.git", "../c.git")
           == "https://github.com/a/c.git");
     check(resolveSubmoduleUrl("https://github.com/a/b", "../../x/c")
@@ -340,7 +340,7 @@ auto tMiniaudio = test("Arguments/makeASoundMiniaudioCallIsAccepted") = []
          "DOWNLOAD_NO_PROGRESS",
          "YES",
          "QUIET"});
-    check(spec.kind == lockstep::PackageKind::archive);
+    check(spec.kind == epm::PackageKind::archive);
     check(spec.isDownloadOnly);
     check(spec.url
           == "https://github.com/mackron/miniaudio/archive/refs/tags/0.11.25.zip");
@@ -348,12 +348,12 @@ auto tMiniaudio = test("Arguments/makeASoundMiniaudioCallIsAccepted") = []
 
 auto tIgnoredSweep = test("Arguments/everyIgnoredKeywordIsAcceptedWithAValue") = []
 {
-    for (auto keyword: lockstep::listIgnoredKeywords())
+    for (auto keyword: epm::listIgnoredKeywords())
     {
         auto bare = parsePackageArguments(withGitSource({std::string {keyword}}));
         auto valued = parsePackageArguments(
             withGitSource({std::string {keyword}, "first", "second", "SYSTEM"}));
-        check(bare.kind == lockstep::PackageKind::git);
+        check(bare.kind == epm::PackageKind::git);
         check(valued.isSystem);
     }
 };
@@ -364,4 +364,27 @@ auto tOtherSources = test("Arguments/sourcesTheLockCannotHoldAreRefusedByName") 
     check(isRejected(
         {"NAME", "a", "URL", "https://x/a.zip", "DOWNLOAD_NO_EXTRACT", "YES"},
         "DOWNLOAD_NO_EXTRACT"));
+};
+
+auto tModeAbsentIsEmpty = test("Arguments/modeAbsentIsEmpty") = []
+{
+    auto spec = parsePackageArguments(PackageArgumentsTests::withGitSource({}));
+    check(spec.mode.empty());
+};
+
+auto tModeAcceptsEachValue = test("Arguments/modeAcceptsAutoPrebuiltAndSource") = []
+{
+    for (auto mode: {"auto", "prebuilt", "source"})
+    {
+        auto spec = parsePackageArguments(
+            PackageArgumentsTests::withGitSource({"MODE", mode}));
+        check(spec.mode == mode);
+    }
+};
+
+auto tModeRejectsUnknownValue = test("Arguments/modeRejectsUnknownValue") = []
+{
+    check(PackageArgumentsTests::isRejected(
+        PackageArgumentsTests::withGitSource({"MODE", "binary"}),
+        "MODE must be auto, prebuilt or source, not 'binary'"));
 };

@@ -1,15 +1,15 @@
 #include "TestDirectory.h"
 
-#include <LongPath.h>
-#include <MerkleHash.h>
+#include <epm/Util/LongPath.h>
+#include <epm/Lock/MerkleHash.h>
 
 #include <fstream>
 
 #include <NanoTest/NanoTest.h>
 
 using namespace nano;
-using lockstep::computeMerkleHash;
-using lockstep::computeTreeStamp;
+using epm::computeMerkleHash;
+using epm::computeTreeStamp;
 
 namespace MerkleHashTests
 {
@@ -35,8 +35,8 @@ eacp::FilePath createTreeDeeperThanMaxPath(const std::string& name)
         deepest = deepest / std::string(deepDirectoryNameLength, 'a' + level);
 
     auto file = deepest / "box_curve25519xchacha20poly1305.c";
-    std::filesystem::create_directories(lockstep::getLongPathSafeStdPath(deepest));
-    std::ofstream {lockstep::getLongPathSafeStdPath(file)} << "int deep;\n";
+    std::filesystem::create_directories(epm::getLongPathSafeStdPath(deepest));
+    std::ofstream {epm::getLongPathSafeStdPath(file)} << "int deep;\n";
     check(file.str().size() > windowsMaxPathLength);
     return root;
 }
@@ -105,7 +105,7 @@ auto tLongPaths = test("Merkle/hashesAndRemovesTreesDeeperThanMaxPath") = []
     check(computeMerkleHash(first) == computeMerkleHash(second));
     check(!computeTreeStamp(first).empty());
 
-    lockstep::removeTreeAtAnyLength(first);
-    lockstep::removeTreeAtAnyLength(second);
-    check(!std::filesystem::exists(lockstep::getLongPathSafeStdPath(first)));
+    epm::removeTreeAtAnyLength(first);
+    epm::removeTreeAtAnyLength(second);
+    check(!std::filesystem::exists(epm::getLongPathSafeStdPath(first)));
 };

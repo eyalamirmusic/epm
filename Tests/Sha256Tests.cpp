@@ -5,6 +5,8 @@
 
 #include <NanoTest/NanoTest.h>
 
+#include <stdexcept>
+
 using namespace nano;
 using epm::computeSha256Hex;
 
