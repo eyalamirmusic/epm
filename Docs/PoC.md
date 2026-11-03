@@ -1,5 +1,10 @@
 # epm proof of concept — scope and contract
 
+> The per-call `epm_add_package` flow of §1–§3 is superseded by `Docs/Graph.md` (an
+> `epm.json` manifest, CMake's dependency provider, `epm configure`) and kept for
+> migration. The cache, fingerprint, config mapping and child build described here
+> still hold except where `Docs/Graph.md` says otherwise.
+
 Goal: a consumer project that depends on eacp, where epm keeps a **local** cache of eacp's
 static libraries (the configurations the consumer builds, §9), and the consumer links
 against those libraries directly when they exist. Nothing online (no remote stores, no
@@ -132,7 +137,7 @@ $EPM_CACHE  (default: <platform cache dir>/epm, e.g. ~/Library/Caches/epm or ~/.
       <Config>.json                 per-config completeness marker, written last for that
                                     config: {config, builtAt, compilerPath, compilerVersion}
       lib/<Config>/*.a|*.lib
-      export-<Config>.cmake (+ .names)   CMake export() output, namespaced epm_<config>::
+      export-<Config>.cmake (+ .names, .aliases)   CMake export() output, namespaced epm_<config>::
       gen/<Config>/…                relocated per-config build-tree paths (include dirs, objects)
       gen/shared/<sha12>/<relpath>  relocated INTERFACE_SOURCES files, content-addressed
       epm-targets.cmake             facade targets (§5), regenerated when a config is added
@@ -226,7 +231,9 @@ cmake --build <builddir> --parallel
 - The script schedules itself a second time on first run so it executes after any DEFER
   calls the dependency itself makes (eacp's plugin and Android modules use DEFER). Besides
   the export file it writes `${EPM_EXPORT_FILE}.names`, one exported target name per line,
-  which the harvester reads instead of scraping the export file.
+  which the harvester reads instead of scraping the export file, and
+  `${EPM_EXPORT_FILE}.aliases`, one `<alias> <target>` line per ALIAS of an exported
+  target (`Docs/Graph.md` §9).
 - Because archives are written straight into the prefix, the export file already points at
   cached `.a` files. Include directories point into the source cache (stable) and into
   `<cache>/cpm` for nested CPM dependencies (stable).
@@ -264,6 +271,9 @@ foreach(name IN ITEMS eacp-core eacp-network …)           # every exported lib
       "$<IF:$<CONFIG:Debug>,epm_debug::${name},epm_release::${name}>")
   endif()
 endforeach()
+if(NOT TARGET fmt::fmt)                                     # one per line of .aliases
+  add_library(fmt::fmt ALIAS fmt)
+endif()
 ```
 
   The selector maps each consumer config to the same-named config if the entry has it,
@@ -302,7 +312,7 @@ epm/
     Cache/CacheListing      `epm cache ls`
     Spec/Request, Env       Miro-reflected structs for the JSON files
     Spec/Platform           the platform name (§9)
-    Build/ChildBuild, Harvest   (+ EmbeddedExport.cpp.in: epm-export.cmake compiled in)
+    Build/ChildBuild, Harvest   (+ EmbeddedScripts.cpp.in: epm-export.cmake compiled in)
     Build/Configs           config validation, mapping and the facade's selector
     Emit/Response
     Resolve/Resolve         the pipeline and the mode decision
@@ -374,10 +384,35 @@ implements it; `Tests/GetEpmRanges.cmake` tests it (`ctest -R get_epm_ranges`).
 First in-range match wins:
 
 1. `EPM_EXECUTABLE`, when set by the user: its `--version` must be in range, and a module
-   must be found: the `EPM_BOOTSTRAP_SOURCE_DIR` checkout's `CMake/epm.cmake`, else
-   `<dir of binary>/../share/epm/cmake/epm.cmake`, else the `epm.cmake` beside
+   must be found: `<dir of binary>/../share/epm/cmake/epm.cmake`, else the `epm.cmake` beside
    get_epm.cmake (true inside this repository, where `build/Apps/epm/epm` has no installed
    module). Otherwise a warning, and the search goes on.
+   - Then `EPM_SOURCE_DIR` (CMake variable, else environment; relative to the top-level
+     source directory), when set, skipping 2–5: an epm checkout (a directory whose
+     `CMakeLists.txt` has `project(epm`, else configure stops), built and installed with
+     `--prefix <cache>/tool/local-<sha256(real path)[:12]>` on every configure, under
+     that entry's lock. The build directory stays in the entry, one per generator
+     (`build-ninja/`, …), so after the first build it is an incremental `cmake --build`
+     plus `cmake --install`. Release build, `EPM_ENABLE_TESTS=OFF`, through the same
+     clean environment as step 5 but with the consumer's generator and make program, and
+     its C/C++ compilers when known and not possibly a cross toolchain's (no toolchain
+     file, `CMAKE_SYSTEM_NAME` the host's); as a top-level include get_epm runs before
+     languages are enabled, so usually none. Only the first configure of a build
+     directory passes them; delete the entry to change compilers. The entry's `bin/epm` and `share/epm/cmake/epm.cmake` are used and
+     the marker rewritten; the version is printed (`-- epm: using epm 0.1.3 built from
+     …`), never checked against `EPM_VERSION`. For testing an unreleased epm from a
+     consumer. `EPM_BOOTSTRAP_SOURCE_DIR`, the old name, is read as `EPM_SOURCE_DIR`
+     when neither the variable nor the environment variable is set, with
+     `-- epm: EPM_BOOTSTRAP_SOURCE_DIR is deprecated; using it as EPM_SOURCE_DIR`.
+   - Else, when get_epm.cmake is itself `<dir>/CMake/get_epm.cmake` of an epm checkout
+     (`<dir>/CMakeLists.txt` has `project(epm`, the same check) and no user
+     `EPM_EXECUTABLE`, `EPM_SOURCE_REF` or `EPM_SOURCE_URL` is given, `EPM_SOURCE_DIR`
+     defaults to `<dir>`: `-- epm: get_epm.cmake is inside the epm checkout <dir>;
+     building epm from it (-DEPM_EXECUTABLE or -DEPM_SOURCE_DIR to use another)`. That is
+     how the examples in this repository, which list `../../CMake/get_epm.cmake`, use
+     the epm they sit in; a copy vendored into a consumer never matches.
+     `Tests/GetEpmSourceDir.cmake` (`ctest -R get_epm_source_dir`) tests the checks,
+     where the setting comes from and the entry naming.
 2. `epm` on `PATH` (`find_program(… NO_CACHE)`, PATH only, never re-rooted by a cross
    toolchain), when in range and `<dir of binary, symlinks resolved>/../share/epm/cmake/epm.cmake`
    exists; otherwise skipped with a verbose note. `-- epm: using epm 0.1.2 from /usr/local/bin/epm`.
@@ -431,12 +466,9 @@ The marker `<cache>/tool/<key>.json` holds `schema`, `ref`, `origin` (`release` 
 `source`), `url` (the asset, tarball or checkout it came from), `version` and `builtAt`.
 
 Source overrides (each skips steps 2–4): `EPM_SOURCE_REF` (tag, branch or commit; entry
-`tool/<ref>`), `EPM_SOURCE_URL` (a tarball; entry `<ref or "url">-<sha256(url)[:12]>`) and
-`EPM_BOOTSTRAP_SOURCE_DIR` (build a local checkout, entry `local-<sha256(path)[:12]>`,
-and include that checkout's `CMake/epm.cmake` directly; the entry is not rebuilt when the
-checkout changes, so delete it, or pass `EPM_EXECUTABLE` alongside, while working on
-epm). Entries for branches (`main`) are not refreshed either. Refs are sanitised to
-`[A-Za-z0-9._-]` for the directory name.
+`tool/<ref>`) and `EPM_SOURCE_URL` (a tarball; entry `<ref or "url">-<sha256(url)[:12]>`);
+a local checkout is `EPM_SOURCE_DIR` (step 1). Entries for branches (`main`) are not
+refreshed. Refs are sanitised to `[A-Za-z0-9._-]` for the directory name.
 
 The cache root is the one the binary uses: the `EPM_CACHE` CMake variable (passed as
 `--cache`), else the `EPM_CACHE` environment variable, else eacp's

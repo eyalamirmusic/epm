@@ -5,7 +5,8 @@ CMake through a thin module, inspired by cpm.cmake for the user-facing shape, an
 what CPM deliberately leaves out: resolved pins, a sound source cache, prebuilt binaries,
 and local/remote cache repositories.
 
-Status: planning only. No code yet.
+Status: the local-cache proof of concept is implemented (`Docs/PoC.md`), and so is the
+manifest and dependency-graph stage that supersedes its per-call flow (`Docs/Graph.md`).
 
 ---
 

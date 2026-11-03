@@ -1,9 +1,11 @@
 # CLAUDE.md
 
 epm is a C++ package manager for CMake projects, built on the eacp framework
-(`eacp-core` only). `Docs/PoC.md` is the current contract — scope, the JSON and
-CMake files exchanged with `CMake/epm.cmake`, the cache layout, and the
-repository layout. `PLAN.md` is the longer-term design and background.
+(`eacp-core` only). `Docs/Graph.md` is the contract for the manifest
+(`epm.json`), the dependency provider and `epm configure`; `Docs/PoC.md` for
+the cache layout, fingerprint, child build and bootstrap, and for the per-call
+`epm_add_package` flow kept for migration. `PLAN.md` is the longer-term design
+and background.
 
 ## Layout
 
@@ -12,30 +14,47 @@ repository layout. `PLAN.md` is the longer-term design and background.
   - `Util/` — `Sha256`, `Git` (git CLI through `eacp::Processes`, never
     interactive), `Command` (child processes, `findExecutable`), `Log`
     (`--verbose`), `Text`, `Timestamp`.
-  - `Spec/` — `Env`, `Request`: Miro-reflected structs whose field names are the
-    JSON keys; `JsonFile.h` loads and saves them. `Platform` names the target
-    platform from `Env`.
+  - `Spec/` — `Env`, `Request`, `Manifest` (`epm.json`, profiles),
+    `Overrides` (`overrides.json`, filled from the environment): Miro-reflected
+    structs whose field names are the JSON keys; `JsonFile.h` loads and saves
+    them. `Platform` names the target platform from `Env`.
   - `Cache/` — `CacheRoot`, `SourceCache`, `BinaryCache` (entries under
     `bin/<name>/<platform>/<fp12>`, picking, additive config builds),
     `Fingerprint` (the ABI fingerprint and the `EPM_ABI_MATCH` policies),
     `CacheListing` (`epm cache ls`), `PackageLock` (eacp `IPC::Lock`, hence
     the `eacp-network` dependency).
   - `Build/` — `ChildBuild`, `Harvest`, `Configs` (config mapping and the
-    facade's `$<CONFIG>` selector). `CMake/epm-export.cmake` is compiled
-    into the binary through `Build/EmbeddedExport.cpp.in`.
-  - `Emit/` — `Response` (the `responses/<name>.cmake` writer).
+    facade's `$<CONFIG>` selector). `CMake/epm-export.cmake` and
+    `CMake/epm-provider.cmake` (as the core of `epm-nested.cmake`, the
+    provider of nested child builds) are compiled into the binary through
+    `Build/EmbeddedScripts.cpp.in`.
+  - `Emit/` — `Response` (the `responses/<name>.cmake` writer),
+    `GraphResponse` (`graph.cmake` and `graph.json`).
+  - `Graph/` — `Merge` (one package's effective request and its provenance),
+    `Graph` (the manifest walk, notes, `dependencyClosure`, resolution in
+    dependency order: `epm configure`), `ResolvedGraph` (`graph.json`).
   - `Resolve/` — the `epm resolve` pipeline and the mode decision.
-- `Apps/epm/Main.cpp` — the `epm` executable: `Apps::runConsole` plus manual
-  subcommand dispatch on `argv[1]`, `Args::Parser` per subcommand.
+- `Apps/epm/Main.cpp` — the `epm` executable (`configure`, `graph-cmake`,
+  `resolve`, `cache`): `Apps::runConsole` plus manual subcommand dispatch on
+  `argv[1]`, `Args::Parser` per subcommand.
 - `CMake/` — vendored `CPM.cmake`, `Find<dep>.cmake` shims (one
   `CPMAddPackage` each), `get_epm.cmake` (the file consumers vendor: finds
-  the binary), `epm.cmake` (the consumer module, installed with the binary)
-  and `epm-export.cmake` (injected into child builds).
-- `Tests/` — NanoTest, one `<Area>Tests.cpp` per area, plus two `cmake -P`
+  the binary, then registers the provider when there is an `epm.json`),
+  `epm.cmake` (the consumer module, installed with the binary),
+  `epm-provider.cmake` (the dependency provider and `epm_load_package`,
+  installed beside `epm.cmake`) and `epm-export.cmake` (injected into child
+  builds).
+- `Tests/` — NanoTest, one `<Area>Tests.cpp` per area, plus `cmake -P`
   self-tests: `GetEpmRanges.cmake` (get_epm's `EPM_VERSION` range handling,
-  ctest `get_epm_ranges`) and `EpmConfigsAuto.cmake` (epm.cmake's
-  `EPM_CONFIGS` resolution, ctest `epm_configs_auto`).
-- `Examples/` — consumer projects that exercise `epm.cmake`.
+  ctest `get_epm_ranges`), `EpmConfigsAuto.cmake` (epm.cmake's
+  `EPM_CONFIGS` resolution, ctest `epm_configs_auto`), `EpmOverrides.cmake`
+  (the `overrides.json` writer, ctest `epm_overrides`), `GraphProvider.cmake`
+  (the provider over fixtures in `Tests/Graph/`, ctest `epm_graph_provider`)
+  and `GraphNested.cmake` (ctest `epm_graph_nested`: the real binary over two
+  local git repositories from `Tests/Nested/`, a package and its dependency,
+  prebuilt and from source; skipped without git).
+- `Examples/` — consumer projects: `HelloEacp` (`epm_add_package`) and
+  `HelloGraph` (the same through `epm.json` and `find_package`).
 
 ## Build
 
@@ -45,12 +64,17 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-`cmake --install build --prefix <dir>` installs only `bin/epm` and
-`share/epm/cmake/epm.cmake`. Consumers vendor `CMake/get_epm.cmake`, which uses
+`cmake --install build --prefix <dir>` installs only `bin/epm`,
+`share/epm/cmake/epm.cmake` and `share/epm/cmake/epm-provider.cmake`. Consumers vendor `CMake/get_epm.cmake`, which uses
 an in-range epm on PATH, else downloads the latest release (its
 `manifest.json`) into `<cache>/tool/<tag>/`, or builds it there through those
 same install rules, then includes that entry's `epm.cmake` (`Docs/PoC.md` §8).
 `CMake/epm.cmake` requires `EPM_EXECUTABLE` and has no bootstrap of its own.
+A `get_epm.cmake` inside an epm checkout (`<dir>/CMake/`, `<dir>/CMakeLists.txt`
+with `project(epm`) defaults `EPM_SOURCE_DIR` to that checkout, so the examples,
+which list `../../CMake/get_epm.cmake`, build epm from this checkout (an
+incremental build into `<cache>/tool/local-<hash>/`); `-DEPM_SOURCE_DIR` or
+`-DEPM_EXECUTABLE` overrides it. Examples hold only what a real consumer writes.
 
 One version: `project(epm VERSION ...)` (`Apps/epm/Version.h.in` carries it
 into `epm --version`, release.yml names the assets after it and checks it
