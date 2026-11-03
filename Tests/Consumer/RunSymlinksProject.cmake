@@ -22,7 +22,9 @@ endfunction()
 file(REMOVE_RECURSE "${WORK_DIR}")
 set(linked "${WORK_DIR}/fixtures/linked.git")
 file(MAKE_DIRECTORY "${linked}/docs")
-file(WRITE "${linked}/docs/target.txt" "the target\n")
+# LF on every host, so the tree, and its hash, is the same everywhere.
+file(CONFIGURE OUTPUT "${linked}/docs/target.txt" CONTENT "the target\n"
+        NEWLINE_STYLE UNIX)
 git(-C "${linked}" init --quiet -b main)
 git(-C "${linked}" add -A)
 file(WRITE "${WORK_DIR}/link-text" "docs/target.txt")
