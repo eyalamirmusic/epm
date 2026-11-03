@@ -54,6 +54,36 @@ The first configure fetches epm itself (see below) and then builds eacp, in
 Debug and Release, into the cache. Later configures, in any build directory,
 reuse both and take about a second.
 
+## Locking the dependency tree
+
+Set `EPM_LOCK_FILE` before epm is loaded and every package is pinned in that
+file to a commit and a Merkle hash of its files (path, type and SHA-256 of
+each entry, `.git` and execute bits left out), with one root hash over all of
+them. To capture `FetchContent_MakeAvailable` too, load epm during `project()`:
+
+```cmake
+cmake_minimum_required(VERSION 3.31)
+set(EPM_LOCK_FILE "${CMAKE_CURRENT_LIST_DIR}/epm.lock")
+set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${CMAKE_CURRENT_LIST_DIR}/cmake/get_epm.cmake")
+project(HelloEacp CXX)
+```
+
+With a lock, `CPMAddPackage`, `CPMFindPackage`, `CPMDeclarePackage` and
+`CPMGetPackage` are epm's, `include(CPM)` finds an empty stub, and a
+dependency's own CPM.cmake returns before defining anything, so the packages
+dependencies ask for land in the same lock. Child builds of prebuilt packages
+load epm too. `EPM_LOCK_MODE` is `locked` (the default: a missing lock is
+written on the first configure, a lock that disagrees with the CMake stops the
+configure), `update` (re-resolve every ref and rewrite the lock) or `offline`
+(the cache only). `EPM_<Name>_SOURCE` or `CPM_<Name>_SOURCE` uses a local
+checkout with a warning; `EPM_CI=ON` makes that an error in locked mode.
+`epm lock update [name...]`, `epm lock verify [--full]` and `epm lock root`
+work on the lock from the command line.
+
+A binary cache entry's key includes the package's Merkle hash, and the entry
+records the hashes of the packages its child build added, so a cached library
+is only used with exactly the sources in the lock.
+
 ## Getting the epm binary
 
 A project vendors one file, [`CMake/get_epm.cmake`](CMake/get_epm.cmake) (also

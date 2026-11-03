@@ -10,16 +10,26 @@ repository layout. `PLAN.md` is the longer-term design and background.
 - `Lib/epm/` — static library `epm-core`, namespace `epm::`. Included as
   `<epm/Area/File.h>`.
   - `Util/` — `Sha256`, `Git` (git CLI through `eacp::Processes`, never
-    interactive), `Command` (child processes, `findExecutable`), `Log`
+    interactive, always run from the temp directory), `LongPath`, `Status`, `Command` (child processes, `findExecutable`), `Log`
     (`--verbose`), `Text`, `Timestamp`.
   - `Spec/` — `Env`, `Request`: Miro-reflected structs whose field names are the
     JSON keys; `JsonFile.h` loads and saves them.
-  - `Cache/` — `CacheRoot`, `SourceCache`, `BinaryCache`, `PackageLock`
-    (eacp `IPC::Lock`, hence the `eacp-network` dependency).
+  - `Cache/` — `CacheRoot`, `SourceCache` (ref resolution and the
+    unlocked commit index), `BinaryCache`, `PackageLock` (eacp `IPC::Lock`,
+    hence the `eacp-network` dependency).
+  - `Source/` — `PackageCache` (bare mirrors under `git/`, archives under
+    `downloads/`, trees under `src/<merkle hash>`), `Mirror` (git plumbing,
+    git-lfs), `Submodules`, `Download`. Ported from lockstep.
+  - `Lock/` — `LockFile` (`epm.lock`), `MerkleHash`, `Session`
+    (`<build>/epm/session.json`), `Messages`. Ported from lockstep.
   - `Build/` — `ChildBuild`, `Harvest`. `CMake/epm-export.cmake` is compiled
     into the binary through `Build/EmbeddedExport.cpp.in`.
   - `Emit/` — `Response` (the `responses/<name>.cmake` writer).
-  - `Resolve/` — the `epm resolve` pipeline and the mode decision.
+  - `Resolve/` — `Commands` (resolve, provide and the `lock` subcommands:
+    overrides, lock modes, the CMake each call runs) and `Resolve` (the mode
+    decision and the binary half).
+  - `Spec/PackageArguments` — the one parser of CPMAddPackage /
+    FetchContent_Declare / epm_add_package arguments, plus epm's `MODE`.
 - `Apps/epm/Main.cpp` — the `epm` executable: `Apps::runConsole` plus manual
   subcommand dispatch on `argv[1]`, `Args::Parser` per subcommand.
 - `CMake/` — vendored `CPM.cmake`, `Find<dep>.cmake` shims (one
