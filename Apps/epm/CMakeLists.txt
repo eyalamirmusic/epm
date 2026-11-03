@@ -6,4 +6,8 @@ target_include_directories(epm PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
 
 set_default_target_setting(epm)
 
+if (WIN32)
+    target_sources(epm PRIVATE epm.manifest)
+endif ()
+
 install(TARGETS epm RUNTIME DESTINATION bin)
