@@ -4,9 +4,9 @@ epm is a package manager for C++ projects that build with CMake. A project
 declares its dependencies with `epm_add_package(...)` calls, in the same shape as
 CPM.cmake's `CPMAddPackage`. A small native binary (`epm`) fetches each
 dependency into a shared per-user cache. Where it can, it also builds the
-dependency once per toolchain, Debug and Release, and hands the consumer
-imported targets that point at the cached libraries, so the dependency is never
-`add_subdirectory`'d again. The target names are the same either way, so the
+dependency once per toolchain, in the configurations the consumer builds, and
+hands the consumer imported targets that point at the cached libraries, so the
+dependency is never `add_subdirectory`'d again. The target names are the same either way, so the
 consumer's CMake does not change.
 
 The longer-term design (remote binary caches, lockfiles, transitive
@@ -50,9 +50,34 @@ cmake --build build-hello
 ./build-hello/hello
 ```
 
-The first configure fetches epm itself (see below) and then builds eacp, in
-Debug and Release, into the cache. Later configures, in any build directory,
-reuse both and take about a second.
+The first configure fetches epm itself (see below) and then builds eacp into
+the cache, in the build type you configured (Release when none is given).
+Later configures, in any build directory, reuse it and take about a second; a
+configure in another build type adds just that configuration.
+
+## Configuring what gets built
+
+Two cache variables, set with `-D` or before the first `epm_add_package`:
+
+- `EPM_CONFIGS` (default `auto`): which configurations of each package to build
+  and cache. `auto` builds your `CMAKE_BUILD_TYPE` with a single-config
+  generator (Ninja, Makefiles; empty, `RelWithDebInfo` and `MinSizeRel` mean
+  Release) and Debug + Release with a multi-config one (Xcode, Visual Studio).
+  An explicit list such as `-DEPM_CONFIGS="Debug;Release"` builds those.
+  Configurations are added to a cached build as they are needed; one that is
+  there is never rebuilt.
+- `EPM_ABI_MATCH` (default `compatible`): which cached build may be used.
+  `compatible` accepts one made with the same compiler family and major version
+  (so Xcode's clang and the command-line tools' clang share builds), the same
+  deployment target, C++ standard, options and source; `strict` requires every
+  recorded detail, compiler path and full version included; `any` only the
+  platform, options and source. A build that is not an exact match is named on
+  the configure line:
+  `-- epm: eacp (prebuilt, macos-arm64, 1a2b3c4d5e6f, built with AppleClang 17.0.0.17000013, current 17.0.0.17000319)`.
+
+`epm cache ls` lists what the cache holds. Docs/PoC.md §9 has the details.
+Builds cached by epm 0.1.2 and older use another layout and are ignored;
+delete the cache's `bin/` directory once to reclaim the space.
 
 ## Getting the epm binary
 
@@ -135,7 +160,7 @@ Release builds with Ninja:
 
 Each job builds epm, runs `ctest`, then configures, builds and runs
 `Examples/HelloEacp` through `get_epm.cmake` four ways: (a) with the binary it
-just built (`MODE auto`, so eacp is fetched and built Debug and Release into a
+just built (`MODE auto`, so eacp is fetched and built, Release only, into a
 cache inside the workspace); (b) with nothing set and no epm on `PATH`, which
 must download the latest release; (c) with the epm 0.1.1 release unpacked onto
 `PATH`, which must be used; (d) with that same `PATH` and `EPM_VERSION=0.1.2`,

@@ -13,10 +13,15 @@ repository layout. `PLAN.md` is the longer-term design and background.
     interactive), `Command` (child processes, `findExecutable`), `Log`
     (`--verbose`), `Text`, `Timestamp`.
   - `Spec/` — `Env`, `Request`: Miro-reflected structs whose field names are the
-    JSON keys; `JsonFile.h` loads and saves them.
-  - `Cache/` — `CacheRoot`, `SourceCache`, `BinaryCache`, `PackageLock`
-    (eacp `IPC::Lock`, hence the `eacp-network` dependency).
-  - `Build/` — `ChildBuild`, `Harvest`. `CMake/epm-export.cmake` is compiled
+    JSON keys; `JsonFile.h` loads and saves them. `Platform` names the target
+    platform from `Env`.
+  - `Cache/` — `CacheRoot`, `SourceCache`, `BinaryCache` (entries under
+    `bin/<name>/<platform>/<fp12>`, picking, additive config builds),
+    `Fingerprint` (the ABI fingerprint and the `EPM_ABI_MATCH` policies),
+    `CacheListing` (`epm cache ls`), `PackageLock` (eacp `IPC::Lock`, hence
+    the `eacp-network` dependency).
+  - `Build/` — `ChildBuild`, `Harvest`, `Configs` (config mapping and the
+    facade's `$<CONFIG>` selector). `CMake/epm-export.cmake` is compiled
     into the binary through `Build/EmbeddedExport.cpp.in`.
   - `Emit/` — `Response` (the `responses/<name>.cmake` writer).
   - `Resolve/` — the `epm resolve` pipeline and the mode decision.
@@ -26,9 +31,10 @@ repository layout. `PLAN.md` is the longer-term design and background.
   `CPMAddPackage` each), `get_epm.cmake` (the file consumers vendor: finds
   the binary), `epm.cmake` (the consumer module, installed with the binary)
   and `epm-export.cmake` (injected into child builds).
-- `Tests/` — NanoTest, one `<Area>Tests.cpp` per area, plus
-  `GetEpmRanges.cmake`, a `cmake -P` self-test of get_epm's `EPM_VERSION`
-  range handling (ctest `get_epm_ranges`).
+- `Tests/` — NanoTest, one `<Area>Tests.cpp` per area, plus two `cmake -P`
+  self-tests: `GetEpmRanges.cmake` (get_epm's `EPM_VERSION` range handling,
+  ctest `get_epm_ranges`) and `EpmConfigsAuto.cmake` (epm.cmake's
+  `EPM_CONFIGS` resolution, ctest `epm_configs_auto`).
 - `Examples/` — consumer projects that exercise `epm.cmake`.
 
 ## Build

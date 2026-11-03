@@ -287,11 +287,21 @@ binary-key = sha256({ schema, name, source-id, build-config-id,
                       deps: { depName: depBinaryKey }  (full mode) })
 ```
 
-Multi-config generators (Xcode, VS): one binary per configuration in
-`CMAKE_CONFIGURATION_TYPES`; the generated shim maps configs
-(`MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release`, `MINSIZEREL Release`) so only Debug and
-Release are normally built. *(Decision to confirm; audio-plugin work on Xcode makes this
-matter.)*
+Configurations are not part of the key: one entry holds every configuration built for
+that key, and configurations are **additive** — an entry with Release that is asked for
+Debug builds only Debug and adds it, never rebuilding what is there. Which ones are built
+is `EPM_CONFIGS`: `auto` (the default) builds a single-config consumer's own
+`CMAKE_BUILD_TYPE` and Debug + Release for a multi-config generator (Xcode, VS, Ninja
+Multi-Config); an explicit list is also accepted. RelWithDebInfo and MinSizeRel are built
+as Release, and the generated shim maps every consumer configuration to the same-named
+one if present, else Release, else the first available.
+
+Which existing entry a consumer may use is `EPM_ABI_MATCH`: `compatible` (the default:
+same platform, compiler id and major version, deployment target, C++ standard, options,
+source and toolchain-file contents, so Xcode's and the command-line tools' clang share
+entries), `strict` (every recorded field) or `any` (platform, options, source). An exact
+match is preferred; a non-exact one is reported on the configure line. In the PoC the
+recorded fingerprint is the env-derived subset of 6.1 (`Docs/PoC.md` §3, §9).
 
 ### 6.3 Building a package in isolation
 
@@ -509,8 +519,9 @@ AgentWorkspace reads `epm.lock`; OCI/S3 stores; optional `.git`-keeping checkout
 2. **Cached sources are clean snapshots without `.git`**, with `epm checkout` / workspace
    overrides for development (see 5.2).
 3. **Artifact format `tar.zst`** via `cmake -E tar`; zip stays for vendor archives.
-4. **Multi-config policy**: Debug + Release binaries by default, other configs mapped to
-   Release.
+4. **Configs and ABI matching**: `EPM_CONFIGS auto` (single-config: your build type;
+   multi-config: Debug+Release), configs additive per entry; `EPM_ABI_MATCH compatible`
+   by default.
 5. **Name matching case-insensitive** (diverges from CPM, fixes `cpmNames`).
 6. **Generic additions go upstream into eacp** (SHA-256, `Args` subcommands, PATH lookup,
    `Processes::wait(timeout)`, string `split`/`join`). epm is the occasion to upgrade eacp;
