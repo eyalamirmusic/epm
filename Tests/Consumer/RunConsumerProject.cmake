@@ -35,7 +35,6 @@ set(common_arguments
         "-DEPM_MODULE=${EPM_MODULE}"
         "-DEPM_EXECUTABLE=${EPM_EXECUTABLE}"
         "-DEPM_CACHE=${WORK_DIR}/cache"
-        "-DEPM_LOCK_FILE=${source}/epm.lock"
         -DCMAKE_BUILD_TYPE=Release)
 
 expect_failure("[^ ]+\\.(txt|cmake):[0-9]+ asks for .*, and there is no epm.lock yet; offline"
@@ -108,7 +107,7 @@ foreach (checkout first second-checkout)
     run_step("${CMAKE_COMMAND}" -S "${copy}" -B "${copy}/build" -DEPM_LOCK_MODE=update
             "-DEPM_MODULE=${copy}/cmake/epm.cmake"
             "-DEPM_EXECUTABLE=${EPM_EXECUTABLE}"
-            "-DEPM_CACHE=${WORK_DIR}/cache" "-DEPM_LOCK_FILE=${copy}/epm.lock")
+            "-DEPM_CACHE=${WORK_DIR}/cache")
     file(READ "${copy}/epm.lock" lock_${checkout})
 endforeach ()
 

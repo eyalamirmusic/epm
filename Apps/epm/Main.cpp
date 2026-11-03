@@ -75,10 +75,12 @@ FilePath getCacheDirectory(const FilePath& requested)
     return canonical(cache).path();
 }
 
-// The lock commands default to epm.lock in the current directory; resolve
-// uses no lock unless epm.cmake names one.
-FilePath getDefaultLockFile()
+// epm.lock in the top-level source directory, else the current directory.
+FilePath getDefaultLockFile(const FilePath& sourceDirectory)
 {
+    if (!sourceDirectory.empty())
+        return sourceDirectory / epm::lockFileName;
+
     return FilePath {std::filesystem::current_path()} / epm::lockFileName;
 }
 
@@ -110,7 +112,8 @@ int runPackageCommand(const std::string& command, int argumentsToSkip)
         "--mode", options.mode, "locked, update or offline [default: locked]");
     parser.option(
         "--ci", ciValue, "ON refuses <Name>_SOURCE overrides in locked mode");
-    parser.option("--lock", options.lock, "the lock file (none: no lock)");
+    parser.option(
+        "--lock", options.lock, "the lock file [default: <source-dir>/epm.lock]");
     parser.option("--cache", options.cache, "the cache root (default: $EPM_CACHE)");
     parser.option("--cmake", options.cmake, "the cmake that extracts tar archives");
     parser.option("--env", envFile, "the env JSON epm.cmake wrote");
@@ -163,6 +166,9 @@ int runPackageCommand(const std::string& command, int argumentsToSkip)
             options.env = *env;
         }
 
+        if (options.lock.empty())
+            options.lock = getDefaultLockFile(options.sourceDirectory);
+
         if (command == "resolve")
             return epm::runAddCommand(options);
 
@@ -171,9 +177,6 @@ int runPackageCommand(const std::string& command, int argumentsToSkip)
 
         if (command == "begin")
             return epm::runBeginCommand(options);
-
-        if (options.lock.empty())
-            options.lock = getDefaultLockFile();
 
         if (command == "update")
             return epm::runUpdateCommand(options);

@@ -4,7 +4,6 @@ nano_add_executable(epmTests
         SOURCES
             BinaryCacheTests.cpp
             CacheRootTests.cpp
-            GitTests.cpp
             HarvestTests.cpp
             LockFileTests.cpp
             MerkleHashTests.cpp

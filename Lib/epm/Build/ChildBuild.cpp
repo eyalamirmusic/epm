@@ -46,7 +46,7 @@ ChildBuildResult runStep(const ChildBuild& build,
 }
 bool isLockingChildDependencies(const ChildBuild& build)
 {
-    return !build.childLock.lock.empty() && !build.env.module.empty();
+    return !build.env.module.empty();
 }
 
 // With a lock, epm.cmake is loaded too, so the dependency's own CPMAddPackage

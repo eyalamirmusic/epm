@@ -152,15 +152,15 @@ jobs:
         run: |
           cmake -S Examples/HelloEacp -B build-hello -G Ninja -DCMAKE_BUILD_TYPE=Release \
             "-DEPM_EXECUTABLE=$ROOT/build/Apps/epm/epm$EXE_SUFFIX" \
-            "-DEPM_CACHE=$ROOT/.epm-cache" "-DEPM_LOCK_FILE=$ROOT/hello-epm.lock" \
+            "-DEPM_CACHE=$ROOT/.epm-cache" \
             -DEPM_VERBOSE=ON ${{ matrix.cmake-flags }}
           cmake --build build-hello
           "./build-hello/hello$EXE_SUFFIX"
-          # A fresh configure against the written lock must take eacp from the
-          # binary cache rather than build it again.
+          # A fresh configure against Examples/HelloEacp/epm.lock must take eacp
+          # from the binary cache rather than build it again.
           cmake -S Examples/HelloEacp -B build-hello-hit -G Ninja -DCMAKE_BUILD_TYPE=Release \
             "-DEPM_EXECUTABLE=$ROOT/build/Apps/epm/epm$EXE_SUFFIX" \
-            "-DEPM_CACHE=$ROOT/.epm-cache" "-DEPM_LOCK_FILE=$ROOT/hello-epm.lock" \
+            "-DEPM_CACHE=$ROOT/.epm-cache" \
             -DEPM_VERBOSE=ON ${{ matrix.cmake-flags }} | tee hello-hit.log
           if grep -q "epm: building eacp" hello-hit.log; then
             echo "the second configure rebuilt eacp instead of hitting the binary cache"

@@ -56,26 +56,27 @@ reuse both and take about a second.
 
 ## Locking the dependency tree
 
-Set `EPM_LOCK_FILE` before epm is loaded and every package is pinned in that
-file to a commit and a Merkle hash of its files (path, type and SHA-256 of
-each entry, `.git` and execute bits left out), with one root hash over all of
-them. To capture `FetchContent_MakeAvailable` too, load epm during `project()`:
+Every package is pinned in `epm.lock`, beside the top-level `CMakeLists.txt`
+(`EPM_LOCK_FILE` moves it), to a commit and a Merkle hash of its files (path,
+type and SHA-256 of each entry, `.git` and execute bits left out), with one
+root hash over all of them. epm never builds unless the lock is satisfied. To
+capture `FetchContent_MakeAvailable` too, load epm during `project()`:
 
 ```cmake
 cmake_minimum_required(VERSION 3.31)
-set(EPM_LOCK_FILE "${CMAKE_CURRENT_LIST_DIR}/epm.lock")
 set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${CMAKE_CURRENT_LIST_DIR}/cmake/get_epm.cmake")
 project(HelloEacp CXX)
 ```
 
-With a lock, `CPMAddPackage`, `CPMFindPackage`, `CPMDeclarePackage` and
+`CPMAddPackage`, `CPMFindPackage`, `CPMDeclarePackage` and
 `CPMGetPackage` are epm's, `include(CPM)` finds an empty stub, and a
 dependency's own CPM.cmake returns before defining anything, so the packages
 dependencies ask for land in the same lock. Child builds of prebuilt packages
-load epm too. `EPM_LOCK_MODE` is `locked` (the default: a missing lock is
+load epm too. The lock is an input of the configure, so a build after it is
+edited, pulled or deleted reconfigures. `EPM_LOCK_MODE` is `locked` (the default: a missing lock is
 written on the first configure, a lock that disagrees with the CMake stops the
 configure), `update` (re-resolve every ref and rewrite the lock) or `offline`
-(the cache only). `EPM_<Name>_SOURCE` or `CPM_<Name>_SOURCE` uses a local
+(the cache only); with `EPM_CI=ON` a missing lock is an error. `EPM_<Name>_SOURCE` or `CPM_<Name>_SOURCE` uses a local
 checkout with a warning; `EPM_CI=ON` makes that an error in locked mode.
 `epm lock update [name...]`, `epm lock verify [--full]` (a locked package missing from the cache, as one only another platform asks for is, is fetched at its locked commit and checked) and `epm lock root`
 work on the lock from the command line.
@@ -137,9 +138,8 @@ builds a local checkout and uses its `CMake/epm.cmake` (for working on epm), and
 ## Building and installing epm
 
 epm needs CMake 3.31 and a C++20 compiler. It builds itself with epm: its
-`CMakeLists.txt` loads `CMake/get_epm.cmake` during `project()` with
-`EPM_LOCK_FILE` set to the committed `epm.lock`, so eacp, Miro and the rest
-come in locked. The epm that resolves them is a first host build of the same
+`CMakeLists.txt` loads `CMake/get_epm.cmake` during `project()`, so eacp,
+Miro and the rest come in locked from the committed `epm.lock`. The epm that resolves them is a first host build of the same
 checkout, which fetches its own dependencies with CPM (`EPM_SELF_HOST=OFF`);
 `-DEPM_EXECUTABLE=<an epm>` skips that build. Everything is linked statically.
 

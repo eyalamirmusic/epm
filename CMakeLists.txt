@@ -8,8 +8,6 @@ cmake_minimum_required(VERSION 3.31)
 option(EPM_SELF_HOST "Fetch epm's own dependencies through epm and epm.lock" ON)
 
 if (EPM_SELF_HOST)
-    set(EPM_LOCK_FILE "${CMAKE_CURRENT_LIST_DIR}/epm.lock")
-
     if (NOT EPM_EXECUTABLE)
         set(EPM_BOOTSTRAP_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}")
     endif ()

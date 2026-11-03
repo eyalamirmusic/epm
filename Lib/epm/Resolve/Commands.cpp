@@ -20,7 +20,6 @@
 #include <epm/Lock/MerkleHash.h>
 #include <epm/Cache/SourceCache.h>
 #include <epm/Spec/JsonFile.h>
-#include <epm/Util/Git.h>
 #include <epm/Util/Sha256.h>
 #include <eacp/Core/Utils/Time.h>
 
@@ -294,48 +293,6 @@ void checkRequestMatchesLock(const CommandOptions& options,
     throw std::runtime_error(describeLockMismatch(mismatch));
 }
 
-bool isLockUsed(const CommandOptions& options)
-{
-    return !options.lock.empty();
-}
-
-// Not in the lock, so the commit (or archive hash), the patches and the
-// submodule selection are what name the tree.
-std::string computeUnlockedSourceId(const PackageRequest& request,
-                                    const std::string& commit)
-{
-    auto identity = commit + "\n" + Miro::toJSONString(request.submoduleSelection);
-
-    for (const auto& patch: request.patches)
-        identity += "\n" + computeFileSha256Hex(patch);
-
-    return sourceId(request.url, identity);
-}
-
-std::string resolveRemoteCommit(const PackageRequest& request)
-{
-    if (request.kind == PackageKind::archive)
-        return request.archiveHash.hex;
-
-    if (isFullCommitHash(request.ref))
-        return request.ref;
-
-    const auto remote = Git::lsRemote(request.url);
-
-    if (!remote.ok)
-        throw std::runtime_error(
-            describeFailedDownload({request.name, request.url, {}}) + "\n  "
-            + remote.error);
-
-    if (auto commit = resolveRef(remote.refs, request.ref))
-        return *commit;
-
-    throw std::runtime_error(request.url + " has no tag or branch named '"
-                             + request.ref + "'");
-}
-
-// Without a lock the ref is resolved on every configure, as CPM does, and
-// src/<sourceId>.json remembers which tree that commit unpacked to.
 // A tree in the cache and the commit it was checked out at, empty for an
 // archive.
 struct CachedSource
@@ -344,49 +301,10 @@ struct CachedSource
     std::string commit;
 };
 
-CachedSource resolveUnlockedSource(const CommandOptions& options,
-                                   const PackageSpec& spec)
-{
-    auto cache = createPackageCache(options);
-    auto request = createRequest(options, spec);
-    auto commit = resolveRemoteCommit(request);
-    auto cacheRoot = CacheRoot {options.cache};
-    auto marker =
-        cacheRoot.src()
-        / (computeUnlockedSourceId(request, commit).substr(0, 12) + ".json");
-
-    if (!commit.empty())
-    {
-        if (auto known = loadJsonFile<SourceMarker>(marker))
-        {
-            if (cache.hasIntactEntry(known->hash, Verification::trustStamp))
-                return {cache.getSourceDirectory(known->hash), known->commit};
-        }
-    }
-
-    printStatus("fetching " + request.name + " at '" + request.ref + "' from "
-                + request.url);
-    auto gitCommit = request.kind == PackageKind::git ? commit : std::string {};
-    auto materialized = cache.materialize(request, gitCommit, Network::allowed);
-
-    if (!commit.empty())
-        saveJsonFile(
-            marker,
-            SourceMarker {request.url,
-                          materialized.commit,
-                          materialized.hash,
-                          eacp::Time::formatIso8601(eacp::Time::sinceEpoch())});
-
-    return {materialized.sourceDirectory, materialized.commit};
-}
-
 CachedSource resolveLockedSource(const CommandOptions& options,
                                  const PackageSpec& spec,
                                  const Session& session)
 {
-    if (!isLockUsed(options))
-        return resolveUnlockedSource(options, spec);
-
     auto cache = createPackageCache(options);
     auto lock = readLockFile(options.lock);
     auto request = createRequest(options, spec);
@@ -488,7 +406,7 @@ ResolvedSource resolvePackageSource(const CommandOptions& options,
     {
         auto setting = overridden->variable + "=" + overridden->sourceDirectory;
 
-        if (options.isCI && isLockUsed(options) && options.mode == Mode::locked)
+        if (options.isCI && options.mode == Mode::locked)
         {
             throw std::runtime_error(
                 formatUserError(setting + " overrides " + spec.name
@@ -770,8 +688,7 @@ PackageSpec parseArgumentsFrom(const CommandOptions& options)
 
 int runBeginCommand(const CommandOptions& options)
 {
-    if (isLockUsed(options) && options.mode != Mode::update
-        && !isLockFileCurrent(options.lock))
+    if (options.mode != Mode::update && !isLockFileCurrent(options.lock))
     {
         printStatus(formatUserError(
             options.lock.str()
@@ -780,7 +697,7 @@ int runBeginCommand(const CommandOptions& options)
             "cmake -B <build> -DEPM_LOCK_MODE=update"));
     }
 
-    if (options.isCI && isLockUsed(options) && options.mode == Mode::locked
+    if (options.isCI && options.mode == Mode::locked
         && !eacp::Files::exists(options.lock))
     {
         throw std::runtime_error(formatUserError(
@@ -789,8 +706,8 @@ int runBeginCommand(const CommandOptions& options)
     }
 
     auto session = Session {};
-    session.isWritingNewLock = isLockUsed(options) && options.mode == Mode::locked
-                               && !eacp::Files::exists(options.lock);
+    session.isWritingNewLock =
+        options.mode == Mode::locked && !eacp::Files::exists(options.lock);
 
     for (const auto& definition: options.overrides)
     {

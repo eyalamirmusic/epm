@@ -24,8 +24,7 @@ struct Generator
 Generator chooseGenerator(const Env& env,
                           const std::optional<eacp::FilePath>& ninja);
 
-// The lock a child build resolves its own dependencies against. An empty
-// lock leaves the child's CPM to fetch them, as before the lock existed.
+// The lock a child build resolves its own dependencies against.
 struct LockForChildBuilds
 {
     eacp::FilePath lock;

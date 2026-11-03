@@ -28,21 +28,4 @@ Result run(const EA::Vector<std::string>& arguments,
 
 bool isAvailable();
 
-struct RemoteRef
-{
-    std::string ref;
-    std::string sha;
-};
-
-struct RemoteRefs
-{
-    bool ok = false;
-    EA::Vector<RemoteRef> refs;
-    std::string error;
-};
-
-// Parses `git ls-remote <url>` output, in the order git printed it.
-EA::Vector<RemoteRef> parseLsRemote(std::string_view output);
-
-RemoteRefs lsRemote(const std::string& url);
 } // namespace epm::Git

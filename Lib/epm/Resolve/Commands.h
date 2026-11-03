@@ -24,8 +24,6 @@ struct CommandOptions
     EA::Vector<std::string> packageArguments;
     Mode mode = Mode::locked;
     bool isCI = false;
-    // Empty when the project uses no lock: refs are resolved on every
-    // configure, as without lockstep.
     eacp::FilePath lock;
     eacp::FilePath cache;
     eacp::FilePath cmake {"cmake"};

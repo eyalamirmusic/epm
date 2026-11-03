@@ -14,8 +14,8 @@ repository layout. `PLAN.md` is the longer-term design and background.
     (`--verbose`), `Text`.
   - `Spec/` — `Env`, `Request`: Miro-reflected structs whose field names are the
     JSON keys; `JsonFile.h` loads and saves them.
-  - `Cache/` — `CacheRoot`, `SourceCache` (ref resolution and the
-    unlocked commit index), `BinaryCache`, `PackageLock` (eacp `IPC::Lock`,
+  - `Cache/` — `CacheRoot`, `SourceCache` (`SourceSnapshot`,
+    `isFullCommitHash`), `BinaryCache`, `PackageLock` (eacp `IPC::Lock`,
     hence the `eacp-network` dependency).
   - `Source/` — `PackageCache` (bare mirrors under `git/`, archives under
     `downloads/`, trees under `src/<merkle hash>`), `Mirror` (git plumbing,

@@ -21,13 +21,12 @@
 # way <name>_SOURCE_DIR, <name>_BINARY_DIR, <name>_ADDED and <name>_MODE are
 # set in the caller's scope.
 #
-# The lock (opt-in): set EPM_LOCK_FILE before this file is included, usually
-#   set(EPM_LOCK_FILE "${CMAKE_SOURCE_DIR}/epm.lock")
-# Then every package is pinned in it to a commit and a Merkle hash of its
-# files, and CPMAddPackage, CPMFindPackage, CPMDeclarePackage, CPMGetPackage
-# and (when this file is loaded through CMAKE_PROJECT_TOP_LEVEL_INCLUDES)
+# Every package is pinned in the lock (EPM_LOCK_FILE, default
+# ${CMAKE_SOURCE_DIR}/epm.lock) to a commit and a Merkle hash of its files, and
+# CPMAddPackage, CPMFindPackage, CPMDeclarePackage, CPMGetPackage and (when
+# this file is loaded through CMAKE_PROJECT_TOP_LEVEL_INCLUDES)
 # FetchContent_MakeAvailable go through epm too, so the packages dependencies
-# ask for are in the same lock.
+# ask for are in the same lock. epm never builds unless the lock is satisfied.
 #
 # Variables read:
 #   EPM_EXECUTABLE              the epm binary (required; set by get_epm.cmake)
@@ -35,11 +34,12 @@
 #                               entry; OFF: `auto` falls back to source instead
 #   EPM_CACHE                   cache root handed to the binary as --cache
 #   EPM_VERBOSE                 pass --verbose and echo the binary's output
-#   EPM_LOCK_FILE               the lock; unset (default) means no lock
+#   EPM_LOCK_FILE               the lock (default ${CMAKE_SOURCE_DIR}/epm.lock)
 #   EPM_LOCK_MODE               locked (default; writes a missing lock), update
 #                               (re-resolve every ref and rewrite the lock) or
 #                               offline (the cache only, never the network)
-#   EPM_CI                      ON refuses <Name>_SOURCE overrides in locked mode
+#   EPM_CI                      ON refuses <Name>_SOURCE overrides and a missing
+#                               lock in locked mode
 #   EPM_<Name>_SOURCE, CPM_<Name>_SOURCE   a local checkout to use instead
 #
 # Files exchanged with the binary live under ${CMAKE_BINARY_DIR}/epm/:
@@ -179,15 +179,17 @@ if (EPM_CACHE)
     list(APPEND _EPM_OPTIONS "--cache=${EPM_CACHE}")
 endif ()
 
-if (EPM_LOCK_FILE)
-    list(APPEND _EPM_OPTIONS "--lock=${EPM_LOCK_FILE}" "--mode=${EPM_LOCK_MODE}"
-            "--ci=${EPM_CI}")
-
-    # The next build reconfigures when the lock is edited, pulled or deleted,
-    # so a missing lock is written again and a changed one is checked.
-    set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY
-            CMAKE_CONFIGURE_DEPENDS "${EPM_LOCK_FILE}")
+if (NOT EPM_LOCK_FILE)
+    set(EPM_LOCK_FILE "${CMAKE_SOURCE_DIR}/epm.lock")
 endif ()
+
+list(APPEND _EPM_OPTIONS "--lock=${EPM_LOCK_FILE}" "--mode=${EPM_LOCK_MODE}"
+        "--ci=${EPM_CI}")
+
+# The next build reconfigures when the lock is edited, pulled or deleted, so a
+# missing lock is written again and a changed one is checked.
+set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY
+        CMAKE_CONFIGURE_DEPENDS "${EPM_LOCK_FILE}")
 
 if (EPM_VERBOSE)
     list(APPEND _EPM_OPTIONS --verbose)
@@ -243,11 +245,7 @@ function(epm_add_package)
     cmake_language(EVAL CODE "${_epm_run}")
 endfunction()
 
-if (NOT EPM_LOCK_FILE)
-    return()
-endif ()
-
-# With a lock, the CPM commands go through epm as well, always as source: a
+# The CPM commands go through epm as well, always as source: a
 # dependency that calls CPMAddPackage expects its targets add_subdirectory'd.
 # CPMFindPackage always fetches, never find_package(), so the build stays
 # hermetic.

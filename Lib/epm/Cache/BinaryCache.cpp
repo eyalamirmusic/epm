@@ -112,7 +112,7 @@ std::optional<BinaryEntry> findBinary(const CacheRoot& cache,
     if (!marker)
         return std::nullopt;
 
-    if (!lock.empty() && !isBuiltWithLockedDependencies(*marker, readLockFile(lock)))
+    if (!isBuiltWithLockedDependencies(*marker, readLockFile(lock)))
         return std::nullopt;
 
     const auto prefix = prefixFor(cache, name, key);

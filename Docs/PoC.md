@@ -101,7 +101,6 @@ caller's scope.
 $EPM_CACHE  (default: <platform cache dir>/epm, e.g. ~/Library/Caches/epm or ~/.cache/epm)
   src/<merkle hash>/                clean tree, no .git, patches applied
   src/<merkle hash>.stamp           size/mtime fingerprint, so a hit is not rehashed
-  src/<sourceId12>.json             unlocked index: {url, commit, hash, fetchedAt}
   git/<sha256(url)[:16]>.git        bare mirror, one per URL (submodules too)
   downloads/<sha256(url)[:16]>/     downloaded archives
   bin/<name>/<key12>/
@@ -128,9 +127,7 @@ is named `epm-<sha256(cache root)[:12]>-<name>` to keep separate caches independ
 is no `locks/` directory. The cache root is resolved (`weakly_canonical`) before use so
 every path epm writes and matches has one spelling.
 
-`sourceId = sha256("git\n" + url + "\n" + commit + submodule selection + patch hashes)`,
-first 12 hex chars; it names only the unlocked index entry. The tree itself is stored
-under its Merkle hash: each directory hashes `"<file|directory|symlink> <hash> <name>\n"`
+A tree is stored under its Merkle hash: each directory hashes `"<file|directory|symlink> <hash> <name>\n"`
 for its entries sorted by name, `.git` excluded, execute bits ignored.
 `key = sha256(canonical JSON manifest)`, first 12 hex chars. Manifest fields (PoC):
 `schema (2), name, sourceHash (the Merkle hash), cxxCompiler, cxxCompilerId, cxxCompilerVersion, systemName,

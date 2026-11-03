@@ -74,43 +74,4 @@ bool isAvailable()
     return available;
 }
 
-Vector<RemoteRef> parseLsRemote(std::string_view output)
-{
-    auto refs = Vector<RemoteRef> {};
-
-    for (const auto line: splitLines(output))
-    {
-        const auto tab = line.find('\t');
-
-        if (tab == std::string_view::npos || tab == 0)
-            continue;
-
-        refs.add(
-            {std::string {line.substr(tab + 1)}, std::string {line.substr(0, tab)}});
-    }
-
-    return refs;
-}
-
-RemoteRefs lsRemote(const std::string& url)
-{
-    auto refs = RemoteRefs {};
-
-    const auto result = run({"ls-remote", url});
-
-    if (!result.ok)
-    {
-        refs.error = firstLine(result.message());
-
-        if (refs.error.empty())
-            refs.error = "git ls-remote failed for " + url;
-
-        return refs;
-    }
-
-    refs.refs = parseLsRemote(result.output);
-    refs.ok = true;
-
-    return refs;
-}
 } // namespace epm::Git

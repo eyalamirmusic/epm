@@ -196,7 +196,6 @@ auto tFindDependencyHash =
     const auto changedLock =
         writeLockWithDependencyHash(directory / "changed", changedDependencyHash);
 
-    check(findBinary(cache, packageName, key).has_value());
     check(findBinary(cache, packageName, key, sameLock).has_value());
     check(!findBinary(cache, packageName, key, changedLock).has_value());
     check(!findBinary(cache, packageName, key, directory / "missing.lock")
@@ -217,21 +216,4 @@ auto tChildLockArguments = test("BinaryCache/childBuild/injectsEpmAndTheLock") =
     check(hasArgument(arguments, "-DEPM_CACHE=/c"));
     check(hasArgument(arguments,
                       "-DEPM_EXECUTABLE=" + eacp::Files::executablePath().str()));
-};
-
-auto tChildNoLockArguments =
-    test("BinaryCache/childBuild/leavesEpmOutWithoutALock") = []
-{
-    using namespace BinaryCacheTests;
-    auto build = createLockedChildBuild();
-    build.childLock = {};
-    const auto arguments = configureArguments(build);
-
-    check(hasArgument(
-        arguments,
-        "-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=/c/build/eacp/Debug/epm-export.cmake"));
-
-    for (const auto* name:
-         {"EPM_EXECUTABLE", "EPM_LOCK_FILE", "EPM_LOCK_MODE", "EPM_CACHE"})
-        check(!hasDefinitionNamed(arguments, name));
 };

@@ -82,12 +82,12 @@ struct BinaryEntry
 };
 
 // The entry at bin/<name>/<key12>, only once its completeness marker exists
-// and, with a lock, while every dependency it was built with is still locked
-// at the hash it recorded.
+// and while every dependency it was built with is still locked at the hash it
+// recorded.
 std::optional<BinaryEntry> findBinary(const CacheRoot& cache,
                                       const std::string& name,
                                       const std::string& key,
-                                      const eacp::FilePath& lock = {});
+                                      const eacp::FilePath& lock);
 
 struct BinaryResult
 {
