@@ -20,6 +20,11 @@ nano_add_executable(epmTests
 add_test(NAME get_epm_ranges
         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/GetEpmRanges.cmake)
 
+add_test(NAME get_epm_source_dir
+        COMMAND ${CMAKE_COMMAND}
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/get-epm-source-dir"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/GetEpmSourceDir.cmake)
+
 add_test(NAME epm_configs_auto
         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/EpmConfigsAuto.cmake)
 

@@ -127,9 +127,14 @@ The cache is `~/Library/Caches/epm` on macOS, `$XDG_CACHE_HOME/epm` or
 `~/.cache/epm` on Linux, `%LOCALAPPDATA%\epm` on Windows, or wherever `EPM_CACHE`
 (CMake or environment variable) points. `-DEPM_BOOTSTRAP_NO_DOWNLOAD=ON` builds
 from source instead of downloading, `EPM_SOURCE_REF` (or `EPM_SOURCE_URL`)
-builds another tag, branch or commit from source, `EPM_BOOTSTRAP_SOURCE_DIR`
-builds a local checkout and uses its `CMake/epm.cmake` (for working on epm), and
-`EPM_VERBOSE=ON` shows what is tried. Details are in Docs/PoC.md §8.
+builds another tag, branch or commit from source, `EPM_SOURCE_DIR` (CMake or
+environment variable) builds a local epm checkout incrementally at every
+configure and uses it (for working on epm; `EPM_BOOTSTRAP_SOURCE_DIR` is its
+deprecated name), and `EPM_VERBOSE=ON` shows what is tried. A `get_epm.cmake`
+that is itself part of an epm checkout (the examples in this repository use
+`../../CMake/get_epm.cmake`) builds that checkout unless `EPM_EXECUTABLE`,
+`EPM_SOURCE_DIR`, `EPM_SOURCE_REF` or `EPM_SOURCE_URL` says otherwise; a vendored
+copy never does. Details are in Docs/PoC.md §8.
 
 ## Building and installing epm
 

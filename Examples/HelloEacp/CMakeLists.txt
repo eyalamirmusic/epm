@@ -1,14 +1,8 @@
 cmake_minimum_required(VERSION 3.31)
 project(HelloEacp CXX)
 
-# Uses -DEPM_EXECUTABLE or an epm on PATH when given, else the latest epm
-# release, downloaded into the cache on first use (built from source where no
-# binary is available). See Docs/PoC.md §8. Optional, before the include:
-#
-#   set(EPM_VERSION "0.1...<0.2")                      # accepted epm versions
-#   set(EPM_BOOTSTRAP_SOURCE_DIR /path/to/epm)         # build a local epm checkout
 set(EPM_CONFIGS Release) # only Release archives of eacp; Debug builds of hello link them on multi-config generators (missing configs map to Release)
-include(${CMAKE_CURRENT_LIST_DIR}/../../CMake/get_epm.cmake)
+include(../../CMake/get_epm.cmake)
 
 epm_add_package(
         NAME eacp
@@ -20,6 +14,4 @@ epm_add_package(
 
 add_executable(hello Main.cpp)
 target_compile_features(hello PRIVATE cxx_std_20)
-
-# The same target name whether eacp came prebuilt or from source.
 target_link_libraries(hello PRIVATE eacp-core)
