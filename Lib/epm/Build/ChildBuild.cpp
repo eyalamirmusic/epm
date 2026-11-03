@@ -102,9 +102,8 @@ Vector<std::string> configureArguments(const ChildBuild& build)
                   "CMAKE_ARCHIVE_OUTPUT_DIRECTORY",
                   (build.prefix / "lib" / build.config).str());
     addDefinition(arguments, "CPM_SOURCE_CACHE", build.cpmCache.str());
-    addDefinition(arguments,
-                  "CMAKE_PROJECT_TOP_LEVEL_INCLUDES",
-                  topLevelIncludes(build));
+    addDefinition(
+        arguments, "CMAKE_PROJECT_TOP_LEVEL_INCLUDES", topLevelIncludes(build));
 
     if (isLockingChildDependencies(build))
     {

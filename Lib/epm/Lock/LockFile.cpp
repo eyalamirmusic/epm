@@ -63,9 +63,9 @@ LockFile readLockFile(const eacp::FilePath& path)
 
     if (lock.version != lockFileFormatVersion)
     {
-        throw std::runtime_error(
-            path.str() + " has format version " + std::to_string(lock.version)
-            + "; this epm reads " + std::to_string(lockFileFormatVersion));
+        throw std::runtime_error(path.str() + " has format version "
+                                 + std::to_string(lock.version) + "; this epm reads "
+                                 + std::to_string(lockFileFormatVersion));
     }
 
     return lock;

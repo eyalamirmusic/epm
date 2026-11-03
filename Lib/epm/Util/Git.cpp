@@ -33,7 +33,6 @@ std::string firstLine(const std::string& text)
     return text.substr(0, text.find('\n'));
 }
 
-
 // Git for Windows refuses checkouts past MAX_PATH unless core.longpaths is set.
 Vector<std::string> platformArguments(const Vector<std::string>& arguments)
 {

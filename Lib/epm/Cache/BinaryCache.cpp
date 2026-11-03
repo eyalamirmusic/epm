@@ -73,8 +73,9 @@ BinaryResult failure(std::string error, std::string details = {})
 }
 } // namespace
 
-BuildManifest
-    makeManifest(const Request& request, const Env& env, const std::string& sourceHash)
+BuildManifest makeManifest(const Request& request,
+                           const Env& env,
+                           const std::string& sourceHash)
 {
     auto manifest = BuildManifest {};
     manifest.name = request.name;

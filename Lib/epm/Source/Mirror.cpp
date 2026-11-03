@@ -156,8 +156,7 @@ std::string fetchRefIntoMirror(const eacp::FilePath& mirror, const std::string& 
     {
         // A ref of this fetch's own rather than FETCH_HEAD, which configures
         // sharing the mirror would overwrite under each other.
-        auto fetchedRef =
-            "refs/epm/" + eacp::TemporaryFile {}.path().fileName();
+        auto fetchedRef = "refs/epm/" + eacp::TemporaryFile {}.path().fileName();
         runGitOrThrow(createMirrorArguments(mirror,
                                             {"fetch",
                                              "--quiet",

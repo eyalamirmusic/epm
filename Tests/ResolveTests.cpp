@@ -50,29 +50,13 @@ ChildBuild sampleChildBuild()
 }
 } // namespace
 
-auto tResponsePrebuilt = test("Response/prebuilt") = []
+auto tPrebuiltTargets = test("Response/prebuiltTargets") = []
 {
-    const auto text = responseText({"eacp",
-                                    "prebuilt",
-                                    "/c/src/eacp/3f1c0a9b2d4e",
-                                    "/c/bin/eacp/9a8b7c6d5e4f"});
+    const auto text = prebuiltTargetsText("/c/bin/eacp/9a8b7c6d5e4f");
 
-    check(
-        text
-        == "set(epm_eacp_MODE \"prebuilt\")\n"
-           "set(epm_eacp_SOURCE_DIR \"/c/src/eacp/3f1c0a9b2d4e\")\n"
-           "set(epm_eacp_PREFIX \"/c/bin/eacp/9a8b7c6d5e4f\")\n"
-           "set(epm_eacp_TARGETS_FILE \"${epm_eacp_PREFIX}/epm-targets.cmake\")\n");
-};
-
-auto tResponseSource = test("Response/source") = []
-{
-    const auto text =
-        responseText({"eacp", "source", "/c/src/eacp/3f1c0a9b2d4e", {}});
-
-    check(text
-          == "set(epm_eacp_MODE \"source\")\n"
-             "set(epm_eacp_SOURCE_DIR \"/c/src/eacp/3f1c0a9b2d4e\")\n");
+    check(text.find("include(\"/c/bin/eacp/9a8b7c6d5e4f/epm-targets.cmake\")")
+          != std::string::npos);
+    check(text.find("IMPORTED_GLOBAL TRUE") != std::string::npos);
 };
 
 auto tResponseQuoting = test("Response/quoting") = []
@@ -103,9 +87,10 @@ auto tRequestErrors = test("Resolve/requestErrors") = []
     check(!requestError(modeRequest("auto")).has_value());
     check(requestError(modeRequest("sometimes")).has_value());
 
-    auto noRef = modeRequest("auto");
-    noRef.gitRef.clear();
-    check(requestError(noRef).has_value());
+    // An archive has no ref, so only the URL is required.
+    auto noUrl = modeRequest("auto");
+    noUrl.gitUrl.clear();
+    check(requestError(noUrl).has_value());
 };
 
 auto tGeneratorSingleConfig = test("ChildBuild/generator/consumersSingleConfig") = []

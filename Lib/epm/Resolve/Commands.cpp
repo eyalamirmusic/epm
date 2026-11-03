@@ -34,8 +34,7 @@ namespace epm
 namespace
 {
 constexpr auto overrideSuffix = std::string_view {"_SOURCE"};
-constexpr auto overridePrefixes =
-    std::array<std::string_view, 2> {"EPM_", "CPM_"};
+constexpr auto overridePrefixes = std::array<std::string_view, 2> {"EPM_", "CPM_"};
 
 std::string getOverrideVariableName(std::string_view prefix, const std::string& name)
 {
@@ -344,8 +343,9 @@ eacp::FilePath resolveUnlockedSource(const CommandOptions& options,
     auto request = createRequest(options, spec);
     auto commit = resolveRemoteCommit(request);
     auto cacheRoot = CacheRoot {options.cache};
-    auto marker = cacheRoot.src()
-                  / (computeUnlockedSourceId(request, commit).substr(0, 12) + ".json");
+    auto marker =
+        cacheRoot.src()
+        / (computeUnlockedSourceId(request, commit).substr(0, 12) + ".json");
 
     if (!commit.empty())
     {
@@ -608,7 +608,8 @@ std::string createPropagatingBlock(const std::string& name, const std::string& b
 // child's packages are not in it yet.
 std::string getChildLockMode(const CommandOptions& options)
 {
-    if (options.mode == Mode::update || readSession(options.buildDirectory).isWritingNewLock)
+    if (options.mode == Mode::update
+        || readSession(options.buildDirectory).isWritingNewLock)
         return "update";
 
     if (options.mode == Mode::offline)
@@ -619,11 +620,12 @@ std::string getChildLockMode(const CommandOptions& options)
 
 // epm's binary cache: the request it keys on, then MODE's choice between the
 // cached libraries and add_subdirectory. nullopt means source.
-std::optional<eacp::FilePath> findOrBuildBinary(const CommandOptions& options,
-                                                const PackageSpec& spec,
-                                                const std::string& mode,
-                                                const eacp::FilePath& sourceDirectory,
-                                                const std::string& sourceHash)
+std::optional<eacp::FilePath>
+    findOrBuildBinary(const CommandOptions& options,
+                      const PackageSpec& spec,
+                      const std::string& mode,
+                      const eacp::FilePath& sourceDirectory,
+                      const std::string& sourceHash)
 {
     auto request = Request {};
     request.name = spec.name;
@@ -637,8 +639,8 @@ std::optional<eacp::FilePath> findOrBuildBinary(const CommandOptions& options,
 
     auto source = SourceSnapshot {{}, sourceHash, sourceDirectory};
     auto build = LockForChildBuilds {options.lock, getChildLockMode(options)};
-    auto result =
-        resolveBinary(request, options.env, CacheRoot {options.cache}, source, build);
+    auto result = resolveBinary(
+        request, options.env, CacheRoot {options.cache}, source, build);
 
     if (!result.ok)
     {
@@ -685,7 +687,8 @@ std::string addPackage(const CommandOptions& options, const PackageSpec& spec)
     auto prefix = std::optional<eacp::FilePath> {};
 
     if (mode != "source" && !source.hash.empty() && !spec.isDownloadOnly)
-        prefix = findOrBuildBinary(options, spec, mode, source.directory, source.hash);
+        prefix =
+            findOrBuildBinary(options, spec, mode, source.directory, source.hash);
 
     if (prefix)
     {
@@ -910,10 +913,9 @@ int runRootCommand(const CommandOptions& options)
 
     if (readSession(options.buildDirectory).isWritingNewLock)
     {
-        eacp::Console::print("-- epm: no " + options.lock.fileName()
-                             + ", so wrote one with "
-                             + std::to_string(lock.packages.size())
-                             + " packages; commit it.");
+        eacp::Console::print(
+            "-- epm: no " + options.lock.fileName() + ", so wrote one with "
+            + std::to_string(lock.packages.size()) + " packages; commit it.");
     }
 
     eacp::Console::print("-- epm: root " + lock.computeRootHash());

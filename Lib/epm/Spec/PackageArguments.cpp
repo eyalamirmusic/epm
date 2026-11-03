@@ -30,8 +30,8 @@ struct KeywordRule
 
 constexpr auto commandReason =
     std::string_view {"runs a command whose result epm cannot lock or hash"};
-constexpr auto otherSourceReason = std::string_view {
-    "is a source epm cannot fetch; it locks git and archives"};
+constexpr auto otherSourceReason =
+    std::string_view {"is a source epm cannot fetch; it locks git and archives"};
 
 // Every keyword CPMAddPackage, FetchContent_Declare and ExternalProject_Add
 // take. The ignored ones change how or where a fetch or sub-build runs, never
@@ -261,8 +261,8 @@ KeywordValues collectKeywordValues(const std::vector<std::string>& arguments)
 
         if (!rule)
         {
-            throw std::invalid_argument("epm does not know the option '"
-                                        + keyword + "'");
+            throw std::invalid_argument("epm does not know the option '" + keyword
+                                        + "'");
         }
 
         if (rule->group == KeywordGroup::refused)

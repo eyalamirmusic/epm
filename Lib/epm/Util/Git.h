@@ -23,8 +23,9 @@ struct Result
 
 // Runs git from the temp directory and waits. Never prompts for credentials:
 // a remote that needs them fails instead of hanging.
-Result run(const eacp::Vector<std::string>& arguments,
-           const eacp::Vector<eacp::Processes::EnvironmentVariable>& environment = {});
+Result
+    run(const eacp::Vector<std::string>& arguments,
+        const eacp::Vector<eacp::Processes::EnvironmentVariable>& environment = {});
 
 bool isAvailable();
 
