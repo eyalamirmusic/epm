@@ -186,7 +186,8 @@ std::optional<BinaryEntry> pickEntry(const Vector<BinaryEntry>& entries,
 BinaryResult buildBinary(const CacheRoot& cache,
                          const Request& request,
                          const Env& env,
-                         const SourceSnapshot& snapshot)
+                         const SourceSnapshot& snapshot,
+                         const std::string& dependencyGraph)
 {
     const auto wanted = makeFingerprint(request, env, snapshot.sourceId);
     const auto policy =
@@ -235,6 +236,8 @@ BinaryResult buildBinary(const CacheRoot& cache,
         build.prefix = prefix;
         build.cpmCache = cache.cpm();
         build.config = config;
+        build.dependencyGraph = dependencyGraph;
+        build.epmExecutable = Files::executablePath();
 
         if (!clearConfig(prefix, config) || !Files::removeAll(build.buildDirectory))
             return failure("cannot clear the leftovers of " + config + " in "

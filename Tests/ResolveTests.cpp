@@ -223,10 +223,45 @@ auto tConfigureArguments = test("ChildBuild/configureArguments") = []
     }
 };
 
+auto tConfigureArgumentsNested = test("ChildBuild/configureArguments/nested") = []
+{
+    auto build = sampleChildBuild();
+    const auto plain = configureArguments(build);
+
+    for (const auto& argument: plain)
+    {
+        check(!argument.starts_with("-DEPM_NESTED"));
+        check(!argument.starts_with("-DEPM_GRAPH"));
+        check(!argument.starts_with("-DEPM_EXECUTABLE"));
+    }
+
+    build.dependencyGraph = "set(epm_PACKAGES \"Leaf\")\n";
+    build.epmExecutable = "/opt/epm/bin/epm";
+    const auto nested = configureArguments(build);
+    const auto has = [&](const std::string& argument)
+    { return nested.contains(argument); };
+
+    check(nested.size() == plain.size() + 3);
+    check(has("-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=/cache/build/eacp/def/Release/"
+              "epm-export.cmake;/cache/build/eacp/def/Release/epm-nested.cmake"));
+    check(has("-DEPM_NESTED=ON"));
+    check(has("-DEPM_GRAPH=/cache/build/eacp/def/Release/epm-graph.cmake"));
+    check(has("-DEPM_EXECUTABLE=/opt/epm/bin/epm"));
+    check(nested == configureArguments(build));
+};
+
 auto tEmbeddedScript = test("ChildBuild/embeddedExportScript") = []
 {
     const auto script = embeddedExportScript();
 
     check(script.find("epm_export_all_targets") != std::string_view::npos);
     check(script.find("${EPM_EXPORT_FILE}.names") != std::string_view::npos);
+};
+
+auto tEmbeddedNestedScript = test("ChildBuild/embeddedNestedScript") = []
+{
+    const auto script = embeddedNestedScript();
+
+    check(script.find("function(epm_provide_dependency") != std::string_view::npos);
+    check(script.ends_with("epm_provider_register(\"${EPM_GRAPH}\")\n"));
 };

@@ -7,7 +7,9 @@ nano_add_executable(epmTests
             ConfigsTests.cpp
             FingerprintTests.cpp
             GitTests.cpp
+            GraphTests.cpp
             HarvestTests.cpp
+            ManifestTests.cpp
             PlatformTests.cpp
             ResolveTests.cpp
             Sha256Tests.cpp

@@ -20,7 +20,7 @@ struct Request
     std::string gitUrl;
     std::string gitRef;
 
-    // "auto", "prebuilt" or "source".
+    // "auto", "prebuilt", "binary-only" or "source".
     std::string mode = "auto";
 
     // Sorted by key, which the fingerprint's canonical form relies on.
@@ -35,6 +35,11 @@ struct Request
     // EPM_ABI_MATCH: "compatible", "strict" or "any".
     std::string abiMatch = "compatible";
 
+    // Direct dependency name -> the fingerprint hash of the entry it resolved
+    // to, filled by the graph resolver. Part of the fingerprint, so a changed
+    // dependency changes the entry of everything linking it.
+    std::map<std::string, std::string> deps;
+
     MIRO_REFLECT(schema,
                  name,
                  gitUrl,
@@ -43,6 +48,7 @@ struct Request
                  options,
                  buildMissingBinaries,
                  configs,
-                 abiMatch)
+                 abiMatch,
+                 deps)
 };
 } // namespace epm

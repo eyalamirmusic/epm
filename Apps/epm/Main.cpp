@@ -1,9 +1,13 @@
 #include <epm/Cache/CacheListing.h>
 #include <epm/Cache/CacheRoot.h>
+#include <epm/Emit/GraphResponse.h>
 #include <epm/Emit/Response.h>
+#include <epm/Graph/Graph.h>
 #include <epm/Resolve/Resolve.h>
 #include <epm/Spec/JsonFile.h>
 #include <epm/Util/Log.h>
+
+#include <eacp/Core/Utils/Environment.h>
 
 #include "Version.h"
 
@@ -22,6 +26,8 @@ namespace
 constexpr auto usage = "usage: epm <command>\n"
                        "\n"
                        "commands:\n"
+                       "  configure    resolve an epm.json graph for get_epm.cmake\n"
+                       "  graph-cmake  write graph.cmake from a graph.json\n"
                        "  resolve      resolve one package request for epm.cmake\n"
                        "  cache path   print the cache root\n"
                        "  cache ls     list the cached binaries, sources and tools\n"
@@ -113,6 +119,111 @@ int resolve()
     return 0;
 }
 
+int configure()
+{
+    auto manifest = FilePath {};
+    auto env = FilePath {};
+    auto overrides = FilePath {};
+    auto out = FilePath {};
+    auto cache = FilePath {};
+    auto verbose = false;
+
+    auto cli = Args::Parser {"epm configure",
+                             "Resolves the dependency graph of an epm.json."};
+    cli.option("--manifest", manifest, "the root epm.json").required();
+    cli.option("--env", env, "the env JSON").required();
+    cli.option("--overrides", overrides, "the overrides JSON").required();
+    cli.option("--out", out, "the directory for graph.cmake and graph.json")
+        .required();
+    cli.option("--cache", cache, "the cache root (default: $EPM_CACHE)");
+    cli.flag("--verbose", verbose, "log each step");
+
+    if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
+        return *code;
+
+    epm::Log::setVerbose(verbose);
+
+    try
+    {
+        auto inputs = epm::GraphInputs {};
+        inputs.environment = getEnv;
+        inputs.manifestDirectory = manifest.parentDirectory();
+
+        if (!Files::isFile(manifest))
+            return fail("no manifest at " + manifest.str());
+
+        if (auto loaded = epm::loadManifest(manifest); loaded.ok)
+            inputs.manifest = std::move(loaded.manifest);
+        else
+            return fail("the manifest " + manifest.str() + ": " + loaded.error);
+
+        if (auto loaded = epm::loadJsonFile<epm::Env>(env))
+            inputs.env = std::move(*loaded);
+        else
+            return fail("cannot read the env file " + env.str());
+
+        if (auto loaded = epm::loadJsonFile<epm::Overrides>(overrides))
+            inputs.overrides = std::move(*loaded);
+        else
+            return fail("cannot read the overrides file " + overrides.str());
+
+        const auto cacheRoot = cache.empty() ? epm::CacheRoot::fromEnvironment()
+                                             : epm::CacheRoot {cache};
+        const auto result = epm::configureGraph(inputs, canonical(cacheRoot));
+
+        if (!result.ok)
+        {
+            if (!result.details.empty())
+                Console::printError(result.details);
+
+            return fail(result.error);
+        }
+
+        if (!epm::writeGraphJson(out / "graph.json", result.graph))
+            return fail("cannot write " + (out / "graph.json").str());
+
+        if (!epm::writeGraphCMake(out / "graph.cmake", result.graph))
+            return fail("cannot write " + (out / "graph.cmake").str());
+    }
+    catch (const std::exception& error)
+    {
+        return fail(error.what());
+    }
+
+    return 0;
+}
+
+int graphCMake()
+{
+    auto graph = FilePath {};
+    auto out = FilePath {};
+
+    auto cli = Args::Parser {"epm graph-cmake",
+                             "Writes graph.cmake from a resolved graph.json."};
+    cli.option("--graph", graph, "the graph.json to read").required();
+    cli.option("--out", out, "the graph.cmake to write").required();
+
+    if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
+        return *code;
+
+    try
+    {
+        const auto loaded = epm::loadGraphJson(graph);
+
+        if (!loaded)
+            return fail("cannot read the graph file " + graph.str());
+
+        if (!epm::writeGraphCMake(out, *loaded))
+            return fail("cannot write " + out.str());
+    }
+    catch (const std::exception& error)
+    {
+        return fail(error.what());
+    }
+
+    return 0;
+}
+
 int cache()
 {
     const auto rest = argumentsAfter(2);
@@ -166,6 +277,12 @@ int run()
         Console::print(usage);
         return 0;
     }
+
+    if (command == "configure")
+        return configure();
+
+    if (command == "graph-cmake")
+        return graphCMake();
 
     if (command == "resolve")
         return resolve();

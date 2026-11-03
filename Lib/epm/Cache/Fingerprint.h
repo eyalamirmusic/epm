@@ -36,6 +36,10 @@ struct AbiFingerprint
     std::map<std::string, std::string> options;
     std::string sourceId;
 
+    // Direct dependency name -> that dependency's fingerprint hash (the
+    // request's deps). Every policy compares it.
+    std::map<std::string, std::string> deps;
+
     MIRO_REFLECT(schema,
                  platform,
                  compilerId,
@@ -50,7 +54,8 @@ struct AbiFingerprint
                  toolchainFile,
                  toolchainFileHash,
                  options,
-                 sourceId)
+                 sourceId,
+                 deps)
 };
 
 // EPM_ABI_MATCH: how close an existing entry must be to be used.
@@ -60,6 +65,7 @@ struct AbiFingerprint
 //               contents; compiler path, minor/patch version and processor
 //               may differ
 //   any         same platform, options and source
+// Every policy also requires the same dependencies (deps).
 enum class AbiMatch
 {
     strict,

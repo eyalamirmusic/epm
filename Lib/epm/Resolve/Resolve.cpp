@@ -2,7 +2,6 @@
 
 #include <epm/Build/Configs.h>
 #include <epm/Cache/BinaryCache.h>
-#include <epm/Cache/SourceCache.h>
 #include <epm/Util/Log.h>
 #include <epm/Util/Text.h>
 
@@ -18,31 +17,38 @@ ResolveResult failure(std::string error, std::string details = {})
     return result;
 }
 
-ResolveResult success(Response response)
+ResolveResult sourceResult(const Request& request, const SourceSnapshot& snapshot)
 {
     auto result = ResolveResult {};
     result.ok = true;
-    result.response = std::move(response);
+    result.response.name = request.name;
+    result.response.mode = "source";
+    result.response.sourceDirectory = snapshot.directory;
     return result;
 }
 
-Response sourceResponse(const Request& request, const SourceSnapshot& snapshot)
+ResolveResult binaryResult(const Request& request,
+                           const SourceSnapshot& snapshot,
+                           const BinaryEntry& entry,
+                           const AbiFingerprint& wanted)
 {
-    return {request.name, "source", snapshot.directory, {}};
+    auto result = ResolveResult {};
+    result.ok = true;
+    result.response = {request.name,
+                       "prebuilt",
+                       snapshot.directory,
+                       entry.prefix,
+                       entry.fingerprint.platform,
+                       entry.configs,
+                       abiNote(entry.fingerprint, wanted).value_or("")};
+    result.fingerprintHash = fingerprintId(entry.fingerprint);
+    return result;
 }
 
-Response binaryResponse(const Request& request,
-                        const SourceSnapshot& snapshot,
-                        const BinaryEntry& entry,
-                        const AbiFingerprint& wanted)
+bool isKnownMode(const std::string& mode)
 {
-    return {request.name,
-            "prebuilt",
-            snapshot.directory,
-            entry.prefix,
-            entry.fingerprint.platform,
-            entry.configs,
-            abiNote(entry.fingerprint, wanted).value_or("")};
+    return mode == "auto" || mode == "prebuilt" || mode == "binary-only"
+           || mode == "source";
 }
 } // namespace
 
@@ -53,6 +59,9 @@ Decision decide(const Request& request, bool binaryExists)
 
     if (binaryExists)
         return Decision::useBinary;
+
+    if (request.mode == "binary-only")
+        return Decision::missingBinary;
 
     if (request.mode == "prebuilt" || request.buildMissingBinaries)
         return Decision::buildBinary;
@@ -78,10 +87,9 @@ std::optional<std::string> requestError(const Request& request)
     if (request.gitRef.empty())
         return "the request for " + request.name + " has no gitRef";
 
-    if (request.mode != "auto" && request.mode != "prebuilt"
-        && request.mode != "source")
+    if (!isKnownMode(request.mode))
         return "the request for " + request.name + " has an unknown mode '"
-               + request.mode + "'";
+               + request.mode + "' (auto, prebuilt, binary-only or source)";
 
     if (request.configs.empty())
         return "the request for " + request.name + " lists no configs";
@@ -98,22 +106,14 @@ std::optional<std::string> requestError(const Request& request)
     return std::nullopt;
 }
 
-ResolveResult
-    resolvePackage(const Request& request, const Env& env, const CacheRoot& cache)
+ResolveResult resolveSnapshot(const Request& request,
+                              const Env& env,
+                              const CacheRoot& cache,
+                              const SourceSnapshot& snapshot,
+                              const std::string& dependencyGraph)
 {
-    if (auto error = requestError(request))
-        return failure(*error);
-
-    const auto source =
-        fetchSource(cache, request.name, request.gitUrl, request.gitRef);
-
-    if (!source.ok)
-        return failure(source.error);
-
-    const auto& snapshot = source.snapshot;
-
     if (request.mode == "source")
-        return success(sourceResponse(request, snapshot));
+        return sourceResult(request, snapshot);
 
     const auto wanted = makeFingerprint(request, env, snapshot.sourceId);
     const auto configs = buildConfigsFor(request.configs);
@@ -133,20 +133,44 @@ ResolveResult
     switch (decide(request, existing && missing.empty()))
     {
         case Decision::useSource:
-            return success(sourceResponse(request, snapshot));
+            return sourceResult(request, snapshot);
 
         case Decision::useBinary:
-            return success(binaryResponse(request, snapshot, *existing, wanted));
+            return binaryResult(request, snapshot, *existing, wanted);
+
+        case Decision::missingBinary:
+            return failure(
+                request.name + " is binary-only, but the cache has no "
+                + wanted.platform + " entry holding " + joinList(configs, ", ")
+                + " for " + fingerprintId(wanted).substr(0, 12)
+                + (existing ? " (entry " + existing->prefix.fileName() + " lacks "
+                                  + joinList(missing, ", ") + ")"
+                            : ""));
 
         case Decision::buildBinary:
             break;
     }
 
-    const auto built = buildBinary(cache, request, env, snapshot);
+    const auto built = buildBinary(cache, request, env, snapshot, dependencyGraph);
 
     if (!built.ok)
         return failure(built.error, built.details);
 
-    return success(binaryResponse(request, snapshot, built.entry, wanted));
+    return binaryResult(request, snapshot, built.entry, wanted);
+}
+
+ResolveResult
+    resolvePackage(const Request& request, const Env& env, const CacheRoot& cache)
+{
+    if (auto error = requestError(request))
+        return failure(*error);
+
+    const auto source =
+        fetchSource(cache, request.name, request.gitUrl, request.gitRef);
+
+    if (!source.ok)
+        return failure(source.error);
+
+    return resolveSnapshot(request, env, cache, source.snapshot);
 }
 } // namespace epm

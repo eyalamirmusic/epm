@@ -35,6 +35,15 @@ struct ChildBuild
     eacp::FilePath prefix;
     eacp::FilePath cpmCache;
     std::string config;
+
+    // graph.cmake (Docs/Graph.md §7) of the package's dependency closure, all
+    // prebuilt, which the nested provider loads (§10). Empty for a package
+    // without dependencies: no provider is injected.
+    std::string dependencyGraph;
+
+    // Handed to a child with dependencies as EPM_EXECUTABLE, so a get_epm.cmake
+    // of its own finds this epm.
+    eacp::FilePath epmExecutable;
 };
 
 // The `cmake -S -B` arguments of PoC §5. Toolchain values the consumer left

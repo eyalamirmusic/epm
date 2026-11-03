@@ -49,6 +49,7 @@ AbiFingerprint fingerprintFor(const Request& request,
     fingerprint.toolchainFile = env.toolchainFile;
     fingerprint.options = request.options;
     fingerprint.sourceId = sourceId;
+    fingerprint.deps = request.deps;
     return fingerprint;
 }
 
@@ -82,10 +83,10 @@ bool abiMatches(const AbiFingerprint& recorded,
     if (policy == AbiMatch::strict)
         return canonicalFingerprint(recorded) == canonicalFingerprint(wanted);
 
-    const auto sameBase = recorded.schema == wanted.schema
-                          && recorded.platform == wanted.platform
-                          && recorded.options == wanted.options
-                          && recorded.sourceId == wanted.sourceId;
+    const auto sameBase =
+        recorded.schema == wanted.schema && recorded.platform == wanted.platform
+        && recorded.options == wanted.options && recorded.sourceId == wanted.sourceId
+        && recorded.deps == wanted.deps;
 
     if (policy == AbiMatch::any || !sameBase)
         return sameBase;
@@ -132,6 +133,7 @@ std::optional<std::string> abiNote(const AbiFingerprint& recorded,
     compare("toolchainFile", recorded.toolchainFile, current.toolchainFile);
     compare(
         "toolchainFileHash", recorded.toolchainFileHash, current.toolchainFileHash);
+    compare("deps", recorded.deps, current.deps);
 
     return "built with a different " + joinList(fields, ", ");
 }

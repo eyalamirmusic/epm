@@ -17,12 +17,23 @@ add_library(epm-core STATIC
         Cache/PackageLock.h
         Cache/SourceCache.cpp
         Cache/SourceCache.h
+        Emit/GraphResponse.cpp
+        Emit/GraphResponse.h
         Emit/Response.cpp
         Emit/Response.h
+        Graph/Graph.cpp
+        Graph/Graph.h
+        Graph/Merge.cpp
+        Graph/Merge.h
+        Graph/ResolvedGraph.h
         Resolve/Resolve.cpp
         Resolve/Resolve.h
         Spec/Env.h
         Spec/JsonFile.h
+        Spec/Manifest.cpp
+        Spec/Manifest.h
+        Spec/Overrides.cpp
+        Spec/Overrides.h
         Spec/Platform.cpp
         Spec/Platform.h
         Spec/Request.h

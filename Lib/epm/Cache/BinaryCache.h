@@ -86,9 +86,11 @@ struct BinaryResult
 // Under the package lock: picks the entry for the request again (another
 // process may have built it meanwhile) or creates the one for the current
 // fingerprint, then builds and harvests only the configs it lacks, adding
-// each to the entry as it completes.
+// each to the entry as it completes. `dependencyGraph` goes to each child
+// build (ChildBuild::dependencyGraph).
 BinaryResult buildBinary(const CacheRoot& cache,
                          const Request& request,
                          const Env& env,
-                         const SourceSnapshot& snapshot);
+                         const SourceSnapshot& snapshot,
+                         const std::string& dependencyGraph = {});
 } // namespace epm

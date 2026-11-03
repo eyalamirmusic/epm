@@ -206,3 +206,45 @@ auto tFpNote = test("Fingerprint/note") = []
     check(abiNote(ninja, fingerprintWith(processor))
           == "built with a different systemProcessor, osxArchitectures");
 };
+
+auto tFpDepsChangeId = test("Fingerprint/depsChangeTheId") = []
+{
+    auto request = fingerprintRequest();
+    const auto without = fingerprintFor(request, fingerprintEnv(), "abc");
+
+    request.deps = {{"fmt", "aaaa"}};
+    const auto with = fingerprintFor(request, fingerprintEnv(), "abc");
+
+    request.deps = {{"fmt", "bbbb"}};
+    const auto changed = fingerprintFor(request, fingerprintEnv(), "abc");
+
+    check(with.deps.at("fmt") == "aaaa");
+    check(fingerprintId(without) != fingerprintId(with));
+    check(fingerprintId(with) != fingerprintId(changed));
+    check(canonicalFingerprint(with).find("\"deps\":{\"fmt\":\"aaaa\"}")
+          != std::string::npos);
+};
+
+auto tFpDepsEveryPolicy = test("Fingerprint/depsCountInEveryPolicy") = []
+{
+    auto request = fingerprintRequest();
+    request.deps = {{"fmt", "aaaa"}, {"zlib", "cccc"}};
+    const auto base = fingerprintFor(request, fingerprintEnv(), "abc");
+
+    auto otherHash = base;
+    otherHash.deps["fmt"] = "bbbb";
+    auto fewer = base;
+    fewer.deps.erase("zlib");
+
+    for (const auto policy: {AbiMatch::strict, AbiMatch::compatible, AbiMatch::any})
+    {
+        check(abiMatches(base, base, policy));
+        check(!abiMatches(base, otherHash, policy));
+        check(!abiMatches(base, fewer, policy));
+    }
+
+    // Same deps, other compiler path: still compatible.
+    check(abiMatches(
+        base, fingerprintFor(request, xcodeEnv(), "abc"), AbiMatch::compatible));
+    check(abiNote(base, otherHash) == "built with a different deps");
+};
