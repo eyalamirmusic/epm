@@ -20,6 +20,7 @@
 #include <epm/Lock/MerkleHash.h>
 #include <epm/Cache/SourceCache.h>
 #include <epm/Spec/JsonFile.h>
+#include <epm/Spec/Manifest.h>
 #include <epm/Util/Sha256.h>
 #include <eacp/Core/Utils/Time.h>
 
@@ -570,7 +571,8 @@ std::optional<eacp::FilePath> findOrBuildBinary(const CommandOptions& options,
 
     auto source =
         SourceSnapshot {resolved.commit, resolved.hash, resolved.directory};
-    auto build = LockForChildBuilds {options.lock, getChildLockMode(options)};
+    auto build = LockForChildBuilds {
+        options.lock, getChildLockMode(options), options.manifest};
     auto result = resolveBinary(
         request, options.env, CacheRoot {options.cache}, source, build);
 
@@ -590,31 +592,314 @@ std::optional<eacp::FilePath> findOrBuildBinary(const CommandOptions& options,
     return result.response.prefix;
 }
 
-std::string addPackage(const CommandOptions& options, const PackageSpec& spec)
+bool isResolvingRequirements(const CommandOptions& options, const Session& session)
+{
+    return options.mode == Mode::update || session.isWritingNewLock;
+}
+
+bool isUnderDirectory(const std::string& path, const std::string& directory)
+{
+    return path.starts_with(directory)
+           && (path.size() == directory.size() || path[directory.size()] == '/');
+}
+
+// The package whose CMake made this call: the added package whose tree holds
+// the requesting directory, else the top-level project.
+std::string identifyRequester(const CommandOptions& options, const Session& session)
+{
+    auto requesting =
+        eacp::FilePath {eacp::toStdPath(options.requestedBy).lexically_normal()}
+            .str();
+    auto requester = options.rootName;
+    auto longestMatch = std::size_t {0};
+
+    for (const auto& package: session.packages)
+    {
+        auto directory =
+            eacp::FilePath {eacp::toStdPath(eacp::FilePath {package.sourceDirectory})
+                                .lexically_normal()}
+                .str();
+
+        if (!package.sourceDirectory.empty() && directory.size() > longestMatch
+            && isUnderDirectory(requesting, directory))
+        {
+            requester = package.name;
+            longestMatch = directory.size();
+        }
+    }
+
+    return requester;
+}
+
+// epm.json's override, as Go's replace: its URL and its commit or tag stand
+// in for whatever the call asked for.
+std::optional<Requirement> findOverrideRequirement(const CommandOptions& options,
+                                                   const PackageSpec& spec)
+{
+    auto override = readManifest(options.manifest).findOverride(spec.name);
+
+    if (!override)
+        return std::nullopt;
+
+    auto requirement = Requirement {"epm.json", spec.url, spec.ref, {}};
+
+    if (!override->url.empty())
+        requirement.url = override->url;
+
+    if (!override->commit.empty())
+        requirement.requestedRef = override->commit;
+    else if (!override->tag.empty())
+        requirement.requestedRef = override->tag;
+
+    return requirement;
+}
+
+PackageSpec withRequirement(PackageSpec spec, const Requirement& requirement)
+{
+    spec.url = requirement.url;
+    spec.ref = requirement.requestedRef;
+    return spec;
+}
+
+std::optional<std::string> findLockedCommit(const LockedPackage& locked,
+                                            const Requirement& requirement)
+{
+    for (const auto& recorded: locked.requirements)
+    {
+        if (isSameRequirement(recorded, requirement))
+            return recorded.commit;
+    }
+
+    // A lock written before requirements were recorded holds only the one.
+    if (locked.requirements.empty() && locked.url == requirement.url
+        && locked.requestedRef == requirement.requestedRef)
+        return locked.commit;
+
+    return std::nullopt;
+}
+
+// What the requirement's ref names: from the lock in locked and offline
+// mode, which then must record it, and from upstream while resolving.
+std::string resolveRequirementCommit(const CommandOptions& options,
+                                     const PackageSpec& spec,
+                                     const Requirement& requirement,
+                                     const Session& session)
+{
+    if (!requirement.commit.empty())
+        return requirement.commit;
+
+    if (isResolvingRequirements(options, session))
+    {
+        auto request = createRequest(options, withRequirement(spec, requirement));
+        return createPackageCache(options).resolveCommit(request, Network::allowed);
+    }
+
+    auto locked = readLockFile(options.lock).findPackage(spec.name);
+
+    if (!locked)
+    {
+        throw std::runtime_error(describeUnlockedRequest(
+            {getRequestLocation(options, spec.name),
+             spec.name,
+             getPathForUser(options, options.lock),
+             eacp::Files::isFile(options.lock),
+             getPathForUser(options, options.buildDirectory)}));
+    }
+
+    if (auto commit = findLockedCommit(*locked, requirement))
+        return *commit;
+
+    throw std::runtime_error(describeLockMismatch(
+        {getRequestLocation(options, spec.name),
+         spec.name,
+         getPathForUser(options, options.lock),
+         describeRequest(requirement.url, requirement.requestedRef, locked->url)
+             + " for " + requirement.requestedBy,
+         "with the requirements it records",
+         getPathForUser(options, options.buildDirectory)}));
+}
+
+void recordRequirementsInLock(const CommandOptions& options,
+                              const std::string& name,
+                              const EA::Vector<Requirement>& requirements,
+                              bool isOverridden)
+{
+    auto lock = readLockFile(options.lock);
+    auto locked = lock.findPackage(name);
+
+    if (!locked)
+        return;
+
+    locked->requirements = requirements;
+    locked->isOverridden = isOverridden;
+    std::sort(locked->requirements.begin(),
+              locked->requirements.end(),
+              [](const Requirement& left, const Requirement& right)
+              {
+                  return std::tie(left.requestedBy, left.url, left.requestedRef)
+                         < std::tie(
+                             right.requestedBy, right.url, right.requestedRef);
+              });
+    lock.storePackage(*locked);
+    writeLockFile(options.lock, lock);
+}
+
+// A dependency that ships a lock (epm's, or lockstep's, which has the same
+// form) lists what it was built with; each entry is its requirement, as a
+// go.mod is, never a second lock.
+void addShippedRequirements(Session& session,
+                            const std::string& name,
+                            const eacp::FilePath& sourceDirectory)
+{
+    for (const auto* fileName: {lockFileName, "lockstep.lock"})
+    {
+        auto shipped = sourceDirectory / fileName;
+
+        if (!eacp::Files::isFile(shipped))
+            continue;
+
+        for (const auto& package: readLockFile(shipped).packages)
+            session.addRequirement(
+                package.name, {name, package.url, package.commit, package.commit});
+
+        return;
+    }
+}
+
+void replaceRequirementOf(EA::Vector<Requirement>& requirements,
+                          const Requirement& requirement)
+{
+    for (auto& existing: requirements)
+    {
+        if (existing.requestedBy == requirement.requestedBy)
+        {
+            existing = requirement;
+            return;
+        }
+    }
+
+    requirements.add(requirement);
+}
+
+// Every requirement on `name` the selection runs over, one per requester:
+// those the lock recorded when it was last resolved, so a configure selects
+// from the start what it selected then, then this configure's, then this one.
+EA::Vector<Requirement> gatherRequirements(const CommandOptions& options,
+                                           const Session& session,
+                                           const std::string& name,
+                                           const Requirement& requirement)
+{
+    auto requirements = EA::Vector<Requirement> {};
+
+    if (auto locked = readLockFile(options.lock).findPackage(name);
+        locked && !locked->isOverridden)
+    {
+        for (const auto& recorded: locked->requirements)
+            replaceRequirementOf(requirements, recorded);
+    }
+
+    for (const auto& known: session.findRequirements(name))
+        replaceRequirementOf(requirements, known);
+
+    replaceRequirementOf(requirements, requirement);
+    return requirements;
+}
+
+std::string describeRaisedRequirement(const std::string& name,
+                                      const SessionPackage& added,
+                                      const Requirement& selected)
+{
+    return formatUserError(
+        name + " was added at '" + added.requestedRef + "', and then "
+            + selected.requestedBy + " asked for '" + selected.requestedRef
+            + "', which minimal version selection takes instead. The lock now "
+              "holds '"
+            + selected.requestedRef + "'.",
+        "Configure again; " + name + " is then added at '" + selected.requestedRef
+            + "' from the start.");
+}
+
+std::string addPackage(const CommandOptions& options, const PackageSpec& requested)
 {
     auto session = readSession(options.buildDirectory);
+    auto requester = identifyRequester(options, session);
+    auto override = findOverrideRequirement(options, requested);
+    auto requirement = override.value_or(
+        session.findRequirementBy(requested.name, requester)
+            .value_or(Requirement {requester, requested.url, requested.ref, {}}));
+    auto added = session.findPackage(requested.name);
 
-    if (auto added = session.findPackage(spec.name))
+    // A local checkout, given by SOURCE_DIR alone or by an <Name>_SOURCE
+    // override, is outside the lock and so outside selection.
+    auto isLocal =
+        requested.kind == PackageKind::local || findOverride(requested, session);
+
+    if (added && (override || isLocal))
+        return createPropagatingBlock(requested.name,
+                                      createPackageVariables(*added, false));
+
+    auto selection = RequirementSelection {false, requirement};
+
+    if (!isLocal)
     {
-        if (added->requestedRef != spec.ref)
+        requirement.commit =
+            resolveRequirementCommit(options, requested, requirement, session);
+        auto requirements = EA::Vector<Requirement> {requirement};
+
+        if (!override)
+            requirements =
+                gatherRequirements(options, session, requested.name, requirement);
+
+        selection = selectRequirement(requirements);
+
+        if (selection.isConflict)
+            throw std::runtime_error(
+                describeRequirementConflict(requested.name, requirements));
+
+        session.addRequirement(requested.name, requirement);
+    }
+
+    auto spec = isLocal ? requested : withRequirement(requested, selection.selected);
+    auto isOverridden = override.has_value();
+
+    if (added)
+    {
+        writeSession(options.buildDirectory, session);
+
+        if (selection.selected.commit != added->commit)
         {
-            printStatus("WARNING: " + options.requestedBy.str() + " asks for "
-                        + spec.name + " at '" + spec.ref
-                        + "', but it was already added at '" + added->requestedRef
-                        + "', which is kept");
+            if (isResolvingRequirements(options, session))
+            {
+                resolveLockedSource(options, spec, session);
+                recordRequirementsInLock(
+                    options, spec.name, session.findRequirements(spec.name), false);
+            }
+
+            throw std::runtime_error(
+                describeRaisedRequirement(spec.name, *added, selection.selected));
         }
+
+        if (isResolvingRequirements(options, session))
+            recordRequirementsInLock(
+                options, spec.name, session.findRequirements(spec.name), false);
 
         return createPropagatingBlock(spec.name,
                                       createPackageVariables(*added, false));
     }
 
     auto source = resolvePackageSource(options, spec, session);
+
+    if (!isLocal && isResolvingRequirements(options, session))
+        recordRequirementsInLock(
+            options, spec.name, session.findRequirements(spec.name), isOverridden);
+
     auto package = SessionPackage {spec.name,
                                    spec.ref,
                                    source.directory.str(),
                                    getBinaryDirectory(options, spec.name),
                                    "source",
-                                   source.hash};
+                                   source.hash,
+                                   selection.selected.commit};
     auto mode = spec.mode.empty() ? options.defaultMode : spec.mode;
     auto prefix = std::optional<eacp::FilePath> {};
 
@@ -628,6 +913,10 @@ std::string addPackage(const CommandOptions& options, const PackageSpec& spec)
     }
 
     session.packages.push_back(package);
+
+    if (!prefix && !source.hash.empty())
+        addShippedRequirements(session, spec.name, source.directory);
+
     writeSession(options.buildDirectory, session);
 
     if (prefix)

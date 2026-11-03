@@ -37,3 +37,5 @@ add_consumer_test(verifyFetchesAnUnrequestedPackage RunUnrequestedLockedProject.
 add_consumer_test(lockIsAConfigureInput RunLockInputProject.cmake lock-input)
 add_consumer_test(lockIsAConfigureInputNinja RunLockInputProject.cmake lock-input
         -DGENERATOR=Ninja)
+add_consumer_test(requirementsAreSelectedMinimally RunRequirementsProject.cmake
+        requirements)

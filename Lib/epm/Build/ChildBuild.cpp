@@ -111,6 +111,9 @@ Vector<std::string> configureArguments(const ChildBuild& build)
         addDefinition(arguments, "EPM_EXECUTABLE", Files::executablePath().str());
         addDefinition(arguments, "EPM_LOCK_FILE", build.childLock.lock.str());
         addDefinition(arguments, "EPM_LOCK_MODE", build.childLock.mode);
+        addDefinition(
+            arguments, "EPM_MANIFEST_FILE", build.childLock.manifest.str());
+        addDefinition(arguments, "EPM_ROOT_NAME", build.request.name);
         addDefinition(arguments, "EPM_CACHE", build.cacheRoot.str());
     }
     addDefinition(arguments, "EPM_EXPORT_FILE", exportFile.str());

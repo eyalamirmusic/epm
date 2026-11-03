@@ -114,6 +114,12 @@ int runPackageCommand(const std::string& command, int argumentsToSkip)
         "--ci", ciValue, "ON refuses <Name>_SOURCE overrides in locked mode");
     parser.option(
         "--lock", options.lock, "the lock file [default: <source-dir>/epm.lock]");
+    parser.option("--manifest",
+                  options.manifest,
+                  "the root project's epm.json, whose overrides win");
+    parser.option("--root-name",
+                  options.rootName,
+                  "who the top-level project's requirements are recorded as");
     parser.option("--cache", options.cache, "the cache root (default: $EPM_CACHE)");
     parser.option("--cmake", options.cmake, "the cmake that extracts tar archives");
     parser.option("--env", envFile, "the env JSON epm.cmake wrote");

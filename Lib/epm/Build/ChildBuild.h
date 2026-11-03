@@ -29,6 +29,9 @@ struct LockForChildBuilds
 {
     eacp::FilePath lock;
     std::string mode = "locked";
+
+    // The consumer's epm.json, which overrides inside the child too.
+    eacp::FilePath manifest;
 };
 
 // One configuration of a dependency, built straight into a binary cache prefix.

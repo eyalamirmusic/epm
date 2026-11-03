@@ -25,6 +25,13 @@ struct CommandOptions
     Mode mode = Mode::locked;
     bool isCI = false;
     eacp::FilePath lock;
+
+    // The root project's epm.json; a missing file overrides nothing.
+    eacp::FilePath manifest;
+
+    // Who the top-level project's requirements are recorded as: "root", or
+    // in a child build the package being built.
+    std::string rootName = "root";
     eacp::FilePath cache;
     eacp::FilePath cmake {"cmake"};
     eacp::FilePath sourceDirectory;

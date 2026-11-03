@@ -64,6 +64,10 @@ public:
 
     // Fetches `commit` (or, when it is empty, whatever `request.ref` names now),
     // unpacks it, applies the patches and stores the tree under its hash.
+    // The commit `request.ref` names now, fetched into the mirror; the
+    // archive's hash for an archive.
+    std::string resolveCommit(const PackageRequest& request, Network network) const;
+
     MaterializedPackage materialize(const PackageRequest& request,
                                     const std::string& commit,
                                     Network network) const;

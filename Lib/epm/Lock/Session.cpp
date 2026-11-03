@@ -30,6 +30,43 @@ std::optional<SessionOverride> Session::findOverride(const std::string& name) co
     return std::nullopt;
 }
 
+EA::Vector<Requirement> Session::findRequirements(const std::string& name) const
+{
+    auto found = EA::Vector<Requirement> {};
+
+    for (const auto& entry: requirements)
+    {
+        if (entry.name == name)
+            found.add(entry.requirement);
+    }
+
+    return found;
+}
+
+std::optional<Requirement>
+    Session::findRequirementBy(const std::string& name,
+                               const std::string& requester) const
+{
+    for (const auto& entry: requirements)
+    {
+        if (entry.name == name && entry.requirement.requestedBy == requester)
+            return entry.requirement;
+    }
+
+    return std::nullopt;
+}
+
+void Session::addRequirement(const std::string& name, const Requirement& requirement)
+{
+    for (const auto& entry: requirements)
+    {
+        if (entry.name == name && isSameRequirement(entry.requirement, requirement))
+            return;
+    }
+
+    requirements.add({name, requirement});
+}
+
 eacp::FilePath getSessionPath(const eacp::FilePath& buildDirectory)
 {
     return buildDirectory / "epm" / "session.json";

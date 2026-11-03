@@ -9,6 +9,7 @@ nano_add_executable(epmTests
             MerkleHashTests.cpp
             MessagesTests.cpp
             PackageArgumentsTests.cpp
+            RequirementsTests.cpp
             ResolveTests.cpp
             Sha256Tests.cpp
             SourceCacheTests.cpp

@@ -2,6 +2,8 @@
 
 #include <eacp/Core/Utils/FilePath.h>
 
+#include <epm/Lock/Requirements.h>
+
 #include <Miro/Reflect.h>
 
 #include <optional>
@@ -25,7 +27,12 @@ struct SessionPackage
     // The Merkle hash of the cached tree; empty for a local checkout.
     std::string hash;
 
-    MIRO_REFLECT(name, requestedRef, sourceDirectory, binaryDirectory, mode, hash)
+    // The commit it was added at, or an archive's hash; what a later
+    // requirement is compared against.
+    std::string commit;
+
+    MIRO_REFLECT(
+        name, requestedRef, sourceDirectory, binaryDirectory, mode, hash, commit)
 };
 
 struct SessionOverride
@@ -37,6 +44,16 @@ struct SessionOverride
     MIRO_REFLECT(name, sourceDirectory, variable)
 };
 
+// A requirement on `name` known before or after it is added: one a project
+// made, or one a dependency's own epm.lock lists.
+struct SessionRequirement
+{
+    std::string name;
+    Requirement requirement;
+
+    MIRO_REFLECT(name, requirement)
+};
+
 struct Session
 {
     EA::Vector<SessionOverride> overrides;
@@ -45,7 +62,14 @@ struct Session
     // Locked mode with no lock yet: this configure writes it, as update would.
     bool isWritingNewLock = false;
 
-    MIRO_REFLECT(overrides, packages, isWritingNewLock)
+    EA::Vector<SessionRequirement> requirements;
+
+    MIRO_REFLECT(overrides, packages, isWritingNewLock, requirements)
+
+    EA::Vector<Requirement> findRequirements(const std::string& name) const;
+    std::optional<Requirement> findRequirementBy(const std::string& name,
+                                                 const std::string& requester) const;
+    void addRequirement(const std::string& name, const Requirement& requirement);
 
     std::optional<SessionPackage> findPackage(const std::string& name) const;
     std::optional<SessionOverride> findOverride(const std::string& name) const;

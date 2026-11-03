@@ -38,6 +38,10 @@
 #   EPM_LOCK_MODE               locked (default; writes a missing lock), update
 #                               (re-resolve every ref and rewrite the lock) or
 #                               offline (the cache only, never the network)
+#   EPM_MANIFEST_FILE           the root's epm.json, whose "overrides" replace
+#                               every requirement on a package (default
+#                               ${CMAKE_SOURCE_DIR}/epm.json; a dependency's
+#                               own epm.json is never read)
 #   EPM_CI                      ON refuses <Name>_SOURCE overrides and a missing
 #                               lock in locked mode
 #   EPM_<Name>_SOURCE, CPM_<Name>_SOURCE   a local checkout to use instead
@@ -183,13 +187,21 @@ if (NOT EPM_LOCK_FILE)
     set(EPM_LOCK_FILE "${CMAKE_SOURCE_DIR}/epm.lock")
 endif ()
 
-list(APPEND _EPM_OPTIONS "--lock=${EPM_LOCK_FILE}" "--mode=${EPM_LOCK_MODE}"
-        "--ci=${EPM_CI}")
+if (NOT EPM_MANIFEST_FILE)
+    set(EPM_MANIFEST_FILE "${CMAKE_SOURCE_DIR}/epm.json")
+endif ()
 
-# The next build reconfigures when the lock is edited, pulled or deleted, so a
-# missing lock is written again and a changed one is checked.
+list(APPEND _EPM_OPTIONS "--lock=${EPM_LOCK_FILE}" "--mode=${EPM_LOCK_MODE}"
+        "--ci=${EPM_CI}" "--manifest=${EPM_MANIFEST_FILE}")
+
+if (EPM_ROOT_NAME)
+    list(APPEND _EPM_OPTIONS "--root-name=${EPM_ROOT_NAME}")
+endif ()
+
+# The next build reconfigures when the lock or epm.json is edited, pulled or
+# deleted, so a missing lock is written again and a changed one is checked.
 set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY
-        CMAKE_CONFIGURE_DEPENDS "${EPM_LOCK_FILE}")
+        CMAKE_CONFIGURE_DEPENDS "${EPM_LOCK_FILE}" "${EPM_MANIFEST_FILE}")
 
 if (EPM_VERBOSE)
     list(APPEND _EPM_OPTIONS --verbose)

@@ -13,6 +13,7 @@
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/TemporaryFile.h>
 #include <epm/Cache/PackageLock.h>
+#include <epm/Cache/SourceCache.h>
 #include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/Zip.h>
 #include <eacp/Core/Platform/Platform.h>
@@ -262,6 +263,24 @@ eacp::FilePath PackageCache::fetchCommitIntoMirror(const std::string& name,
     }
 
     return mirror;
+}
+
+std::string PackageCache::resolveCommit(const PackageRequest& request,
+                                       Network network) const
+{
+    if (request.kind != PackageKind::git)
+        return request.archiveHash.hex;
+
+    if (isFullCommitHash(request.ref))
+        return request.ref;
+
+    if (network == Network::forbidden)
+        throw std::runtime_error("resolving " + request.name + "'s ref '"
+                                 + request.ref
+                                 + "' needs the network, which offline mode forbids");
+
+    auto mirrorLock = MirrorLock {root, request.url};
+    return fetchRefIntoMirror(getOrCreateMirror(request.url), request.ref);
 }
 
 std::string PackageCache::fetchGitTree(const PackageRequest& request,

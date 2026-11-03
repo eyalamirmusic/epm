@@ -1,5 +1,6 @@
 #pragma once
 
+#include <epm/Lock/Requirements.h>
 #include <epm/Spec/PackageKind.h>
 #include <epm/Source/Submodules.h>
 
@@ -30,6 +31,13 @@ struct LockedPackage
     bool usesGitLfs = false;
     std::string hash;
 
+    // Every project that asked for it, and what each asked for; the entry is
+    // the one minimal version selection chose from them.
+    EA::Vector<Requirement> requirements;
+
+    // Chosen by the root's epm.json rather than by the requirements.
+    bool isOverridden = false;
+
     MIRO_REFLECT(name,
                  kind,
                  url,
@@ -39,7 +47,9 @@ struct LockedPackage
                  commit,
                  submodules,
                  usesGitLfs,
-                 hash)
+                 hash,
+                 requirements,
+                 isOverridden)
 };
 
 struct LockFile

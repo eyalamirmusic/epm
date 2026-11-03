@@ -16,6 +16,8 @@ add_library(epm-core STATIC
         Lock/LockFile.cpp
         Lock/LockFile.h
         Lock/MerkleHash.cpp
+        Lock/Requirements.cpp
+        Lock/Requirements.h
         Lock/MerkleHash.h
         Lock/Messages.cpp
         Lock/Messages.h
@@ -35,6 +37,8 @@ add_library(epm-core STATIC
         Source/Submodules.h
         Spec/Env.h
         Spec/JsonFile.h
+        Spec/Manifest.cpp
+        Spec/Manifest.h
         Spec/PackageArguments.cpp
         Spec/PackageArguments.h
         Spec/PackageKind.h
