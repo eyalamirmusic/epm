@@ -106,9 +106,9 @@ eacp::FilePath findArchiveContentRoot(const eacp::FilePath& extracted)
 }
 constexpr auto mirrorLockTimeout = eacp::Time::MS {10 * 60 * 1000};
 
-// Holds one mirror for this process: configures sharing the cache would
-// otherwise fetch into the same bare repository at once, and git's shallow
-// file cannot take that.
+// Holds one URL's mirror or download for this process: configures sharing the
+// cache would otherwise fetch into the same bare repository at once, which
+// git's shallow file cannot take, or write the same .part file.
 class MirrorLock
 {
 public:
@@ -354,6 +354,9 @@ void PackageCache::fetchArchiveTree(const PackageRequest& request,
                                     const eacp::FilePath& staging) const
 {
     auto archive = getDownloadPath(request.url);
+
+    // Configures sharing the cache would otherwise write one .part file at once.
+    auto downloadLock = MirrorLock {root, request.url};
 
     if (!eacp::Files::isFile(archive))
     {

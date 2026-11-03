@@ -27,3 +27,5 @@ add_consumer_test(submodules RunSubmoduleProject.cmake submodules)
 add_consumer_test(git-edge-cases RunGitEdgeCasesProject.cmake git-edge-cases)
 add_consumer_test(archiveWithWrongHash RunBadHashProject.cmake archive-bad-hash)
 
+add_consumer_test(archiveFetchedConcurrently RunConcurrentArchiveProject.cmake
+        archive-concurrent)
