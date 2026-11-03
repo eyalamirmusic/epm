@@ -12,6 +12,7 @@ Everything here is PoC-level and may be replaced; the shape follows `PLAN.md`.
 ```cmake
 cmake_minimum_required(VERSION 3.31)
 project(HelloEacp CXX)
+set(EPM_CONFIGS Release) # only Release archives of eacp; Debug builds of hello link them on multi-config generators (missing configs map to Release)
 include(cmake/get_epm.cmake)                 # finds or fetches epm, includes its module (§8)
 
 epm_add_package(

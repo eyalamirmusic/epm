@@ -7,6 +7,7 @@ project(HelloEacp CXX)
 #
 #   set(EPM_VERSION "0.1...<0.2")                      # accepted epm versions
 #   set(EPM_BOOTSTRAP_SOURCE_DIR /path/to/epm)         # build a local epm checkout
+set(EPM_CONFIGS Release) # only Release archives of eacp; Debug builds of hello link them on multi-config generators (missing configs map to Release)
 include(${CMAKE_CURRENT_LIST_DIR}/../../CMake/get_epm.cmake)
 
 epm_add_package(

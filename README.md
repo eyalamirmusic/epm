@@ -27,6 +27,7 @@ interface may all change.
 cmake_minimum_required(VERSION 3.31)
 project(HelloEacp CXX)
 
+set(EPM_CONFIGS Release) # only Release archives of eacp; Debug builds of hello link them on multi-config generators (missing configs map to Release)
 include(cmake/get_epm.cmake)        # vendored from this repository's CMake/
 
 epm_add_package(
@@ -50,9 +51,10 @@ cmake --build build-hello
 ./build-hello/hello
 ```
 
-The first configure fetches epm itself (see below) and then builds eacp into
-the cache, in the build type you configured (Release when none is given).
-Later configures, in any build directory, reuse it and take about a second; a
+The first configure fetches epm itself (see below) and then builds eacp's
+Release configuration into the cache. Later configures, in any build directory
+and any build type, reuse it and take about a second. Without the
+`EPM_CONFIGS` line, epm builds the build type you configured instead, and a
 configure in another build type adds just that configuration.
 
 ## Configuring what gets built
