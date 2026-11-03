@@ -27,7 +27,3 @@ add_consumer_test(submodules RunSubmoduleProject.cmake submodules)
 add_consumer_test(git-edge-cases RunGitEdgeCasesProject.cmake git-edge-cases)
 add_consumer_test(archiveWithWrongHash RunBadHashProject.cmake archive-bad-hash)
 
-# epm.cmake passes CMAKE_CURRENT_LIST_FILE from inside cmake_language(EVAL),
-# where it reads "<epm.cmake>:236:EVAL", so a request is placed and its
-# PATCHES resolved against the caller's directory, not the recipe file.
-set_tests_properties(Consumer/patch-beside-file PROPERTIES WILL_FAIL TRUE)

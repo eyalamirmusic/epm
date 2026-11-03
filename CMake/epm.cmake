@@ -220,7 +220,7 @@ set(_epm_run [=[
     execute_process(COMMAND "${EPM_EXECUTABLE}" ${_epm_subcommand} ${_EPM_OPTIONS}
             "--env=${EPM_DIR}/env.json" "--default-mode=${_epm_default_mode}"
             "--requested-by=${CMAKE_CURRENT_SOURCE_DIR}"
-            "--requested-by-file=${CMAKE_CURRENT_LIST_FILE}"
+            "--requested-by-file=${_epm_requested_by_file}"
             "--requested-binary-dir=${CMAKE_CURRENT_BINARY_DIR}"
             "--output=${EPM_DIR}/add.cmake" -- ${_epm_arguments}
             RESULT_VARIABLE _epm_result ERROR_VARIABLE _epm_error)
@@ -230,6 +230,7 @@ set(_epm_run [=[
 # A function, as CPMAddPackage is: OPTIONS stay local to the add_subdirectory
 # they configure, and the results are handed to the caller.
 function(epm_add_package)
+    set(_epm_requested_by_file "${CMAKE_CURRENT_LIST_FILE}")
     set(_epm_subcommand resolve)
     set(_epm_default_mode auto)
     set(_epm_arguments "${ARGN}")
@@ -246,6 +247,7 @@ endif ()
 # hermetic.
 foreach (command CPMAddPackage CPMFindPackage)
     cmake_language(EVAL CODE "function(${command})
+        set(_epm_requested_by_file \"\${CMAKE_CURRENT_LIST_FILE}\")
         set(_epm_subcommand resolve)
         set(_epm_default_mode source)
         set(_epm_arguments \"\${ARGN}\")
@@ -259,6 +261,7 @@ endfunction()
 
 function(CPMGetPackage name)
     get_property(declared GLOBAL PROPERTY EPM_DECLARED_${name})
+    set(_epm_requested_by_file "${CMAKE_CURRENT_LIST_FILE}")
     set(_epm_subcommand resolve)
     set(_epm_default_mode source)
     set(_epm_arguments NAME ${name} ${declared})
@@ -279,6 +282,7 @@ set(CPM_DOWNLOAD_LOCATION "${EPM_DIR}/cpm/CPM.cmake")
 set_property(GLOBAL PROPERTY CPM_INITIALIZED true)
 
 macro(_epm_provide method name)
+    set(_epm_requested_by_file "${CMAKE_CURRENT_LIST_FILE}")
     set(_epm_subcommand provide)
     set(_epm_default_mode source)
     set(_epm_arguments NAME ${name} ${ARGN})
