@@ -867,7 +867,6 @@ int runVerifyCommand(const CommandOptions& options)
 {
     auto cache = createPackageCache(options);
     auto lock = readLockFile(options.lock);
-    auto session = readSession(options.buildDirectory);
     auto failedCount = 0;
 
     for (const auto& package: lock.packages)
@@ -881,14 +880,27 @@ int runVerifyCommand(const CommandOptions& options)
             continue;
         }
 
-        // A cross-platform lock holds packages only another platform asks for.
-        auto isMissing =
-            !eacp::Files::isDirectory(cache.getSourceDirectory(package.hash));
-
-        if (isMissing && !session.findPackage(package.name))
+        // Not in the cache, as a package only another platform asks for is
+        // not: fetch it at its locked commit and check it hashes as locked.
+        if (!eacp::Files::isDirectory(cache.getSourceDirectory(package.hash)))
         {
-            printStatus("skipped " + package.name
-                        + ": not used on this platform, and not in the cache");
+            try
+            {
+                ensureLockedPackageIsCached(
+                    options,
+                    cache,
+                    createRequestFromLock(options.lock, package),
+                    package,
+                    getNetworkForMode(options.mode));
+                printStatus("ok " + package.name + " " + package.hash
+                            + " (fetched)");
+            }
+            catch (const std::exception& error)
+            {
+                printStatus("FAILED " + package.name + ": " + error.what());
+                ++failedCount;
+            }
+
             continue;
         }
 

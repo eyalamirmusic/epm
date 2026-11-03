@@ -29,5 +29,5 @@ add_consumer_test(archiveWithWrongHash RunBadHashProject.cmake archive-bad-hash)
 
 add_consumer_test(archiveFetchedConcurrently RunConcurrentArchiveProject.cmake
         archive-concurrent)
-add_consumer_test(lockHoldsAPackageThisPlatformSkips RunUnusedLockedProject.cmake
-        unused-locked)
+add_consumer_test(verifyFetchesAnUnrequestedPackage RunUnrequestedLockedProject.cmake
+        unrequested-locked)

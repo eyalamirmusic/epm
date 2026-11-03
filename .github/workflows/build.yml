@@ -134,12 +134,12 @@ jobs:
 
       # epm built itself in locked mode from epm.lock: every package must still
       # hash to its lock entry (glslang, which eacp asks for on Linux only, is
-      # skipped elsewhere), the configure must not have changed one byte of
+      # fetched by verify elsewhere), the configure must not have changed one byte of
       # the lock, and the root is printed so the lanes can be compared.
       - name: Verify epm's own lock
         run: |
           git diff --exit-code epm.lock
-          "build/Apps/epm/epm$EXE_SUFFIX" lock verify --full --lock epm.lock --build-dir=build \
+          "build/Apps/epm/epm$EXE_SUFFIX" lock verify --full --lock epm.lock \
             "--cache=$ROOT/.epm-self-cache"
           echo "root: $("build/Apps/epm/epm$EXE_SUFFIX" lock root --lock epm.lock)"
 
