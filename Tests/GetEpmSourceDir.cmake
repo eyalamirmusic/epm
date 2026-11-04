@@ -14,6 +14,10 @@ endif ()
 
 file(REMOVE_RECURSE "${WORK_DIR}")
 file(MAKE_DIRECTORY "${WORK_DIR}")
+
+# get_epm_check_source_dir answers with the real path; WORK_DIR may be spelled
+# through a symlink (macOS's /tmp).
+file(REAL_PATH "${WORK_DIR}" real_work_dir)
 file(REAL_PATH "${CMAKE_CURRENT_LIST_DIR}/.." repo)
 set(failures 0)
 
@@ -60,10 +64,10 @@ write_lists(plain "cmake_minimum_required(VERSION 3.31)\nproject(epm)\n")
 write_lists(versioned "project(epm VERSION 0.2.0 LANGUAGES C CXX)\n")
 write_lists(spaced "  PROJECT ( epm\n        VERSION 1.0)\n")
 write_lists(split "project(epm\n    VERSION 1.0)\n")
-expect_checkout("${WORK_DIR}/plain" "${WORK_DIR}/plain")
-expect_checkout("${WORK_DIR}/versioned" "${WORK_DIR}/versioned")
-expect_checkout("${WORK_DIR}/spaced" "${WORK_DIR}/spaced")
-expect_checkout("${WORK_DIR}/split" "${WORK_DIR}/split")
+expect_checkout("${WORK_DIR}/plain" "${real_work_dir}/plain")
+expect_checkout("${WORK_DIR}/versioned" "${real_work_dir}/versioned")
+expect_checkout("${WORK_DIR}/spaced" "${real_work_dir}/spaced")
+expect_checkout("${WORK_DIR}/split" "${real_work_dir}/split")
 
 # Anything else is rejected, with the reason.
 write_lists(other "project(HelloGraph CXX)\n")

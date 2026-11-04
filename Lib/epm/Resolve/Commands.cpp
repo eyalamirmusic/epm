@@ -56,9 +56,23 @@ std::string describeVersion(PackageKind kind,
     return commit + " (content " + hash + ")";
 }
 
+// The path with every symlink resolved, as far as it exists, so two spellings
+// of one directory (macOS's /tmp and /private/tmp) compare equal.
+eacp::FilePath resolveSymlinks(const eacp::FilePath& path)
+{
+    auto error = std::error_code {};
+    auto resolved = std::filesystem::weakly_canonical(eacp::toStdPath(path), error);
+
+    if (error)
+        return path.lexicallyNormal();
+
+    return eacp::FilePath {resolved};
+}
+
 std::string getPathForLock(const eacp::FilePath& lockPath, const std::string& path)
 {
-    auto relative = eacp::FilePath {path}.relativeTo(lockPath.parentDirectory());
+    auto relative = resolveSymlinks(eacp::FilePath {path})
+                        .relativeTo(resolveSymlinks(lockPath.parentDirectory()));
 
     if (relative.empty())
         return path;
@@ -83,7 +97,8 @@ std::string getPathForUser(const CommandOptions& options, const eacp::FilePath& 
     if (projectDirectory.empty())
         projectDirectory = eacp::FilePath::currentDirectory();
 
-    auto relative = path.relativeTo(projectDirectory).str();
+    auto relative =
+        resolveSymlinks(path).relativeTo(resolveSymlinks(projectDirectory)).str();
     auto isInsideProject =
         !relative.empty() && relative != ".." && !relative.starts_with("../");
 
@@ -614,14 +629,13 @@ bool isUnderDirectory(const std::string& path, const std::string& directory)
 // the requesting directory, else the top-level project.
 std::string identifyRequester(const CommandOptions& options, const Session& session)
 {
-    auto requesting = options.requestedBy.lexicallyNormal().str();
+    auto requesting = resolveSymlinks(options.requestedBy).str();
     auto requester = options.rootName;
     auto longestMatch = std::size_t {0};
 
     for (const auto& package: session.packages)
     {
-        auto directory =
-            eacp::FilePath {package.sourceDirectory}.lexicallyNormal().str();
+        auto directory = resolveSymlinks(eacp::FilePath {package.sourceDirectory}).str();
 
         if (!package.sourceDirectory.empty() && directory.size() > longestMatch
             && isUnderDirectory(requesting, directory))

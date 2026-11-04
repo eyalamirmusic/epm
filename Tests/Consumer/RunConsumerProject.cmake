@@ -120,3 +120,22 @@ endif ()
 if (lock_first MATCHES "${WORK_DIR}")
     message(FATAL_ERROR "the lock holds a path from this machine:\n${lock_first}")
 endif ()
+
+# The same lock through a symlinked checkout, with the lock named by its real
+# path: paths are compared with their symlinks resolved, so nothing changes.
+file(CREATE_LINK "${WORK_DIR}/first" "${WORK_DIR}/linked" SYMBOLIC RESULT link_result)
+if (link_result STREQUAL "0")
+    file(REAL_PATH "${WORK_DIR}/first/project" real_copy)
+    set(linked_copy "${WORK_DIR}/linked/project")
+    run_step("${CMAKE_COMMAND}" -S "${linked_copy}" -B "${linked_copy}/build-linked"
+            -DEPM_LOCK_MODE=update "-DEPM_LOCK_FILE=${real_copy}/epm-lock.json"
+            "-DEPM_MODULE=${linked_copy}/cmake/epm.cmake"
+            "-DEPM_EXECUTABLE=${EPM_EXECUTABLE}"
+            "-DEPM_CACHE=${WORK_DIR}/cache")
+    file(READ "${real_copy}/epm-lock.json" lock_linked)
+    if (NOT lock_first STREQUAL lock_linked)
+        message(FATAL_ERROR "the lock differs through a symlink:\n${lock_first}\n---\n${lock_linked}")
+    endif ()
+else ()
+    message(STATUS "symlinked checkout: skipped, this machine cannot make a symlink")
+endif ()
