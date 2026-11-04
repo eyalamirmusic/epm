@@ -1,8 +1,14 @@
 #include "TestDirectory.h"
 
+#include <epm/Build/ChildBuild.h>
+#include <epm/Build/Configs.h>
 #include <epm/Cache/BinaryCache.h>
 #include <epm/Lock/LockFile.h>
 #include <epm/Spec/JsonFile.h>
+#include <epm/Util/Text.h>
+
+#include <eacp/Core/Utils/Files.h>
+#include <eacp/Core/Utils/TemporaryFile.h>
 
 #include <NanoTest/NanoTest.h>
 
@@ -11,209 +17,228 @@ using namespace epm;
 
 namespace
 {
-Env keyEnv()
+using Configs = eacp::Vector<std::string>;
+
+AbiFingerprint cacheFingerprint(std::string compilerPath = "/usr/bin/c++",
+                                std::string version = "17.0.0.17000013")
 {
-    auto env = Env {};
-    env.cxxCompiler = "/usr/bin/c++";
-    env.cxxCompilerId = "AppleClang";
-    env.cxxCompilerVersion = "17.0.0.17000013";
-    env.systemName = "Darwin";
-    env.systemProcessor = "arm64";
-    env.osxDeploymentTarget = "11.0";
-    env.cxxStandard = "20";
-    return env;
+    auto fingerprint = AbiFingerprint {};
+    fingerprint.platform = "macos-arm64";
+    fingerprint.compilerId = "AppleClang";
+    fingerprint.compilerVersion = version;
+    fingerprint.compilerMajor = compilerMajor(version);
+    fingerprint.compilerPath = std::move(compilerPath);
+    fingerprint.systemName = "Darwin";
+    fingerprint.systemProcessor = "arm64";
+    fingerprint.options = {{"EACP_ENABLE_TESTS", "OFF"}};
+    fingerprint.sourceHash = "abc";
+    return fingerprint;
 }
 
-Request keyRequest()
+AbiFingerprint xcodeFingerprint()
 {
-    auto request = Request {};
-    request.name = "eacp";
-    request.gitUrl = "https://github.com/eyalamirmusic/eacp.git";
-    request.gitRef = "main";
-    return request;
+    return cacheFingerprint("/Applications/Xcode.app/clang++", "17.0.0.17000319");
 }
 
-std::string
-    keyWith(std::initializer_list<std::pair<std::string, std::string>> options)
+BinaryEntry cacheEntry(std::string directory,
+                       AbiFingerprint fingerprint,
+                       Configs configs,
+                       std::string createdAt = "2026-11-01T00:00:00Z")
 {
-    auto request = keyRequest();
+    return {eacp::FilePath {"/cache/bin/eacp/macos-arm64"} / directory,
+            std::move(fingerprint),
+            std::move(configs),
+            {},
+            std::move(createdAt)};
+}
 
-    for (const auto& [name, value]: options)
-        request.options[name] = value;
+using Entries = eacp::Vector<BinaryEntry>;
 
-    return binaryKey(makeManifest(request, keyEnv(), "abc123"));
+constexpr auto compatible = AbiMatch::compatible;
+
+// The directory name of the entry pickEntry chooses, or "none".
+std::string chosen(const Entries& entries,
+                   const AbiFingerprint& wanted,
+                   AbiMatch policy,
+                   const Configs& configs)
+{
+    const auto picked = pickEntry(entries, wanted, policy, configs);
+    return picked ? picked->prefix.fileName() : std::string {"none"};
 }
 } // namespace
 
-auto tKeyOptionOrder = test("BinaryCache/key/optionOrderDoesNotMatter") = []
+auto tPickCompatible = test("BinaryCache/pick/compatibleUsesOtherCompiler") = []
 {
-    const auto forward = keyWith({{"EACP_BUILD_GRAPHICS", "OFF"},
-                                  {"EACP_ENABLE_TESTS", "OFF"},
-                                  {"A_FIRST", "ON"}});
-    const auto backward = keyWith({{"A_FIRST", "ON"},
-                                   {"EACP_ENABLE_TESTS", "OFF"},
-                                   {"EACP_BUILD_GRAPHICS", "OFF"}});
+    const auto both = Configs {"Debug", "Release"};
+    const auto entries = Entries {cacheEntry("ninja", cacheFingerprint(), both)};
 
-    check(forward == backward);
-    check(forward.size() == 64);
+    check(chosen(entries, xcodeFingerprint(), compatible, both) == "ninja");
+    check(chosen(entries, xcodeFingerprint(), AbiMatch::strict, both) == "none");
+    check(chosen(entries, xcodeFingerprint(), AbiMatch::any, both) == "ninja");
 };
 
-auto tKeyOptionValue = test("BinaryCache/key/changedOptionChangesKey") = []
+auto tPickExact = test("BinaryCache/pick/exactPreferred") = []
 {
-    check(keyWith({{"EACP_ENABLE_TESTS", "OFF"}})
-          != keyWith({{"EACP_ENABLE_TESTS", "ON"}}));
-    check(keyWith({}) != keyWith({{"EACP_ENABLE_TESTS", "OFF"}}));
+    const auto both = Configs {"Debug", "Release"};
+    const auto entries =
+        Entries {cacheEntry("ninja", cacheFingerprint(), both, "2026-11-03"),
+                 cacheEntry("xcode", xcodeFingerprint(), both, "2026-11-01")};
+
+    check(chosen(entries, xcodeFingerprint(), compatible, {"Debug"}) == "xcode");
+    check(chosen(entries, cacheFingerprint(), compatible, {"Debug"}) == "ninja");
+    check(chosen(entries, xcodeFingerprint(), AbiMatch::any, {"Debug"}) == "xcode");
+
+    // Exact even when it still lacks a config the compatible one has.
+    const auto partial =
+        Entries {cacheEntry("ninja", cacheFingerprint(), both),
+                 cacheEntry("xcode", xcodeFingerprint(), {"Release"})};
+
+    check(chosen(partial, xcodeFingerprint(), compatible, {"Debug"}) == "xcode");
 };
 
-auto tKeyToolchain = test("BinaryCache/key/toolchainChangesKey") = []
+auto tPickComplete = test("BinaryCache/pick/thenCompleteThenNewest") = []
 {
-    const auto request = keyRequest();
-    auto other = keyEnv();
-    other.cxxCompilerVersion = "18.0.0";
+    const auto entries = Entries {
+        cacheEntry("full", cacheFingerprint("/opt/clang++"), {"Debug", "Release"}),
+        cacheEntry("newer", xcodeFingerprint(), {"Release"}, "2026-11-02")};
 
-    check(binaryKey(makeManifest(request, keyEnv(), "abc123"))
-          != binaryKey(makeManifest(request, other, "abc123")));
-    check(binaryKey(makeManifest(request, keyEnv(), "abc123"))
-          != binaryKey(makeManifest(request, keyEnv(), "def456")));
+    check(chosen(entries, cacheFingerprint(), compatible, {"Debug", "Release"})
+          == "full");
+    check(chosen(entries, cacheFingerprint(), compatible, {"Release"}) == "newer");
 };
 
-auto tKeyIgnoresMode = test("BinaryCache/key/ignoresModeAndRef") = []
+auto tPickPolicyFilters = test("BinaryCache/pick/policyFilters") = []
 {
-    auto request = keyRequest();
-    const auto before = binaryKey(makeManifest(request, keyEnv(), "abc123"));
+    const auto newerMajor = cacheFingerprint("/opt/clang++", "18.1.0");
+    const auto entries = Entries {cacheEntry("eighteen", newerMajor, {"Release"})};
 
-    request.mode = "prebuilt";
-    request.gitRef = "v1.0";
-    request.buildMissingBinaries = false;
-
-    check(binaryKey(makeManifest(request, keyEnv(), "abc123")) == before);
+    check(chosen(entries, cacheFingerprint(), compatible, {"Release"}) == "none");
+    check(chosen(entries, cacheFingerprint(), AbiMatch::any, {"Release"})
+          == "eighteen");
+    check(chosen({}, cacheFingerprint(), AbiMatch::any, {"Release"}) == "none");
 };
 
-auto tCanonicalForm = test("BinaryCache/key/canonicalFormIsCompactSorted") = []
+auto tAdditivePlan = test("BinaryCache/additive/onlyMissingConfigsAreBuilt") = []
 {
-    auto request = keyRequest();
-    request.options = {{"B", "2"}, {"A", "1"}};
+    // Ninja Release, then Ninja Debug, then Xcode (Debug + Release).
+    const auto release = cacheEntry("e", cacheFingerprint(), {"Release"});
+    const auto both = cacheEntry("e", cacheFingerprint(), {"Debug", "Release"});
 
-    const auto text = canonicalManifest(makeManifest(request, keyEnv(), "abc123"));
-
-    check(text.find('\n') == std::string::npos);
-    check(text.find("\"options\":{\"A\":\"1\",\"B\":\"2\"}") != std::string::npos);
-    check(text.find("\"configs\":[\"Debug\",\"Release\"]") != std::string::npos);
+    check(missingConfigs(release.configs, buildConfigsFor({"Debug"}))
+          == Configs {"Debug"});
+    check(
+        missingConfigs(both.configs, buildConfigsFor({"Debug", "Release"})).empty());
+    check(missingConfigs(both.configs, buildConfigsFor({"RelWithDebInfo"})).empty());
 };
 
-auto tKeySourceHash = test("BinaryCache/key/sourceHashChangesKey") = []
+auto tEntriesOnDisk = test("BinaryCache/entries/readFromDisk") = []
 {
-    const auto request = keyRequest();
-    const auto manifest = makeManifest(request, keyEnv(), "abc123");
+    auto root = eacp::TemporaryFile {};
+    const auto cache = CacheRoot {root.path()};
+    const auto fingerprint = cacheFingerprint();
+    const auto prefix = entryPrefix(cache, "eacp", fingerprint);
 
-    check(manifest.schema == 2);
-    check(manifest.sourceHash == "abc123");
-    check(binaryKey(manifest)
-          != binaryKey(makeManifest(request, keyEnv(), "abc124")));
+    check(prefix.parentDirectory() == cache.bin() / "eacp" / "macos-arm64");
+    check(prefix.fileName() == fingerprintId(fingerprint).substr(0, 12));
+
+    const auto manifest =
+        EntryManifest {EntryManifest {}.schema, fingerprint, "abc", "2026-11-02"};
+    const auto release = ConfigMarker {"Release", "2026-11-02", {}, {}};
+
+    check(saveJsonFile(prefix / "manifest.json", manifest));
+    check(saveJsonFile(prefix / "Release.json", release));
+
+    // A marker whose name and contents disagree does not count.
+    check(saveJsonFile(prefix / "Debug.json", release));
+
+    // An entry of the old bin/<name>/<key12> layout is never seen.
+    check(writeTextFile(cache.bin() / "eacp" / "8ea428e72a65" / "manifest.json",
+                        "{\"schema\": 1}"));
+    check(writeTextFile(cache.bin() / "eacp" / "8ea428e72a65.json", "{}"));
+
+    const auto entries = findEntries(cache, "eacp", "macos-arm64");
+
+    check(entries.size() == 1);
+    check(entries[0].prefix == prefix);
+    check(entries[0].configs == Configs {"Release"});
+    check(entries[0].fingerprint.compilerPath == "/usr/bin/c++");
+    check(entries[0].targetsFile() == prefix / "epm-targets.cmake");
+    check(allEntries(cache).size() == 1);
+    check(findEntries(cache, "eacp", "macos-x64").empty());
 };
 
-namespace BinaryCacheTests
+namespace BinaryCacheLockTests
 {
-constexpr auto packageName = "eacp";
 constexpr auto dependencyName = "Miro";
 constexpr auto builtDependencyHash = "1111";
 constexpr auto changedDependencyHash = "2222";
 
-LockedPackage createLockedDependency(const std::string& hash)
+eacp::FilePath writeLockWithDependencyHash(const eacp::FilePath& directory,
+                                           const std::string& hash)
 {
     auto package = LockedPackage {};
     package.name = dependencyName;
     package.hash = hash;
-    return package;
-}
 
-eacp::FilePath writeLockWithDependencyHash(const eacp::FilePath& directory,
-                                           const std::string& hash)
-{
     const auto path = directory / lockFileName;
     auto lock = LockFile {};
-    lock.storePackage(createLockedDependency(hash));
+    lock.storePackage(package);
     writeLockFile(path, lock);
     return path;
 }
 
-std::string writeMarkerBuiltWithDependency(const CacheRoot& cache)
+BinaryEntry entryBuiltWithDependency()
 {
-    const auto key = binaryKey(makeManifest(keyRequest(), keyEnv(), "abc123"));
-    auto marker = BinaryMarker {};
-    marker.key = key;
-    marker.dependencies[dependencyName] = builtDependencyHash;
-    saveJsonFile(cache.bin() / packageName / (key.substr(0, 12) + ".json"), marker);
-    return key;
+    auto entry = cacheEntry("aaa", cacheFingerprint(), {"Debug", "Release"});
+    entry.lockedDependencies["Debug"] = {{dependencyName, builtDependencyHash}};
+    entry.lockedDependencies["Release"] = {{dependencyName, changedDependencyHash}};
+    return entry;
 }
 
 ChildBuild createLockedChildBuild()
 {
     auto build = ChildBuild {};
-    build.request = keyRequest();
-    build.env = keyEnv();
-    build.env.module = "/epm/share/epm/cmake/epm.cmake";
+    build.request.name = "eacp";
     build.sourceDirectory = eacp::FilePath {"/c/src/eacp"};
     build.buildDirectory = eacp::FilePath {"/c/build/eacp/Debug"};
-    build.prefix = eacp::FilePath {"/c/bin/eacp/f685faf3d9f4"};
+    build.prefix = eacp::FilePath {"/c/bin/eacp/macos-arm64/f685faf3d9f4"};
     build.cacheRoot = eacp::FilePath {"/c"};
-    build.childLock = {eacp::FilePath {"/project/epm.lock"}, "offline"};
+    build.epmExecutable = eacp::FilePath {"/epm/bin/epm"};
+    build.childLock = {eacp::FilePath {"/project/epm.lock"},
+                       "offline",
+                       eacp::FilePath {"/project/epm.json"}};
     build.config = "Debug";
     return build;
 }
+} // namespace BinaryCacheLockTests
 
-bool hasArgument(const EA::Vector<std::string>& arguments,
-                 const std::string& argument)
+auto tConfigsMatchTheLock =
+    test("BinaryCache/lock/configsBuiltAgainstOtherHashesAreMissing") = []
 {
-    return arguments.contains(argument);
-}
+    using namespace BinaryCacheLockTests;
+    const auto directory = createEmptyTestDirectory("binary-cache-lock");
+    const auto lock = writeLockWithDependencyHash(directory, builtDependencyHash);
+    const auto entry = withConfigsMatchingTheLock(entryBuiltWithDependency(), lock);
 
-bool hasDefinitionNamed(const EA::Vector<std::string>& arguments,
-                        const std::string& name)
-{
-    const auto prefix = "-D" + name + "=";
-
-    for (const auto& argument: arguments)
-    {
-        if (argument.starts_with(prefix))
-            return true;
-    }
-
-    return false;
-}
-} // namespace BinaryCacheTests
-
-auto tFindDependencyHash =
-    test("BinaryCache/find/missesWhenLockedDependencyHashChanges") = []
-{
-    using namespace BinaryCacheTests;
-    const auto directory = createEmptyTestDirectory("binary-cache-find");
-    const auto cache = CacheRoot {directory / "cache"};
-    const auto key = writeMarkerBuiltWithDependency(cache);
-
-    const auto sameLock =
-        writeLockWithDependencyHash(directory / "same", builtDependencyHash);
-    const auto changedLock =
-        writeLockWithDependencyHash(directory / "changed", changedDependencyHash);
-
-    check(findBinary(cache, packageName, key, sameLock).has_value());
-    check(!findBinary(cache, packageName, key, changedLock).has_value());
-    check(!findBinary(cache, packageName, key, directory / "missing.lock")
-               .has_value());
+    check(entry.configs == Configs {"Debug"});
+    check(withConfigsMatchingTheLock(entryBuiltWithDependency(),
+                                     directory / "missing.lock")
+              .configs.empty());
 };
 
 auto tChildLockArguments = test("BinaryCache/childBuild/injectsEpmAndTheLock") = []
 {
-    using namespace BinaryCacheTests;
-    const auto build = createLockedChildBuild();
-    const auto arguments = configureArguments(build);
+    using namespace BinaryCacheLockTests;
+    const auto arguments = configureArguments(createLockedChildBuild());
 
-    check(hasArgument(arguments,
-                      "-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=/c/build/eacp/Debug/"
-                      "epm-export.cmake;/epm/share/epm/cmake/epm.cmake"));
-    check(hasArgument(arguments, "-DEPM_LOCK_FILE=/project/epm.lock"));
-    check(hasArgument(arguments, "-DEPM_LOCK_MODE=offline"));
-    check(hasArgument(arguments, "-DEPM_CACHE=/c"));
-    check(hasArgument(arguments,
-                      "-DEPM_EXECUTABLE=" + eacp::Files::executablePath().str()));
+    check(
+        arguments.contains("-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=/c/build/eacp/Debug/"
+                           "epm-export.cmake;/c/build/eacp/Debug/epm.cmake"));
+    check(arguments.contains("-DEPM_NESTED=ON"));
+    check(arguments.contains("-DEPM_EXECUTABLE=/epm/bin/epm"));
+    check(arguments.contains("-DEPM_LOCK_FILE=/project/epm.lock"));
+    check(arguments.contains("-DEPM_LOCK_MODE=offline"));
+    check(arguments.contains("-DEPM_MANIFEST_FILE=/project/epm.json"));
+    check(arguments.contains("-DEPM_ROOT_NAME=eacp"));
+    check(arguments.contains("-DEPM_CACHE=/c"));
 };

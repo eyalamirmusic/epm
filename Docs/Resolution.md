@@ -9,8 +9,13 @@ translated from Go's semantic-version-only world to git refs.
 
 A requirement is what one project asks of a package: a URL and a ref, plus the
 commit that ref names. Each package's requirements come from its own
-`epm_add_package`, `CPMAddPackage` and `FetchContent_Declare` calls. The root
-project's calls are requirements like everyone else's, recorded as `root`.
+`epm.json` `packages` (`Docs/Graph.md`) and its `epm_add_package`,
+`CPMAddPackage` and `FetchContent_Declare` calls. The root project's
+declarations are requirements like everyone else's, recorded as `root`; a name
+the root's `epm.json` graph holds has that one definition, which a package call
+for the same name loads rather than fetching another. Child builds of
+prebuilt packages resolve their own calls against the root's lock, recorded
+under the package's name.
 
 A dependency that ships a lock (`epm.lock`, or a `lockstep.lock`, which has the
 same form) lists the commits it was built with. Each entry is that dependency's
@@ -37,10 +42,12 @@ configure, which then adds it from the start.
 
 ## epm.json
 
-`epm.json` beside the top-level `CMakeLists.txt` is go.mod's `replace`:
+The `overrides` of `epm.json` beside the top-level `CMakeLists.txt` are go.mod's
+`replace`, beside its `packages` and `profiles`:
 
 ```json
-{ "overrides": { "eacp": { "commit": "57b2ef60…" },
+{ "packages": [ { "name": "eacp", "git": "eyalamirmusic/eacp", "tag": "develop" } ],
+  "overrides": { "eacp": { "commit": "57b2ef60…" },
                  "Miro": { "url": "https://github.com/me/Miro.git", "tag": "v1.2" } } }
 ```
 
@@ -49,3 +56,10 @@ records `"isOverridden": true`. Only the root's `epm.json` counts; a
 dependency's is never read, as Go ignores `replace` outside the main module.
 Child builds of prebuilt packages read the root's. Both `epm.json` and the
 lock are configure inputs, so editing either reconfigures the next build.
+
+## The binary cache
+
+A cache entry's fingerprint holds the package's Merkle hash, so a binary is
+used only with exactly the sources in the lock. Each config of an entry also
+records the hashes of the packages its child build took from the lock, and a
+config whose dependencies the lock now holds at other hashes is rebuilt.

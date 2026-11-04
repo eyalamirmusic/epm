@@ -31,16 +31,18 @@ struct Env
     std::string systemProcessor;
     std::string osxArchitectures;
     std::string osxDeploymentTarget;
+
+    // CMAKE_OSX_SYSROOT: tells an iOS simulator build from a device build.
+    std::string osxSysroot;
+
+    // CMAKE_ANDROID_ARCH_ABI (or the NDK toolchain's ANDROID_ABI).
+    std::string androidAbi;
     std::string cxxStandard;
     std::string toolchainFile;
 
     // CMAKE_PREFIX_PATH, so a child build finds what the consumer's
     // find_package calls find.
     std::string prefixPath;
-
-    // The epm.cmake that wrote this file, loaded into child builds that
-    // resolve their dependencies against the consumer's lock.
-    std::string module;
 
     MIRO_REFLECT(schema,
                  cmake,
@@ -58,9 +60,10 @@ struct Env
                  systemProcessor,
                  osxArchitectures,
                  osxDeploymentTarget,
+                 osxSysroot,
+                 androidAbi,
                  cxxStandard,
                  toolchainFile,
-                 prefixPath,
-                 module)
+                 prefixPath)
 };
 } // namespace epm

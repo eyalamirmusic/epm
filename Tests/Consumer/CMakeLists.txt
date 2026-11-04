@@ -40,3 +40,4 @@ add_consumer_test(lockIsAConfigureInputNinja RunLockInputProject.cmake lock-inpu
 add_consumer_test(requirementsAreSelectedMinimally RunRequirementsProject.cmake
         requirements)
 add_consumer_test(symlinksHashAlikeEverywhere RunSymlinksProject.cmake symlinks)
+add_consumer_test(graphGoesThroughTheLock RunGraphLockProject.cmake graph-lock)

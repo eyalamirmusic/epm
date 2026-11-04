@@ -46,6 +46,18 @@ struct CommandOptions
     // the CPM and FetchContent commands, which always add_subdirectory.
     std::string defaultMode = "auto";
     bool buildMissingBinaries = true;
+
+    // The epm.json graph's packages: a package call for one of them loads it
+    // from the graph, so each name has one definition.
+    EA::Vector<std::string> graphPackages;
+
+    // configure: overrides.json, and where graph.cmake and graph.json go.
+    eacp::FilePath overridesFile;
+    eacp::FilePath outputDirectory;
+
+    // EPM_CONFIGS as epm.cmake resolved it, and EPM_ABI_MATCH (Request).
+    EA::Vector<std::string> configs;
+    std::string abiMatch = "compatible";
     EA::Vector<std::string> overrides;
     bool isFullVerify = false;
     bool shouldAnnounce = false;
@@ -53,6 +65,7 @@ struct CommandOptions
 
 int runBeginCommand(const CommandOptions& options);
 int runAddCommand(const CommandOptions& options);
+int runConfigureCommand(const CommandOptions& options);
 int runProvideCommand(const CommandOptions& options);
 int runUpdateCommand(const CommandOptions& options);
 int runVerifyCommand(const CommandOptions& options);

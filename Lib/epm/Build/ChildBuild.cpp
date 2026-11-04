@@ -1,11 +1,11 @@
 #include "ChildBuild.h"
+#include "Configs.h"
 
 #include <epm/Util/Command.h>
 #include <epm/Util/Log.h>
 #include <epm/Util/Text.h>
 
 #include <eacp/Core/Platform/Platform.h>
-#include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Strings.h>
 
 namespace epm
@@ -15,8 +15,23 @@ using namespace eacp;
 namespace
 {
 constexpr auto failureTailLines = 40;
+constexpr auto exportScriptName = "epm-export.cmake";
+constexpr auto moduleScriptName = "epm.cmake";
+constexpr auto providerScriptName = "epm-provider.cmake";
+constexpr auto nestedGraphName = "epm-graph.cmake";
 
-void addDefinition(Vector<std::string>& arguments,
+bool hasDependencies(const ChildBuild& build)
+{
+    return !build.dependencyGraph.empty();
+}
+
+std::string topLevelIncludes(const ChildBuild& build)
+{
+    return (build.buildDirectory / exportScriptName).str() + ";"
+           + (build.buildDirectory / moduleScriptName).str();
+}
+
+void addDefinition(EA::Vector<std::string>& arguments,
                    std::string_view name,
                    const std::string& value)
 {
@@ -26,7 +41,7 @@ void addDefinition(Vector<std::string>& arguments,
 
 ChildBuildResult runStep(const ChildBuild& build,
                          std::string_view step,
-                         const Vector<std::string>& arguments)
+                         const EA::Vector<std::string>& arguments)
 {
     Log::step("epm: " + std::string {step} + " " + build.request.name + " ("
               + build.config + ")");
@@ -44,22 +59,6 @@ ChildBuildResult runStep(const ChildBuild& build,
             Log::isVerbose() ? std::string {}
                              : lastLines(result.output, failureTailLines)};
 }
-bool isLockingChildDependencies(const ChildBuild& build)
-{
-    return !build.env.module.empty();
-}
-
-// With a lock, epm.cmake is loaded too, so the dependency's own CPMAddPackage
-// and FetchContent calls resolve against the consumer's lock.
-std::string topLevelIncludes(const ChildBuild& build)
-{
-    auto includes = (build.buildDirectory / "epm-export.cmake").str();
-
-    if (isLockingChildDependencies(build))
-        includes += ";" + build.env.module;
-
-    return includes;
-}
 } // namespace
 
 Generator chooseGenerator(const Env& env, const std::optional<FilePath>& ninja)
@@ -76,12 +75,12 @@ Generator chooseGenerator(const Env& env, const std::optional<FilePath>& ninja)
     return {"Unix Makefiles", {}};
 }
 
-Vector<std::string> configureArguments(const ChildBuild& build)
+EA::Vector<std::string> configureArguments(const ChildBuild& build)
 {
     const auto& env = build.env;
     const auto exportFile = build.prefix / ("export-" + build.config + ".cmake");
 
-    auto arguments = Vector<std::string> {
+    auto arguments = EA::Vector<std::string> {
         "-S", build.sourceDirectory.str(), "-B", build.buildDirectory.str()};
 
     if (!build.generator.name.empty())
@@ -93,7 +92,6 @@ Vector<std::string> configureArguments(const ChildBuild& build)
     addDefinition(arguments, "CMAKE_MAKE_PROGRAM", build.generator.makeProgram);
     addDefinition(arguments, "CMAKE_BUILD_TYPE", build.config);
     addDefinition(arguments, "CMAKE_TOOLCHAIN_FILE", env.toolchainFile);
-    addDefinition(arguments, "CMAKE_PREFIX_PATH", env.prefixPath);
     addDefinition(arguments, "CMAKE_C_COMPILER", env.cCompiler);
     addDefinition(arguments, "CMAKE_CXX_COMPILER", env.cxxCompiler);
     addDefinition(arguments, "CMAKE_OSX_ARCHITECTURES", env.osxArchitectures);
@@ -105,21 +103,20 @@ Vector<std::string> configureArguments(const ChildBuild& build)
     addDefinition(arguments, "CPM_SOURCE_CACHE", build.cpmCache.str());
     addDefinition(
         arguments, "CMAKE_PROJECT_TOP_LEVEL_INCLUDES", topLevelIncludes(build));
-
-    if (isLockingChildDependencies(build))
-    {
-        addDefinition(arguments, "EPM_EXECUTABLE", Files::executablePath().str());
-        addDefinition(arguments, "EPM_LOCK_FILE", build.childLock.lock.str());
-        addDefinition(arguments, "EPM_LOCK_MODE", build.childLock.mode);
-        addDefinition(
-            arguments, "EPM_MANIFEST_FILE", build.childLock.manifest.str());
-        addDefinition(arguments, "EPM_ROOT_NAME", build.request.name);
-        addDefinition(arguments, "EPM_CACHE", build.cacheRoot.str());
-    }
     addDefinition(arguments, "EPM_EXPORT_FILE", exportFile.str());
-    addDefinition(arguments,
-                  "EPM_EXPORT_NAMESPACE",
-                  "epm_" + Strings::toLower(build.config) + "::");
+    addDefinition(arguments, "EPM_EXPORT_NAMESPACE", exportNamespace(build.config));
+
+    addDefinition(arguments, "EPM_NESTED", "ON");
+    addDefinition(arguments, "EPM_EXECUTABLE", build.epmExecutable.str());
+    addDefinition(arguments, "EPM_CACHE", build.cacheRoot.str());
+    addDefinition(arguments, "EPM_LOCK_FILE", build.childLock.lock.str());
+    addDefinition(arguments, "EPM_LOCK_MODE", build.childLock.mode);
+    addDefinition(arguments, "EPM_MANIFEST_FILE", build.childLock.manifest.str());
+    addDefinition(arguments, "EPM_ROOT_NAME", build.request.name);
+
+    if (hasDependencies(build))
+        addDefinition(
+            arguments, "EPM_GRAPH", (build.buildDirectory / nestedGraphName).str());
 
     for (const auto& [key, value]: build.request.options)
         arguments.add("-D" + key + "=" + value);
@@ -127,17 +124,24 @@ Vector<std::string> configureArguments(const ChildBuild& build)
     return arguments;
 }
 
-Vector<std::string> buildArguments(const ChildBuild& build)
+EA::Vector<std::string> buildArguments(const ChildBuild& build)
 {
     return {"--build", build.buildDirectory.str(), "--parallel"};
 }
 
 ChildBuildResult runChildBuild(const ChildBuild& build)
 {
-    const auto script = build.buildDirectory / "epm-export.cmake";
+    auto files = EA::Vector<std::pair<FilePath, std::string_view>> {
+        {build.buildDirectory / exportScriptName, embeddedExportScript()},
+        {build.buildDirectory / moduleScriptName, embeddedModuleScript()},
+        {build.buildDirectory / providerScriptName, embeddedProviderScript()}};
 
-    if (!writeTextFile(script, embeddedExportScript()))
-        return {false, "cannot write " + script.str(), {}};
+    if (hasDependencies(build))
+        files.add({build.buildDirectory / nestedGraphName, build.dependencyGraph});
+
+    for (const auto& [path, text]: files)
+        if (!writeTextFile(path, text))
+            return {false, "cannot write " + path.str(), {}};
 
     auto configured = runStep(build, "configure", configureArguments(build));
 

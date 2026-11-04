@@ -11,11 +11,11 @@ namespace
 {
 // No terminal prompt, no GUI askpass, ssh in batch mode: git runs with nobody
 // to answer, so anything that would ask must fail instead.
-Vector<Processes::EnvironmentVariable> nonInteractiveEnvironment()
+EA::Vector<Processes::EnvironmentVariable> nonInteractiveEnvironment()
 {
     using Variable = Processes::EnvironmentVariable;
 
-    auto environment = Vector<Variable> {};
+    auto environment = EA::Vector<Variable> {};
 
     // Spelled out rather than braced: `{"a", "b"}` is ambiguous between one
     // variable and an initializer_list of two.
@@ -34,19 +34,19 @@ std::string firstLine(const std::string& text)
 }
 
 // Git for Windows refuses checkouts past MAX_PATH unless core.longpaths is set.
-Vector<std::string> platformArguments(const Vector<std::string>& arguments)
+EA::Vector<std::string> platformArguments(const EA::Vector<std::string>& arguments)
 {
     if (!Platform::isWindows())
         return arguments;
 
-    auto withLongPaths = Vector<std::string> {"-c", "core.longpaths=true"};
+    auto withLongPaths = EA::Vector<std::string> {"-c", "core.longpaths=true"};
     withLongPaths.addFrom(arguments);
     return withLongPaths;
 }
 } // namespace
 
-Result run(const Vector<std::string>& arguments,
-           const Vector<Processes::EnvironmentVariable>& environment)
+Result run(const EA::Vector<std::string>& arguments,
+           const EA::Vector<Processes::EnvironmentVariable>& environment)
 {
     auto options = Processes::ProcessOptions {};
 

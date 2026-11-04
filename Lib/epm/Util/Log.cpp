@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <string>
 
 namespace epm::Log
 {
@@ -30,6 +31,11 @@ void step(std::string_view line)
 {
     if (isVerbose())
         eacp::Console::print(line);
+}
+
+void progress(std::string_view line)
+{
+    eacp::Console::print("-- " + std::string {line});
 }
 
 void stream(std::string_view chunk)

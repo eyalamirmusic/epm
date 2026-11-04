@@ -1,6 +1,9 @@
 #include "Commands.h"
 #include <epm/Emit/Response.h>
+#include <epm/Emit/GraphResponse.h>
+#include <epm/Graph/Graph.h>
 #include <epm/Resolve/Resolve.h>
+#include <epm/Spec/Overrides.h>
 #include <epm/Lock/LockFile.h>
 #include <epm/Lock/Messages.h>
 #include <epm/Spec/PackageArguments.h>
@@ -552,10 +555,10 @@ std::string getChildLockMode(const CommandOptions& options)
 
 // epm's binary cache: the request it keys on, then MODE's choice between the
 // cached libraries and add_subdirectory. nullopt means source.
-std::optional<eacp::FilePath> findOrBuildBinary(const CommandOptions& options,
-                                                const PackageSpec& spec,
-                                                const std::string& mode,
-                                                const ResolvedSource& resolved)
+std::optional<Response> findOrBuildBinary(const CommandOptions& options,
+                                          const PackageSpec& spec,
+                                          const std::string& mode,
+                                          const ResolvedSource& resolved)
 {
     auto request = Request {};
     request.name = spec.name;
@@ -563,6 +566,8 @@ std::optional<eacp::FilePath> findOrBuildBinary(const CommandOptions& options,
     request.gitRef = spec.ref;
     request.mode = mode;
     request.buildMissingBinaries = options.buildMissingBinaries;
+    request.configs = options.configs;
+    request.abiMatch = options.abiMatch;
 
     for (const auto& [name, value]: spec.options)
         request.options[name] = value;
@@ -571,7 +576,10 @@ std::optional<eacp::FilePath> findOrBuildBinary(const CommandOptions& options,
         SourceSnapshot {resolved.commit, resolved.hash, resolved.directory};
     auto build = LockForChildBuilds {
         options.lock, getChildLockMode(options), options.manifest};
-    auto result = resolveBinary(
+    if (auto error = requestError(request))
+        throw std::runtime_error(*error);
+
+    auto result = resolveSnapshot(
         request, options.env, CacheRoot {options.cache}, source, build);
 
     if (!result.ok)
@@ -587,7 +595,7 @@ std::optional<eacp::FilePath> findOrBuildBinary(const CommandOptions& options,
     if (result.response.mode != "prebuilt")
         return std::nullopt;
 
-    return result.response.prefix;
+    return result.response;
 }
 
 bool isResolvingRequirements(const CommandOptions& options, const Session& session)
@@ -630,7 +638,7 @@ std::string identifyRequester(const CommandOptions& options, const Session& sess
 std::optional<Requirement> findOverrideRequirement(const CommandOptions& options,
                                                    const PackageSpec& spec)
 {
-    auto override = readManifest(options.manifest).findOverride(spec.name);
+    auto override = readRootManifest(options.manifest).findOverride(spec.name);
 
     if (!override)
         return std::nullopt;
@@ -813,8 +821,30 @@ std::string describeRaisedRequirement(const std::string& name,
             + "' from the start.");
 }
 
+// A package call for a name the epm.json graph holds: the graph's definition
+// is loaded through the provider, as find_package would.
+std::string createGraphPackageBlock(const std::string& name)
+{
+    auto quoted = cmakeQuoted(name);
+    auto body =
+        "epm_provider_load(" + quoted + ")\n"
+        + "get_property(_epm_mode GLOBAL PROPERTY EPM_PACKAGE_" + name + "_MODE)\n"
+        + "get_property(_epm_source GLOBAL PROPERTY EPM_PACKAGE_" + name
+        + "_SOURCE_DIR)\n" + "get_property(_epm_binary GLOBAL PROPERTY EPM_PACKAGE_"
+        + name + "_BINARY_DIR)\n" + "set(" + name
+        + "_SOURCE_DIR \"${_epm_source}\")\n" + "set(" + name
+        + "_BINARY_DIR \"${_epm_binary}\")\n" + "set(" + name
+        + "_MODE \"${_epm_mode}\")\n" + "set(" + name + "_ADDED YES)\n"
+        + "set(CPM_LAST_PACKAGE_NAME " + quoted + ")\n";
+
+    return createPropagatingBlock(name, body);
+}
+
 std::string addPackage(const CommandOptions& options, const PackageSpec& requested)
 {
+    if (options.graphPackages.contains(requested.name))
+        return createGraphPackageBlock(requested.name);
+
     auto session = readSession(options.buildDirectory);
     auto requester = identifyRequester(options, session);
     auto override = findOverrideRequirement(options, requested);
@@ -895,12 +925,12 @@ std::string addPackage(const CommandOptions& options, const PackageSpec& request
                                    source.hash,
                                    selection.selected.commit};
     auto mode = spec.mode.empty() ? options.defaultMode : spec.mode;
-    auto prefix = std::optional<eacp::FilePath> {};
+    auto prebuilt = std::optional<Response> {};
 
     if (mode != "source" && !source.hash.empty() && !spec.isDownloadOnly)
-        prefix = findOrBuildBinary(options, spec, mode, source);
+        prebuilt = findOrBuildBinary(options, spec, mode, source);
 
-    if (prefix)
+    if (prebuilt)
     {
         package.mode = "prebuilt";
         package.binaryDirectory.clear();
@@ -908,15 +938,15 @@ std::string addPackage(const CommandOptions& options, const PackageSpec& request
 
     session.packages.push_back(package);
 
-    if (!prefix && !source.hash.empty())
+    if (!prebuilt && !source.hash.empty())
         addShippedRequirements(session, spec.name, source.directory);
 
     writeSession(options.buildDirectory, session);
 
-    if (prefix)
+    if (prebuilt)
         return createPropagatingBlock(spec.name,
                                       createPackageVariables(package, true)
-                                          + prebuiltTargetsText(*prefix));
+                                          + prebuiltLoadText(*prebuilt));
 
     return createPropagatingBlock(spec.name,
                                   createPackageVariables(package, true)
@@ -951,6 +981,61 @@ SessionOverride parseOverride(const std::string& definition)
     throw std::runtime_error("--override takes EPM_<Name>_SOURCE=<dir> or "
                              "CPM_<Name>_SOURCE=<dir>, not "
                              + definition);
+}
+// One package of an epm.json graph through the lock: each declaration is a
+// requirement, the root's epm.json overrides replace them all, minimal version
+// selection chooses, and the choice is locked and fetched like any other.
+LockedSource lockGraphPackage(const CommandOptions& options,
+                              Session& session,
+                              const std::string& name,
+                              const EA::Vector<Requirement>& declared)
+{
+    auto requested = PackageSpec {};
+    requested.name = name;
+    requested.kind = PackageKind::git;
+    requested.url = declared.front().url;
+    requested.ref = declared.front().requestedRef;
+
+    auto override = findOverrideRequirement(options, requested);
+    auto requirements = EA::Vector<Requirement> {};
+
+    if (override)
+    {
+        override->commit =
+            resolveRequirementCommit(options, requested, *override, session);
+        requirements.add(*override);
+    }
+    else
+    {
+        for (auto requirement: declared)
+        {
+            requirement.commit =
+                resolveRequirementCommit(options, requested, requirement, session);
+            session.addRequirement(name, requirement);
+            requirements = gatherRequirements(options, session, name, requirement);
+        }
+    }
+
+    auto selection = selectRequirement(requirements);
+
+    if (selection.isConflict)
+        return {false, {}, {}, describeRequirementConflict(name, requirements)};
+
+    auto spec = withRequirement(requested, selection.selected);
+    auto source = resolvePackageSource(options, spec, session);
+
+    if (isResolvingRequirements(options, session))
+        recordRequirementsInLock(options,
+                                 name,
+                                 override ? requirements
+                                          : session.findRequirements(name),
+                                 override.has_value());
+
+    return {
+        true,
+        SourceSnapshot {selection.selected.commit, source.hash, source.directory},
+        selection.selected,
+        {}};
 }
 } // namespace
 
@@ -1007,6 +1092,69 @@ int runBeginCommand(const CommandOptions& options)
         { return entry.variable.starts_with(overridePrefixes[0]); });
 
     writeSession(options.buildDirectory, session);
+    return 0;
+}
+
+int runConfigureCommand(const CommandOptions& options)
+{
+    auto inputs = GraphInputs {};
+    inputs.environment = eacp::getEnv;
+    inputs.manifestDirectory = options.manifest.parentDirectory();
+    inputs.env = options.env;
+
+    auto loaded = loadManifest(options.manifest);
+
+    if (!loaded.ok)
+        throw std::runtime_error("the manifest " + options.manifest.str() + ": "
+                                 + loaded.error);
+
+    inputs.manifest = std::move(loaded.manifest);
+
+    if (auto overrides = loadJsonFile<Overrides>(options.overridesFile))
+        inputs.overrides = std::move(*overrides);
+    else
+        throw std::runtime_error("cannot read the overrides file "
+                                 + options.overridesFile.str());
+
+    auto session = readSession(options.buildDirectory);
+    auto fetch =
+        [&](const std::string& name, const EA::Vector<Requirement>& declared)
+    {
+        try
+        {
+            return lockGraphPackage(options, session, name, declared);
+        }
+        catch (const std::exception& error)
+        {
+            return LockedSource {false, {}, {}, error.what()};
+        }
+    };
+    auto childLock = LockForChildBuilds {
+        options.lock, getChildLockMode(options), options.manifest};
+    auto result =
+        configureGraph(inputs, CacheRoot {options.cache}, fetch, childLock);
+
+    writeSession(options.buildDirectory, session);
+
+    if (!result.ok)
+    {
+        auto message = result.error;
+
+        if (!result.details.empty())
+            message = result.details + "\n" + message;
+
+        throw std::runtime_error(message);
+    }
+
+    auto graphJson = options.outputDirectory / "graph.json";
+    auto graphCMake = options.outputDirectory / "graph.cmake";
+
+    if (!writeGraphJson(graphJson, result.graph))
+        throw std::runtime_error("cannot write " + graphJson.str());
+
+    if (!writeGraphCMake(graphCMake, result.graph))
+        throw std::runtime_error("cannot write " + graphCMake.str());
+
     return 0;
 }
 

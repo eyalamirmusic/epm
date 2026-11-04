@@ -24,13 +24,12 @@ struct Generator
 Generator chooseGenerator(const Env& env,
                           const std::optional<eacp::FilePath>& ninja);
 
-// The lock a child build resolves its own dependencies against.
+// The consumer's lock, which the child's own CPMAddPackage and FetchContent
+// calls resolve against, and the root epm.json whose overrides apply there.
 struct LockForChildBuilds
 {
     eacp::FilePath lock;
     std::string mode = "locked";
-
-    // The consumer's epm.json, which overrides inside the child too.
     eacp::FilePath manifest;
 };
 
@@ -44,19 +43,34 @@ struct ChildBuild
     eacp::FilePath buildDirectory;
     eacp::FilePath prefix;
     eacp::FilePath cpmCache;
+    std::string config;
+
+    // graph.cmake (Docs/Graph.md §7) of the package's dependency closure, all
+    // prebuilt, which the nested provider loads (§10). Empty for a package
+    // without dependencies.
+    std::string dependencyGraph;
+
+    // EPM_EXECUTABLE in the child, whose epm.cmake runs it.
+    eacp::FilePath epmExecutable;
     eacp::FilePath cacheRoot;
     LockForChildBuilds childLock;
-    std::string config;
 };
 
 // The `cmake -S -B` arguments of PoC §5. Toolchain values the consumer left
-// empty are not passed at all.
+// empty are not passed at all. Every child also gets EPM_NESTED, the lock
+// settings and epm.cmake after epm-export.cmake in
+// CMAKE_PROJECT_TOP_LEVEL_INCLUDES, so its own package calls go through the
+// lock; with a dependencyGraph also EPM_GRAPH (Docs/Graph.md §10).
 EA::Vector<std::string> configureArguments(const ChildBuild& build);
 
 EA::Vector<std::string> buildArguments(const ChildBuild& build);
 
 // epm-export.cmake as it was when this binary was built.
 std::string_view embeddedExportScript();
+
+// epm.cmake and epm-provider.cmake as they were when this binary was built.
+std::string_view embeddedModuleScript();
+std::string_view embeddedProviderScript();
 
 struct ChildBuildResult
 {
@@ -68,6 +82,8 @@ struct ChildBuildResult
     std::string details;
 };
 
-// Writes epm-export.cmake into the build directory, then configures and builds.
+// Writes epm-export.cmake, epm.cmake and epm-provider.cmake into the build
+// directory (with dependencies also epm-graph.cmake), then configures and
+// builds.
 ChildBuildResult runChildBuild(const ChildBuild& build);
 } // namespace epm

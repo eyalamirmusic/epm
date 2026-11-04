@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CacheRoot.h"
+#include "Fingerprint.h"
 #include "SourceCache.h"
 
 #include <epm/Build/ChildBuild.h>
@@ -13,96 +14,99 @@
 
 namespace epm
 {
-// Everything that goes into a binary key, written beside the entry as
-// manifest.json.
-//
-// The canonical form that is hashed is Miro's compact output of this struct,
-// `Miro::toJSONString(manifest)`: Miro objects are std::maps, so keys come out
-// sorted (options included) with no whitespace, whatever order the request
-// listed them in.
-struct BuildManifest
+// bin/<name>/<platform>/<fp12>/manifest.json, written when the entry is
+// created, before its first config is built.
+struct EntryManifest
 {
-    // 2: the Merkle hash of the sources replaced sourceId (url + commit).
-    int schema = 2;
-    std::string name;
+    int schema = 3;
+    AbiFingerprint fingerprint;
     std::string sourceHash;
-    std::string cxxCompiler;
-    std::string cxxCompilerId;
-    std::string cxxCompilerVersion;
-    std::string systemName;
-    std::string systemProcessor;
-    std::string osxArchitectures;
-    std::string osxDeploymentTarget;
-    std::string cxxStandard;
-    std::map<std::string, std::string> options;
-    EA::Vector<std::string> configs {"Debug", "Release"};
+    std::string createdAt;
 
-    MIRO_REFLECT(schema,
-                 name,
-                 sourceHash,
-                 cxxCompiler,
-                 cxxCompilerId,
-                 cxxCompilerVersion,
-                 systemName,
-                 systemProcessor,
-                 osxArchitectures,
-                 osxDeploymentTarget,
-                 cxxStandard,
-                 options,
-                 configs)
+    MIRO_REFLECT(schema, fingerprint, sourceHash, createdAt)
 };
 
-BuildManifest makeManifest(const Request& request,
-                           const Env& env,
-                           const std::string& sourceHash);
-
-std::string canonicalManifest(const BuildManifest& manifest);
-
-// sha256 of the canonical manifest JSON, full hex; directories use the first 12.
-std::string binaryKey(const BuildManifest& manifest);
-
-// bin/<name>/<key12>.json, written last: the entry exists once this does.
-struct BinaryMarker
+// <prefix>/<Config>.json, written last for that config, after its harvest:
+// the config is in the entry once this exists. Records the compiler that
+// built it, which may differ from the manifest's for a config added through a
+// compatible match.
+struct ConfigMarker
 {
-    std::string key;
-    std::string commit;
+    std::string config;
     std::string builtAt;
+    std::string compilerPath;
+    std::string compilerVersion;
 
-    // The Merkle hash of every package a child build added through the lock,
-    // by name. Empty when the child's CPM fetched them itself.
-    std::map<std::string, std::string> dependencies;
+    // The Merkle hash of every package the child build's own CPMAddPackage
+    // and FetchContent calls took from the lock, by name.
+    std::map<std::string, std::string> lockedDependencies;
 
-    MIRO_REFLECT(key, commit, builtAt, dependencies)
+    MIRO_REFLECT(config, builtAt, compilerPath, compilerVersion, lockedDependencies)
 };
 
 struct BinaryEntry
 {
     eacp::FilePath prefix;
-    eacp::FilePath targetsFile;
+    AbiFingerprint fingerprint;
+
+    // The configs whose markers exist, canonical.
+    EA::Vector<std::string> configs;
+
+    // Each config's lockedDependencies.
+    std::map<std::string, std::map<std::string, std::string>> lockedDependencies;
+    std::string createdAt;
+
+    eacp::FilePath targetsFile() const;
 };
 
-// The entry at bin/<name>/<key12>, only once its completeness marker exists
-// and while every dependency it was built with is still locked at the hash it
-// recorded.
-std::optional<BinaryEntry> findBinary(const CacheRoot& cache,
-                                      const std::string& name,
-                                      const std::string& key,
-                                      const eacp::FilePath& lock);
+// bin/<name>/<platform>/<fp12>: fp12 is the first 12 hex of fingerprintId.
+eacp::FilePath entryPrefix(const CacheRoot& cache,
+                           const std::string& name,
+                           const AbiFingerprint& fingerprint);
+
+// Every entry of `name` under `platform` that has a manifest of this schema.
+// Entries of the old bin/<name>/<key12> layout are never seen.
+EA::Vector<BinaryEntry> findEntries(const CacheRoot& cache,
+                                    const std::string& name,
+                                    const std::string& platform);
+
+// The entry with only the configs whose lockedDependencies the lock still
+// holds at the same hashes; the others are rebuilt.
+BinaryEntry withConfigsMatchingTheLock(BinaryEntry entry,
+                                       const eacp::FilePath& lock);
+
+// Every entry in the cache, by name then platform.
+EA::Vector<BinaryEntry> allEntries(const CacheRoot& cache);
+
+// The entry to use for `wanted` among those `policy` accepts, preferring an
+// exact (strict) match, then one holding every config in `configs`, then the
+// one holding most of them, then the newest.
+std::optional<BinaryEntry> pickEntry(const EA::Vector<BinaryEntry>& entries,
+                                     const AbiFingerprint& wanted,
+                                     AbiMatch policy,
+                                     const EA::Vector<std::string>& configs);
 
 struct BinaryResult
 {
     bool ok = false;
     BinaryEntry entry;
+
+    // What this call built and added to the entry.
+    EA::Vector<std::string> builtConfigs;
     std::string error;
     std::string details;
 };
 
-// Builds Debug and Release of the snapshot into bin/<name>/<key12> and
-// harvests them, under the package lock. Returns the existing entry when
-// another process finished it first.
+// Under the package lock: picks the entry for the request again (another
+// process may have built it meanwhile) or creates the one for the current
+// fingerprint, then builds and harvests only the configs it lacks (or whose
+// locked dependencies changed), adding each to the entry as it completes.
+// `dependencyGraph` goes to each child build (ChildBuild::dependencyGraph),
+// and so does the lock its own package calls resolve against.
 BinaryResult buildBinary(const CacheRoot& cache,
                          const Request& request,
                          const Env& env,
                          const SourceSnapshot& snapshot,
-                         const LockForChildBuilds& childLock = {});
+                         const LockForChildBuilds& childLock,
+                         const std::string& dependencyGraph = {});
 } // namespace epm

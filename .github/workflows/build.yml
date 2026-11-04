@@ -146,7 +146,9 @@ jobs:
       # (a) The full consumer path with this epm: get_epm.cmake takes
       # EPM_EXECUTABLE and, finding no module installed beside it, the
       # repository's CMake/epm.cmake. MODE auto, so eacp is fetched and built
-      # Debug + Release into a cache inside the workspace.
+      # (Release only: EPM_CONFIGS auto) into a cache inside the workspace.
+      # In-tree on purpose: the bare build-tree epm needs the checkout's module,
+      # and EPM_EXECUTABLE keeps get_epm.cmake from building the checkout.
       - name: HelloEacp smoke test
         if: inputs.smoke
         run: |
@@ -173,6 +175,26 @@ jobs:
       # (c) and (d) delete only its tool/ directory, so each picks its epm from
       # scratch but reuses the eacp build of the step before. (b) and (d) need
       # a release that ships manifest.json and skip until there is one.
+      #
+      # They configure a vendored copy of HelloEacp, not Examples/HelloEacp: a
+      # get_epm.cmake inside the epm checkout builds that checkout by default,
+      # which would bypass the release download, PATH and EPM_VERSION paths these
+      # steps test. The copy keeps include(../../CMake/get_epm.cmake) working with
+      # no epm CMakeLists.txt above CMake/, as in a real consumer.
+      - name: Stage a vendored HelloEacp
+        if: inputs.smoke
+        run: |
+          temp="$(cygpath -m "$RUNNER_TEMP" 2>/dev/null || echo "$RUNNER_TEMP")"
+          smoke="$temp/smoke"
+          rm -rf "$smoke"
+          cmake -E copy_directory Examples/HelloEacp "$smoke/Examples/HelloEacp"
+          cmake -E copy CMake/get_epm.cmake "$smoke/CMake/get_epm.cmake"
+          if [ -e "$smoke/CMakeLists.txt" ]; then
+            echo "::error::$smoke/CMakeLists.txt exists; the copy would not look vendored"
+            exit 1
+          fi
+          echo "VENDORED_HELLO=$smoke/Examples/HelloEacp" >> "$GITHUB_ENV"
+
       - name: Check for a release manifest
         if: inputs.smoke
         run: |
@@ -196,7 +218,7 @@ jobs:
             exit 1
           fi
           rm -rf "$CONSUMER_CACHE"
-          cmake -S Examples/HelloEacp -B build-hello-latest -G Ninja -DCMAKE_BUILD_TYPE=Release \
+          cmake -S "$VENDORED_HELLO" -B build-hello-latest -G Ninja -DCMAKE_BUILD_TYPE=Release \
             "-DEPM_CACHE=$CONSUMER_CACHE" \
             ${{ matrix.cmake-flags }} 2>&1 | tee configure-latest.log
           grep -q 'epm: downloaded epm' configure-latest.log
@@ -215,7 +237,7 @@ jobs:
           export PATH="$PWD/.epm-path/bin:$PATH"
           epm --version
           rm -rf "$CONSUMER_CACHE/tool"
-          cmake -S Examples/HelloEacp -B build-hello-path -G Ninja -DCMAKE_BUILD_TYPE=Release \
+          cmake -S "$VENDORED_HELLO" -B build-hello-path -G Ninja -DCMAKE_BUILD_TYPE=Release \
             "-DEPM_CACHE=$CONSUMER_CACHE" \
             ${{ matrix.cmake-flags }} 2>&1 | tee configure-path.log
           grep -q 'using epm 0.1.1 from' configure-path.log
@@ -229,7 +251,7 @@ jobs:
         run: |
           export PATH="$PWD/.epm-path/bin:$PATH"
           rm -rf "$CONSUMER_CACHE/tool"
-          cmake -S Examples/HelloEacp -B build-hello-range -G Ninja -DCMAKE_BUILD_TYPE=Release \
+          cmake -S "$VENDORED_HELLO" -B build-hello-range -G Ninja -DCMAKE_BUILD_TYPE=Release \
             "-DEPM_CACHE=$CONSUMER_CACHE" -DEPM_VERSION=0.1.2 \
             ${{ matrix.cmake-flags }} 2>&1 | tee configure-range.log
           if grep -q 'using epm 0.1.1 from' configure-range.log; then

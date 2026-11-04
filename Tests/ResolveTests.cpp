@@ -19,6 +19,7 @@ Request modeRequest(std::string mode, bool buildMissing = true)
     request.gitRef = "main";
     request.mode = std::move(mode);
     request.buildMissingBinaries = buildMissing;
+    request.configs = {"Release"};
     return request;
 }
 
@@ -50,13 +51,22 @@ ChildBuild sampleChildBuild()
 }
 } // namespace
 
-auto tPrebuiltTargets = test("Response/prebuiltTargets") = []
+auto tPrebuiltTargets = test("Response/prebuiltLoad") = []
 {
-    const auto text = prebuiltTargetsText("/c/bin/eacp/9a8b7c6d5e4f");
+    const auto text = prebuiltLoadText({"eacp",
+                                        "prebuilt",
+                                        "/c/src/eacp/3f1c0a9b2d4e",
+                                        "/c/bin/eacp/macos-arm64/9a8b7c6d5e4f",
+                                        "macos-arm64",
+                                        {"Debug", "Release"},
+                                        "built with AppleClang 17"});
 
-    check(text.find("include(\"/c/bin/eacp/9a8b7c6d5e4f/epm-targets.cmake\")")
-          != std::string::npos);
-    check(text.find("IMPORTED_GLOBAL TRUE") != std::string::npos);
+    check(text
+          == "epm_load_package(\"eacp\" MODE prebuilt SOURCE_DIR "
+             "\"/c/src/eacp/3f1c0a9b2d4e\" TARGETS_FILE "
+             "\"/c/bin/eacp/macos-arm64/9a8b7c6d5e4f/epm-targets.cmake\" PREFIX "
+             "\"/c/bin/eacp/macos-arm64/9a8b7c6d5e4f\" PLATFORM \"macos-arm64\" "
+             "NOTE \"built with AppleClang 17\")\n");
 };
 
 auto tResponseQuoting = test("Response/quoting") = []
@@ -91,6 +101,44 @@ auto tRequestErrors = test("Resolve/requestErrors") = []
     auto noUrl = modeRequest("auto");
     noUrl.gitUrl.clear();
     check(requestError(noUrl).has_value());
+
+    auto noConfigs = modeRequest("auto");
+    noConfigs.configs.clear();
+    check(requestError(noConfigs).has_value());
+
+    auto mapped = modeRequest("auto");
+    mapped.configs = {"Debug", "RelWithDebInfo", "MinSizeRel"};
+    check(!requestError(mapped).has_value());
+
+    auto unknownConfig = modeRequest("auto");
+    unknownConfig.configs = {"Debug", "Profile"};
+    check(requestError(unknownConfig).value_or("").find("'Profile'")
+          != std::string::npos);
+
+    auto unknownMatch = modeRequest("auto");
+    unknownMatch.abiMatch = "loose";
+    check(requestError(unknownMatch).value_or("").find("'loose'")
+          != std::string::npos);
+};
+
+auto tRequestSchema = test("Resolve/requestErrors/schema") = []
+{
+    for (const auto schema: {0, 1, 3})
+    {
+        auto request = modeRequest("auto");
+        request.schema = schema;
+
+        const auto error = requestError(request);
+
+        check(error.has_value());
+        check(error.value_or("").find("has schema " + std::to_string(schema)
+                                      + ", but this epm reads schema 2")
+              != std::string::npos);
+        check(error.value_or("").find("get_epm.cmake") != std::string::npos);
+    }
+
+    check(modeRequest("auto").schema == requestSchema);
+    check(requestSchema == 2);
 };
 
 auto tGeneratorSingleConfig = test("ChildBuild/generator/consumersSingleConfig") = []
@@ -135,7 +183,8 @@ auto tConfigureArguments = test("ChildBuild/configureArguments") = []
     check(has("-DCMAKE_ARCHIVE_OUTPUT_DIRECTORY=/cache/bin/eacp/def/lib/Release"));
     check(has("-DCPM_SOURCE_CACHE=/cache/cpm"));
     check(has("-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=/cache/build/eacp/def/Release/"
-              "epm-export.cmake"));
+              "epm-export.cmake;/cache/build/eacp/def/Release/epm.cmake"));
+    check(has("-DEPM_NESTED=ON"));
     check(has("-DEPM_EXPORT_FILE=/cache/bin/eacp/def/export-Release.cmake"));
     check(has("-DEPM_EXPORT_NAMESPACE=epm_release::"));
     check(has("-DEACP_ENABLE_TESTS=OFF"));
@@ -149,10 +198,36 @@ auto tConfigureArguments = test("ChildBuild/configureArguments") = []
     }
 };
 
+auto tConfigureArgumentsNested = test("ChildBuild/configureArguments/nested") = []
+{
+    auto build = sampleChildBuild();
+    const auto plain = configureArguments(build);
+
+    for (const auto& argument: plain)
+        check(!argument.starts_with("-DEPM_GRAPH"));
+
+    build.dependencyGraph = "set(epm_PACKAGES \"Leaf\")\n";
+    const auto nested = configureArguments(build);
+
+    check(nested.size() == plain.size() + 1);
+    check(nested.contains(
+        "-DEPM_GRAPH=/cache/build/eacp/def/Release/epm-graph.cmake"));
+    check(nested == configureArguments(build));
+};
+
 auto tEmbeddedScript = test("ChildBuild/embeddedExportScript") = []
 {
     const auto script = embeddedExportScript();
 
     check(script.find("epm_export_all_targets") != std::string_view::npos);
     check(script.find("${EPM_EXPORT_FILE}.names") != std::string_view::npos);
+};
+
+auto tEmbeddedModuleScripts = test("ChildBuild/embeddedModuleScripts") = []
+{
+    check(embeddedProviderScript().find("function(epm_provide_dependency")
+          != std::string_view::npos);
+    check(embeddedModuleScript().find("function(epm_add_package)")
+          != std::string_view::npos);
+    check(embeddedModuleScript().ends_with("--announce)\n"));
 };

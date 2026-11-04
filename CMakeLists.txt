@@ -1,21 +1,17 @@
 cmake_minimum_required(VERSION 3.31)
 
 # epm builds itself with epm, its dependencies locked in epm.lock. The epm that
-# resolves them is a first host build of this same checkout (get_epm.cmake's
-# EPM_BOOTSTRAP_SOURCE_DIR), which fetches its own dependencies with CPM;
-# get_epm builds it with EPM_SELF_HOST OFF. -DEPM_EXECUTABLE=<an epm> skips
-# that build.
+# resolves them is a first host build of this same checkout (get_epm.cmake,
+# inside an epm checkout, builds that checkout), which fetches its own
+# dependencies with CPM: get_epm builds it with EPM_SELF_HOST OFF.
+# -DEPM_EXECUTABLE=<an epm> skips that build.
 option(EPM_SELF_HOST "Fetch epm's own dependencies through epm and epm.lock" ON)
 
 if (EPM_SELF_HOST)
-    if (NOT EPM_EXECUTABLE)
-        set(EPM_BOOTSTRAP_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}")
-    endif ()
-
     set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${CMAKE_CURRENT_LIST_DIR}/CMake/get_epm.cmake")
 endif ()
 
-project(epm VERSION 0.1.2 LANGUAGES C CXX)
+project(epm VERSION 0.1.3 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -53,10 +49,11 @@ list(APPEND CMAKE_MODULE_PATH "${eacp_SOURCE_DIR}/CMake")
 add_subdirectory(Lib)
 add_subdirectory(Apps)
 
-# The whole install: the binary and the consumer module. eacp and Miro are
-# static and linked in. A tool entry of get_epm.cmake is exactly this install,
-# whether unpacked from a release archive or built from source.
-install(FILES CMake/epm.cmake DESTINATION share/epm/cmake)
+# The whole install: the binary and the consumer module, with the provider it
+# includes from its own directory. eacp and Miro are static and linked in. A
+# tool entry of get_epm.cmake is exactly this install, whether unpacked from a
+# release archive or built from source.
+install(FILES CMake/epm.cmake CMake/epm-provider.cmake DESTINATION share/epm/cmake)
 
 option(EPM_ENABLE_TESTS "Enable Tests for epm" ${PROJECT_IS_TOP_LEVEL})
 

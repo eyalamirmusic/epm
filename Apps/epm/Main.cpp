@@ -1,14 +1,19 @@
+#include <epm/Cache/CacheListing.h>
 #include <epm/Cache/CacheRoot.h>
+#include <epm/Emit/GraphResponse.h>
 #include <epm/Lock/LockFile.h>
 #include <epm/Resolve/Commands.h>
 #include <epm/Spec/JsonFile.h>
 #include <epm/Spec/PackageArguments.h>
 #include <epm/Util/Log.h>
 
+#include <eacp/Core/Utils/Environment.h>
+
 #include "Version.h"
 
 #include <eacp/Core/App/App.h>
 #include <eacp/Core/App/Args.h>
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/StdPath.h>
@@ -24,6 +29,9 @@ constexpr auto usage =
     "usage: epm <command>\n"
     "\n"
     "commands:\n"
+    "  configure    resolve an epm.json graph through the lock for\n"
+    "               get_epm.cmake\n"
+    "  graph-cmake  write graph.cmake from a graph.json\n"
     "  resolve      resolve one package for epm.cmake; its CMake arguments\n"
     "               follow --\n"
     "  provide      the same, for FetchContent_MakeAvailable\n"
@@ -35,14 +43,15 @@ constexpr auto usage =
     "               package the cache does not have\n"
     "  lock root    print the root hash over every package in the lock\n"
     "  cache path   print the cache root\n"
+    "  cache ls     list the cached binaries, sources and tools\n"
     "  --version    print the version";
 
 constexpr auto argumentSeparator = std::string_view {"--"};
 
-Vector<std::string> argumentsAfter(int count)
+EA::Vector<std::string> argumentsAfter(int count)
 {
     const auto& all = Apps::commandLineArgs();
-    auto rest = Vector<std::string> {};
+    auto rest = EA::Vector<std::string> {};
 
     for (auto i = count; i < all.size(); ++i)
         rest.add(all[i]);
@@ -117,6 +126,25 @@ int runPackageCommand(const std::string& command, int argumentsToSkip)
     parser.option("--manifest",
                   options.manifest,
                   "the root project's epm.json, whose overrides win");
+    parser.option("--overrides",
+                  options.overridesFile,
+                  "configure: the overrides.json epm.cmake wrote");
+    parser.option("--out",
+                  options.outputDirectory,
+                  "configure: the directory for graph.cmake and graph.json");
+    auto configsValue = std::string {};
+    auto graphPackagesValue = std::string {};
+    parser.option("--configs",
+                  configsValue,
+                  "the configs to build and cache, comma-separated, as epm.cmake "
+                  "resolved them");
+    parser.option("--graph-packages",
+                  graphPackagesValue,
+                  "the epm.json graph's packages (;-separated), which a package "
+                  "call loads from the graph");
+    parser.option("--abi-match",
+                  options.abiMatch,
+                  "which cached build may be used: compatible, strict or any");
     parser.option("--root-name",
                   options.rootName,
                   "who the top-level project's requirements are recorded as");
@@ -157,6 +185,18 @@ int runPackageCommand(const std::string& command, int argumentsToSkip)
 
     epm::Log::setVerbose(verbose);
     options.isCI = epm::isCMakeTrue(ciValue);
+
+    for (const auto& config: Strings::split(configsValue, ','))
+    {
+        if (!config.empty())
+            options.configs.add(config);
+    }
+
+    for (const auto& name: Strings::split(graphPackagesValue, ';'))
+    {
+        if (!name.empty())
+            options.graphPackages.add(name);
+    }
     options.buildMissingBinaries = !epm::isCMakeFalse(buildMissingValue);
     options.cache = getCacheDirectory(options.cache);
 
@@ -179,6 +219,9 @@ int runPackageCommand(const std::string& command, int argumentsToSkip)
 
         if (command == "resolve")
             return epm::runAddCommand(options);
+
+        if (command == "configure")
+            return epm::runConfigureCommand(options);
 
         if (command == "provide")
             return epm::runProvideCommand(options);
@@ -204,6 +247,37 @@ int runPackageCommand(const std::string& command, int argumentsToSkip)
     return Args::badArguments;
 }
 
+int graphCMake()
+{
+    auto graph = FilePath {};
+    auto out = FilePath {};
+
+    auto cli = Args::Parser {"epm graph-cmake",
+                             "Writes graph.cmake from a resolved graph.json."};
+    cli.option("--graph", graph, "the graph.json to read").required();
+    cli.option("--out", out, "the graph.cmake to write").required();
+
+    if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
+        return *code;
+
+    try
+    {
+        const auto loaded = epm::loadGraphJson(graph);
+
+        if (!loaded)
+            return fail("cannot read the graph file " + graph.str());
+
+        if (!epm::writeGraphCMake(out, *loaded))
+            return fail("cannot write " + out.str());
+    }
+    catch (const std::exception& error)
+    {
+        return fail(error.what());
+    }
+
+    return 0;
+}
+
 int cache()
 {
     const auto rest = argumentsAfter(2);
@@ -214,7 +288,23 @@ int cache()
         return 0;
     }
 
-    Console::printError("usage: epm cache path");
+    if (!rest.empty() && rest[0] == "ls")
+    {
+        auto root = FilePath {};
+        auto cli = Args::Parser {"epm cache ls", "Lists what the cache holds."};
+        cli.option("--cache", root, "the cache root (default: $EPM_CACHE)");
+
+        if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(3))))
+            return *code;
+
+        const auto cacheRoot =
+            root.empty() ? epm::CacheRoot::fromEnvironment() : epm::CacheRoot {root};
+        Console::print(epm::cacheListing(canonical(cacheRoot)));
+        return 0;
+    }
+
+    Console::printError(
+        "usage: epm cache path\n       epm cache ls [--cache <dir>]");
     return Args::badArguments;
 }
 
@@ -242,11 +332,14 @@ int run()
         return 0;
     }
 
-    if (command == "resolve" || command == "provide")
+    if (command == "resolve" || command == "provide" || command == "configure")
         return runPackageCommand(command, 2);
 
     if (command == "lock" && args.size() >= 3)
         return runPackageCommand(args[2], 3);
+
+    if (command == "graph-cmake")
+        return graphCMake();
 
     if (command == "cache")
         return cache();

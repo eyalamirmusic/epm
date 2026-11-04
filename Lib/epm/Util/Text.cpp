@@ -23,9 +23,9 @@ bool writeTextFile(const FilePath& path, std::string_view text)
     return true;
 }
 
-Vector<std::string_view> splitLines(std::string_view text)
+EA::Vector<std::string_view> splitLines(std::string_view text)
 {
-    auto result = Vector<std::string_view> {};
+    auto result = EA::Vector<std::string_view> {};
 
     while (!text.empty())
     {
@@ -65,6 +65,43 @@ std::string
     }
 
     result.append(text.substr(position));
+    return result;
+}
+
+EA::Vector<std::string> splitList(std::string_view text, char separator)
+{
+    auto items = EA::Vector<std::string> {};
+
+    while (!text.empty())
+    {
+        const auto end = text.find(separator);
+        const auto item = text.substr(0, end);
+
+        if (!item.empty())
+            items.add(std::string {item});
+
+        if (end == std::string_view::npos)
+            break;
+
+        text.remove_prefix(end + 1);
+    }
+
+    return items;
+}
+
+std::string joinList(const EA::Vector<std::string>& items,
+                     std::string_view separator)
+{
+    auto result = std::string {};
+
+    for (auto i = 0; i < items.size(); ++i)
+    {
+        if (i > 0)
+            result += separator;
+
+        result += items[i];
+    }
+
     return result;
 }
 } // namespace epm

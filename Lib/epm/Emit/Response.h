@@ -1,5 +1,6 @@
 #pragma once
 
+#include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/FilePath.h>
 
 #include <string>
@@ -19,12 +20,21 @@ struct Response
 
     // Prebuilt only; the targets file is <prefix>/epm-targets.cmake.
     eacp::FilePath prefix;
+
+    // Prebuilt only: the entry's platform and the configs it holds.
+    std::string platform;
+    EA::Vector<std::string> configs;
+
+    // Prebuilt only: set when the entry was built with a toolchain that only
+    // matches the current one under the request's abiMatch (abiNote).
+    std::string note;
 };
 
 // `text` as a double-quoted CMake argument.
 std::string cmakeQuoted(std::string_view text);
 
-// Includes a binary entry's targets file and makes the imported targets
-// global.
-std::string prebuiltTargetsText(const eacp::FilePath& prefix);
+// The epm_load_package call (epm-provider.cmake) that includes a prebuilt
+// entry's targets file, makes its imported targets global and prints the
+// package's status line.
+std::string prebuiltLoadText(const Response& response);
 } // namespace epm

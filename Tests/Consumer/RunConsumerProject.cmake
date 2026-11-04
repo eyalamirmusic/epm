@@ -104,7 +104,9 @@ foreach (checkout first second-checkout)
     file(REMOVE_RECURSE "${WORK_DIR}/${checkout}")
     file(COPY "${PROJECT_DIR}/" DESTINATION "${copy}")
     file(COPY "${PROJECT_DIR}/../github/main.cpp" DESTINATION "${WORK_DIR}/${checkout}/github")
-    file(COPY "${EPM_MODULE}" DESTINATION "${copy}/cmake")
+    get_filename_component(module_directory "${EPM_MODULE}" DIRECTORY)
+    file(COPY "${EPM_MODULE}" "${module_directory}/epm-provider.cmake"
+            DESTINATION "${copy}/cmake")
     run_step("${CMAKE_COMMAND}" -S "${copy}" -B "${copy}/build" -DEPM_LOCK_MODE=update
             "-DEPM_MODULE=${copy}/cmake/epm.cmake"
             "-DEPM_EXECUTABLE=${EPM_EXECUTABLE}"

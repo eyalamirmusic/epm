@@ -16,6 +16,12 @@
 # the namespace) per line, which is what the harvester reads to generate the
 # facade targets.
 #
+# It also writes ${EPM_EXPORT_FILE}.aliases: one "<alias> <target>" line for every
+# ALIAS target whose aliased target is exported, so the facade can define the same
+# spellings (fmt::fmt beside fmt) as a source build. No property lists ALIAS
+# targets, so add_library is wrapped to record them as they are made; a project
+# that wraps add_library itself as well would recurse through both wrappers.
+#
 # Inputs (cache variables, both required):
 #   EPM_EXPORT_FILE       absolute path of the export file to write
 #   EPM_EXPORT_NAMESPACE  namespace prefix for the imported targets, e.g. epm_debug::
@@ -70,6 +76,36 @@ function(epm_is_exportable_library target out_var)
     endif ()
 endfunction()
 
+function(add_library name)
+    _add_library(${ARGV})
+
+    if (ARGC GREATER 2 AND "${ARGV1}" STREQUAL "ALIAS")
+        set_property(GLOBAL APPEND PROPERTY EPM_EXPORT_ALIASES "${name}")
+    endif ()
+endfunction()
+
+# The "<alias> <target>" lines for every recorded alias of a target in the list
+# named by `exported_var`. Aliases of imported targets are left out with them.
+function(epm_alias_lines exported_var out_var)
+    get_property(aliases GLOBAL PROPERTY EPM_EXPORT_ALIASES)
+    list(REMOVE_DUPLICATES aliases)
+    set(lines "")
+
+    foreach (alias IN LISTS aliases)
+        if (NOT TARGET ${alias})
+            continue()
+        endif ()
+
+        get_target_property(aliased ${alias} ALIASED_TARGET)
+
+        if (aliased IN_LIST ${exported_var})
+            string(APPEND lines "${alias} ${aliased}\n")
+        endif ()
+    endforeach ()
+
+    set(${out_var} "${lines}" PARENT_SCOPE)
+endfunction()
+
 function(epm_export_all_targets)
     # Scheduled at project() time, this is the first deferred call in the queue.
     # Re-queue once so it runs after any DEFER calls the project itself makes
@@ -108,6 +144,9 @@ function(epm_export_all_targets)
 
     list(JOIN exported "\n" names)
     file(WRITE "${EPM_EXPORT_FILE}.names" "${names}\n")
+
+    epm_alias_lines(exported alias_lines)
+    file(WRITE "${EPM_EXPORT_FILE}.aliases" "${alias_lines}")
 
     list(LENGTH exported count)
     message(STATUS "epm: exporting ${count} targets to ${EPM_EXPORT_FILE}")

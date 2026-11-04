@@ -4,9 +4,9 @@ epm is a package manager for C++ projects that build with CMake. A project
 declares its dependencies with `epm_add_package(...)` calls, in the same shape as
 CPM.cmake's `CPMAddPackage`. A small native binary (`epm`) fetches each
 dependency into a shared per-user cache. Where it can, it also builds the
-dependency once per toolchain, Debug and Release, and hands the consumer
-imported targets that point at the cached libraries, so the dependency is never
-`add_subdirectory`'d again. The target names are the same either way, so the
+dependency once per toolchain, in the configurations the consumer builds, and
+hands the consumer imported targets that point at the cached libraries, so the
+dependency is never `add_subdirectory`'d again. The target names are the same either way, so the
 consumer's CMake does not change.
 
 The longer-term design (remote binary caches, lockfiles, transitive
@@ -27,6 +27,7 @@ interface may all change.
 cmake_minimum_required(VERSION 3.31)
 project(HelloEacp CXX)
 
+set(EPM_CONFIGS Release) # only Release archives of eacp; Debug builds of hello link them on multi-config generators (missing configs map to Release)
 include(cmake/get_epm.cmake)        # vendored from this repository's CMake/
 
 epm_add_package(
@@ -50,9 +51,35 @@ cmake --build build-hello
 ./build-hello/hello
 ```
 
-The first configure fetches epm itself (see below) and then builds eacp, in
-Debug and Release, into the cache. Later configures, in any build directory,
-reuse both and take about a second.
+The first configure fetches epm itself (see below) and then builds eacp's
+Release configuration into the cache. Later configures, in any build directory
+and any build type, reuse it and take about a second. Without the
+`EPM_CONFIGS` line, epm builds the build type you configured instead, and a
+configure in another build type adds just that configuration.
+
+## Configuring what gets built
+
+Two cache variables, set with `-D` or before the first `epm_add_package`:
+
+- `EPM_CONFIGS` (default `auto`): which configurations of each package to build
+  and cache. `auto` builds your `CMAKE_BUILD_TYPE` with a single-config
+  generator (Ninja, Makefiles; empty, `RelWithDebInfo` and `MinSizeRel` mean
+  Release) and Debug + Release with a multi-config one (Xcode, Visual Studio).
+  An explicit list such as `-DEPM_CONFIGS="Debug;Release"` builds those.
+  Configurations are added to a cached build as they are needed; one that is
+  there is never rebuilt.
+- `EPM_ABI_MATCH` (default `compatible`): which cached build may be used.
+  `compatible` accepts one made with the same compiler family and major version
+  (so Xcode's clang and the command-line tools' clang share builds), the same
+  deployment target, C++ standard, options and source; `strict` requires every
+  recorded detail, compiler path and full version included; `any` only the
+  platform, options and source. A build that is not an exact match is named on
+  the configure line:
+  `-- epm: eacp (prebuilt, macos-arm64, 1a2b3c4d5e6f, built with AppleClang 17.0.0.17000013, current 17.0.0.17000319)`.
+
+`epm cache ls` lists what the cache holds. Docs/PoC.md §9 has the details.
+Builds cached by epm 0.1.2 and older use another layout and are ignored;
+delete the cache's `bin/` directory once to reclaim the space.
 
 ## Locking the dependency tree
 
@@ -137,9 +164,14 @@ The cache is `~/Library/Caches/epm` on macOS, `$XDG_CACHE_HOME/epm` or
 `~/.cache/epm` on Linux, `%LOCALAPPDATA%\epm` on Windows, or wherever `EPM_CACHE`
 (CMake or environment variable) points. `-DEPM_BOOTSTRAP_NO_DOWNLOAD=ON` builds
 from source instead of downloading, `EPM_SOURCE_REF` (or `EPM_SOURCE_URL`)
-builds another tag, branch or commit from source, `EPM_BOOTSTRAP_SOURCE_DIR`
-builds a local checkout and uses its `CMake/epm.cmake` (for working on epm), and
-`EPM_VERBOSE=ON` shows what is tried. Details are in Docs/PoC.md §8.
+builds another tag, branch or commit from source, `EPM_SOURCE_DIR` (CMake or
+environment variable) builds a local epm checkout incrementally at every
+configure and uses it (for working on epm; `EPM_BOOTSTRAP_SOURCE_DIR` is its
+deprecated name), and `EPM_VERBOSE=ON` shows what is tried. A `get_epm.cmake`
+that is itself part of an epm checkout (the examples in this repository use
+`../../CMake/get_epm.cmake`) builds that checkout unless `EPM_EXECUTABLE`,
+`EPM_SOURCE_DIR`, `EPM_SOURCE_REF` or `EPM_SOURCE_URL` says otherwise; a vendored
+copy never does. Details are in Docs/PoC.md §8.
 
 ## Building and installing epm
 
@@ -175,7 +207,7 @@ Release builds with Ninja:
 
 Each job builds epm, runs `ctest`, then configures, builds and runs
 `Examples/HelloEacp` through `get_epm.cmake` four ways: (a) with the binary it
-just built (`MODE auto`, so eacp is fetched and built Debug and Release into a
+just built (`MODE auto`, so eacp is fetched and built, Release only, into a
 cache inside the workspace); (b) with nothing set and no epm on `PATH`, which
 must download the latest release; (c) with the epm 0.1.1 release unpacked onto
 `PATH`, which must be used; (d) with that same `PATH` and `EPM_VERSION=0.1.2`,
