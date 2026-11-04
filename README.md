@@ -216,14 +216,10 @@ Release builds with Ninja:
 | `linux-arm64`     | `ubuntu-24.04-arm` | clang, lld                          |
 
 Each job builds epm, runs `ctest`, then configures, builds and runs
-`Examples/HelloEacp` through `get_epm.cmake` four ways: (a) with the binary it
-just built (`MODE auto`, so eacp is fetched and built, Release only, into a
-cache inside the workspace); (b) with nothing set and no epm on `PATH`, which
-must download the latest release; (c) with the epm 0.1.1 release unpacked onto
-`PATH`, which must be used; (d) with that same `PATH` and `EPM_VERSION=0.1.2`,
-which must skip it and download the latest release. (b) and (d) are skipped
-while the latest release has no `manifest.json`. The package is uploaded as a
-workflow artifact.
+`Examples/HelloEacp` with the binary it just built (`MODE auto`, so eacp is
+fetched and built, Release only, into a cache inside the workspace), and
+configures it again to check that eacp comes from the binary cache. The
+package is uploaded as a workflow artifact.
 
 `.github/workflows/release.yml` builds the same packages on pushes to `main` and
 `release/**` and on `v*` tags (the list is at the top of the file):
