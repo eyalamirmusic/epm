@@ -40,9 +40,12 @@ void progress(std::string_view line)
 
 void stream(std::string_view chunk)
 {
-    if (!isVerbose())
-        return;
+    if (isVerbose())
+        echo(chunk);
+}
 
+void echo(std::string_view chunk)
+{
     std::fwrite(chunk.data(), 1, chunk.size(), stdout);
     std::fflush(stdout);
 }

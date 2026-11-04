@@ -1,6 +1,6 @@
 #include <epm/Emit/GraphResponse.h>
-#include <epm/Spec/JsonFile.h>
 #include <epm/Graph/Graph.h>
+#include <epm/Recipe/CMakePackage.h>
 #include <epm/Resolve/Resolve.h>
 #include <epm/Util/Text.h>
 
@@ -8,6 +8,8 @@
 #include <eacp/Core/Utils/TemporaryFile.h>
 
 #include <NanoTest/NanoTest.h>
+
+#include <tuple>
 
 using namespace nano;
 using namespace epm;
@@ -25,23 +27,51 @@ Project declaring(const std::string& name, const std::string& tag)
 // What a recipe's describe() makes of an Env.
 using Describe = std::function<Project(const Env&)>;
 
+// One build step the walk asked a recipe executable to run.
+struct StepCall
+{
+    std::string recipe;
+    std::string package;
+    std::string recipeName;
+    std::map<std::string, std::string> deps;
+    std::map<std::string, std::string> options;
+    eacp::Vector<std::string> dependencies;
+};
+
 // Checkouts on disk standing in for the source cache (name@ref), and an
 // in-memory ManifestLoader standing in for their epm.cpp files: a directory
-// describes the project given for it, or nothing.
+// describes the project given for it, or has no epm.cpp. Build steps are
+// recorded, then answered from `outputs` or `stepErrors` (by package), else
+// by the default steps in this process.
 struct FakeSources final : ManifestLoader
 {
     FakeSources() { eacp::Files::createDirectories(root.path()); }
 
-    void add(const std::string& name, const std::string& ref, Project project = {})
+    // A checkout without an epm.cpp.
+    void add(const std::string& name, const std::string& ref)
+    {
+        eacp::Files::createDirectories(directoryOf(name, ref));
+    }
+
+    void add(const std::string& name, const std::string& ref, Project project)
     {
         add(name, ref, [project](const Env&) { return project; });
     }
 
     void add(const std::string& name, const std::string& ref, Describe describe)
     {
-        const auto directory = root.path() / (name + "@" + ref);
-        eacp::Files::createDirectories(directory);
-        describeAt(directory, std::move(describe));
+        add(name, ref);
+        describeAt(directoryOf(name, ref), std::move(describe));
+    }
+
+    eacp::FilePath directoryOf(const std::string& name, const std::string& ref) const
+    {
+        return root.path() / (name + "@" + ref);
+    }
+
+    std::string recipeOf(const std::string& name, const std::string& ref) const
+    {
+        return (directoryOf(name, ref) / manifestFileName).str();
     }
 
     void describeAt(const eacp::FilePath& directory, Describe describe)
@@ -70,34 +100,86 @@ struct FakeSources final : ManifestLoader
         return found == recipes.end() ? Project {} : found->second(env);
     }
 
+    bool hasManifest(const eacp::FilePath& directory) const override
+    {
+        return recipes.contains(directory.str());
+    }
+
+    bool runsSteps() const override { return recipeExecutables; }
+
+    std::optional<BuildOutput> build(const eacp::FilePath& recipe,
+                                     const BuildInput& input,
+                                     std::string& error) override
+    {
+        const auto& name = input.request.name;
+        auto call = StepCall {recipe.str(), name, input.recipeName};
+        call.deps = input.request.deps;
+        call.options = input.request.options;
+
+        for (const auto& dependency: input.dependencies)
+            call.dependencies.add(dependency.name + ":" + dependency.prefix);
+
+        steps.add(std::move(call));
+
+        if (const auto failure = stepErrors.find(name); failure != stepErrors.end())
+        {
+            error = failure->second;
+            return std::nullopt;
+        }
+
+        // A real step records source when asked for it.
+        const auto source = input.request.mode == "source" && honoursMode;
+
+        if (const auto output = outputs.find(name);
+            output != outputs.end() && !source)
+            return output->second;
+
+        return buildInProcess(input);
+    }
+
+    // A prebuilt result for `name`'s step, with fingerprint fp-<name>.
+    void prebuilt(const std::string& name)
+    {
+        auto output = BuildOutput {};
+        output.name = name;
+        output.mode = "prebuilt";
+        output.sourceDirectory = "/src/" + name;
+        output.prefix = "/bin/" + name;
+        output.platform = "test";
+        output.configs = {"Debug"};
+        output.fingerprintHash = "fp-" + name;
+        outputs[name] = output;
+    }
+
+    eacp::Vector<std::string> stepOrder() const
+    {
+        auto names = eacp::Vector<std::string> {};
+
+        for (const auto& step: steps)
+            names.add(step.package);
+
+        return names;
+    }
+
+    const StepCall* stepOf(const std::string& name) const
+    {
+        return steps.findIf([&name](const StepCall& step)
+                            { return step.package == name; });
+    }
+
     SourceFetcher fetcher()
     {
-        return
-            [this](const std::string& name, const EA::Vector<Requirement>& declared)
+        return [this](const std::string& name,
+                      const std::string& url,
+                      const std::string& ref)
         {
-            auto requirements = declared;
-
-            for (auto& requirement: requirements)
-                requirement.commit = requirement.requestedRef;
-
-            auto result = LockedSource {};
-            auto selection = selectRequirement(requirements);
-
-            if (selection.isConflict)
-            {
-                result.error = describeRequirementConflict(name, requirements);
-                return result;
-            }
-
-            const auto& ref = selection.selected.requestedRef;
-            const auto& url = selection.selected.url;
             fetched.add(name + "@" + ref);
             urls[name] = url;
 
-            result.selected = selection.selected;
+            auto result = SourceResult {};
             result.snapshot.directory = root.path() / (name + "@" + ref);
             result.snapshot.commit = ref;
-            result.snapshot.hash = name + ref;
+            result.snapshot.sourceId = name + ref;
             result.ok = eacp::Files::isDirectory(result.snapshot.directory);
             result.error = result.ok ? "" : "no " + ref + " of " + url;
             return result;
@@ -110,11 +192,24 @@ struct FakeSources final : ManifestLoader
         return planGraph(inputs, fetcher(), *this);
     }
 
+    // A resolve of `plan` through these steps.
+    GraphResult resolve(const GraphPlan& plan, const Env& env)
+    {
+        return resolvePlan(plan, env, CacheRoot {cacheDirectory.path()}, *this);
+    }
+
     eacp::TemporaryFile root;
-    EA::Vector<std::string> fetched;
+    eacp::TemporaryFile cacheDirectory;
+    eacp::Vector<std::string> fetched;
     std::map<std::string, std::string> urls;
     std::map<std::string, Describe> recipes;
     std::map<std::string, std::string> failures;
+
+    bool recipeExecutables = true;
+    bool honoursMode = true;
+    eacp::Vector<StepCall> steps;
+    std::map<std::string, BuildOutput> outputs;
+    std::map<std::string, std::string> stepErrors;
 };
 
 GraphInputs inputsFor(Project rootProject)
@@ -135,9 +230,9 @@ const PlannedPackage* planned(const GraphPlan& plan, const std::string& name)
     return nullptr;
 }
 
-EA::Vector<std::string> planOrder(const GraphPlan& plan)
+eacp::Vector<std::string> planOrder(const GraphPlan& plan)
 {
-    auto names = EA::Vector<std::string> {};
+    auto names = eacp::Vector<std::string> {};
 
     for (const auto& package: plan.packages)
         names.add(package.effective.request.name);
@@ -257,12 +352,13 @@ auto tMergeConfigs = test("Graph/merge/configs") = []
     auto multi = Env {};
     multi.isMultiConfig = true;
 
-    check(*resolveConfigs({}, single) == EA::Vector<std::string> {"Debug"});
-    check(*resolveConfigs({"AUTO"}, Env {}) == EA::Vector<std::string> {"Release"});
+    check(*resolveConfigs({}, single) == eacp::Vector<std::string> {"Debug"});
+    check(*resolveConfigs({"AUTO"}, Env {})
+          == eacp::Vector<std::string> {"Release"});
     check(*resolveConfigs({"auto"}, multi)
-          == EA::Vector<std::string> {"Debug", "Release"});
+          == eacp::Vector<std::string> {"Debug", "Release"});
     check(*resolveConfigs({"RelWithDebInfo", "debug"}, single)
-          == EA::Vector<std::string> {"Debug", "Release"});
+          == eacp::Vector<std::string> {"Debug", "Release"});
     check(!resolveConfigs({"Profile"}, single).has_value());
 
     auto layers = MergeLayers {};
@@ -273,13 +369,13 @@ auto tMergeConfigs = test("Graph/merge/configs") = []
     check(merged.error.find("Fast") != std::string::npos);
 };
 
-auto tGraphHighestTag = test("Graph/walk/highestTagWinsRootOptionsWin") = []
+auto tGraphRootWins = test("Graph/walk/rootWinsAndNotes") = []
 {
     auto sources = FakeSources {};
     auto a = Project {};
     setMode(setOption(a.add("C", "org/C", "v2"), "X", "dep"), "source");
     sources.add("A", "v1", a);
-    sources.add("C", "v2");
+    sources.add("C", "v1");
 
     auto root = Project {};
     root.add("A", "org/A", "v1");
@@ -287,29 +383,29 @@ auto tGraphHighestTag = test("Graph/walk/highestTagWinsRootOptionsWin") = []
     const auto plan = sources.plan(inputsFor(root));
 
     check(plan.ok);
-    check(planned(plan, "C")->effective.request.gitRef == "v2");
-    check(planned(plan, "C")->effective.provenance.at("tag") == "A");
+    check(planned(plan, "C")->effective.request.gitRef == "v1");
     check(planned(plan, "C")->effective.request.options.at("X") == "root");
     check(planned(plan, "C")->effective.request.mode == "source");
     check(planned(plan, "C")->effective.provenance.at("mode") == "manifest:A");
-    check(sources.fetched == EA::Vector<std::string> {"A@v1", "C@v2"});
+    check(sources.fetched == eacp::Vector<std::string> {"A@v1", "C@v1"});
+    check(hasNote(plan, "C: A declares v2, root declares v1"));
     check(hasNote(plan, "C: A declares option X=dep, root declares option X=root"));
 
-    // Tags are selected, not merged, so they make no note.
-    check(plan.notes.size() == 1);
-    check(planned(plan, "C")->declaredBy == EA::Vector<std::string> {"root", "A"});
+    // The root leaves mode unset, so A's mode is the winning one: no note.
+    check(plan.notes.size() == 2);
+    check(planned(plan, "C")->declaredBy == eacp::Vector<std::string> {"root", "A"});
 };
 
-auto tGraphDepthFirst = test("Graph/walk/depthFirstOrder") = []
+auto tGraphFirstWins = test("Graph/walk/firstDeclarationDepthFirst") = []
 {
     auto sources = FakeSources {};
     auto a = Project {};
     a.add("D", "org/D", "v1");
-    a.add("E", "org/E", "e1");
+    a.add("E", "org/E", "fromA");
     sources.add("A", "v1", a);
-    sources.add("B", "v1", declaring("E", "e1"));
-    sources.add("D", "v1", declaring("E", "e1"));
-    sources.add("E", "e1");
+    sources.add("B", "v1", declaring("E", "fromB"));
+    sources.add("D", "v1", declaring("E", "fromD"));
+    sources.add("E", "fromD");
 
     auto root = Project {};
     root.add("A", "org/A", "v1");
@@ -317,43 +413,25 @@ auto tGraphDepthFirst = test("Graph/walk/depthFirstOrder") = []
     const auto plan = sources.plan(inputsFor(root));
 
     check(plan.ok);
-    check(planned(plan, "E")->effective.request.gitRef == "e1");
-    check(planOrder(plan) == EA::Vector<std::string> {"E", "D", "A", "B"});
-    check(planned(plan, "A")->deps == EA::Vector<std::string> {"D", "E"});
-    check(planned(plan, "B")->deps == EA::Vector<std::string> {"E"});
+    check(planned(plan, "E")->effective.request.gitRef == "fromD");
+    check(planned(plan, "E")->effective.provenance.at("tag") == "manifest:D");
+    check(hasNote(plan, "E: A declares fromA, D declares fromD"));
+    check(hasNote(plan, "E: B declares fromB, D declares fromD"));
+    check(planOrder(plan) == eacp::Vector<std::string> {"E", "D", "A", "B"});
+    check(planned(plan, "A")->deps == eacp::Vector<std::string> {"D", "E"});
+    check(planned(plan, "B")->deps == eacp::Vector<std::string> {"E"});
     check(planned(plan, "E")->deps.empty());
-};
-
-auto tGraphConflict = test("Graph/walk/differentRefsConflict") = []
-{
-    auto sources = FakeSources {};
-    sources.add("zeta", "v1", declaring("P", "fromZeta"));
-    sources.add("alpha", "v1", declaring("P", "fromAlpha"));
-    sources.add("P", "fromZeta");
-
-    auto root = Project {};
-    root.add("zeta", "org/zeta", "v1");
-    root.add("alpha", "org/alpha", "v1");
-    const auto plan = sources.plan(inputsFor(root));
-
-    check(!plan.ok);
-    check(plan.error.find("disagree on P") != std::string::npos);
-    check(plan.error.find("zeta asks for") != std::string::npos);
-    check(plan.error.find("alpha asks for") != std::string::npos);
-    check(plan.error.find("epm.cpp") != std::string::npos);
 };
 
 auto tGraphStrict = test("Graph/walk/strictTurnsNotesIntoAnError") = []
 {
     auto sources = FakeSources {};
-    auto a = Project {};
-    setOption(a.add("C", "org/C", "v1"), "X", "dep");
-    sources.add("A", "v1", a);
+    sources.add("A", "v1", declaring("C", "v2"));
     sources.add("C", "v1");
 
     auto root = Project {};
     root.add("A", "org/A", "v1");
-    setOption(root.add("C", "org/C", "v1"), "X", "root");
+    root.add("C", "org/C", "v1");
     auto inputs = inputsFor(root);
 
     check(sources.plan(inputs).ok);
@@ -362,9 +440,8 @@ auto tGraphStrict = test("Graph/walk/strictTurnsNotesIntoAnError") = []
     const auto strict = sources.plan(inputs);
 
     check(!strict.ok);
-    check(
-        strict.error.find("C: A declares option X=dep, root declares option X=root")
-        != std::string::npos);
+    check(strict.error.find("C: A declares v2, root declares v1")
+          != std::string::npos);
 
     inputs.overrides.strict = false;
     inputs.environment = [](std::string_view name)
@@ -452,11 +529,11 @@ auto tGraphSourceOverride = test("Graph/walk/sourceOverrideIsReadNotFetched") = 
     const auto plan = sources.plan(inputs);
 
     check(plan.ok);
-    check(sources.fetched == EA::Vector<std::string> {"C@v1"});
+    check(sources.fetched == eacp::Vector<std::string> {"C@v1"});
     check(planned(plan, "A")->effective.source == checkout.path().str());
     check(planned(plan, "A")->snapshot.directory == checkout.path());
     check(planned(plan, "A")->effective.request.mode == "source");
-    check(planned(plan, "A")->deps == EA::Vector<std::string> {"C"});
+    check(planned(plan, "A")->deps == eacp::Vector<std::string> {"C"});
     check(planned(plan, "C")->effective.request.mode == "auto");
 };
 
@@ -510,7 +587,7 @@ auto tGraphBadInputs = test("Graph/walk/reportsBadInputs") = []
 
     const auto noTag = sources.plan(inputsFor(declaring("A", "v1")));
     check(!noTag.ok);
-    check(noTag.error == "C has no git and tag (declared by A)");
+    check(noTag.error == "C has no tag (declared by A)");
 
     const auto missing = sources.plan(inputsFor(declaring("A", "v7")));
     check(!missing.ok);
@@ -544,17 +621,17 @@ auto tGraphDuplicateName = test("Graph/walk/duplicateNameIsAnError") = []
     const auto root = sources.plan(inputsFor(twice));
     check(!root.ok);
     check(root.error == "the root manifest: C is declared twice in packages");
-    check(sources.fetched == EA::Vector<std::string> {"A@v1"});
+    check(sources.fetched == eacp::Vector<std::string> {"A@v1"});
 };
 
 auto tGraphDeclarationOrder = test("Graph/walk/declarationOrderNotNameOrder") = []
 {
     auto sources = FakeSources {};
-    sources.add("zeta", "v1", declaring("P", "v1"));
-    sources.add("alpha", "v1", declaring("P", "v1"));
-    sources.add("P", "v1");
+    sources.add("zeta", "v1", declaring("P", "fromZeta"));
+    sources.add("alpha", "v1", declaring("P", "fromAlpha"));
+    sources.add("P", "fromZeta");
 
-    // Name order would visit alpha first.
+    // Name order would visit alpha first and let its P win.
     auto root = Project {};
     root.add("zeta", "org/zeta", "v1");
     root.add("alpha", "org/alpha", "v1");
@@ -564,17 +641,16 @@ auto tGraphDeclarationOrder = test("Graph/walk/declarationOrderNotNameOrder") = 
     const auto plan = sources.plan(inputs);
 
     check(plan.ok);
+    check(planned(plan, "P")->effective.request.gitRef == "fromZeta");
+    check(planned(plan, "P")->effective.provenance.at("tag") == "manifest:zeta");
     check(planned(plan, "P")->declaredBy
-          == EA::Vector<std::string> {"zeta", "alpha"});
-    // alpha's declaration, met after P was fetched, takes part in the
-    // selection again.
+          == eacp::Vector<std::string> {"zeta", "alpha"});
+    check(hasNote(plan, "P: alpha declares fromAlpha, zeta declares fromZeta"));
     check(sources.fetched
-          == EA::Vector<std::string> {"zeta@v1", "P@v1", "alpha@v1", "P@v1"});
-    check(planOrder(plan) == EA::Vector<std::string> {"P", "zeta", "alpha"});
+          == eacp::Vector<std::string> {"zeta@v1", "P@fromZeta", "alpha@v1"});
+    check(planOrder(plan) == eacp::Vector<std::string> {"P", "zeta", "alpha"});
 
-    auto cacheDirectory = eacp::TemporaryFile {};
-    const auto resolved =
-        resolvePlan(plan, inputs.env, CacheRoot {cacheDirectory.path()}, {});
+    const auto resolved = sources.resolve(plan, inputs.env);
 
     check(resolved.ok);
     check(graphCMakeText(resolved.graph)
@@ -660,9 +736,7 @@ auto tGraphFallbackForcesSource =
     check(plan.ok);
     check(planned(plan, "A")->effective.request.mode == "auto");
 
-    auto cacheDirectory = eacp::TemporaryFile {};
-    const auto resolved =
-        resolvePlan(plan, inputs.env, CacheRoot {cacheDirectory.path()}, {});
+    const auto resolved = sources.resolve(plan, inputs.env);
 
     check(resolved.ok);
     check(resolved.graph.packages.size() == 2);
@@ -673,7 +747,7 @@ auto tGraphFallbackForcesSource =
     check(a.name == "A" && a.mode == "source");
     check(a.request.mode == "source");
     check(a.provenance.at("mode") == "source dependency C");
-    check(a.deps == EA::Vector<std::string> {"C"});
+    check(a.deps == eacp::Vector<std::string> {"C"});
     check(a.request.deps.empty());
     check(a.commit == "v1");
 };
@@ -687,13 +761,371 @@ auto tGraphBinaryOnlyMiss = test("Graph/resolve/binaryOnlyFailsOnAMiss") = []
     setMode(root.add("A", "org/A", "v1"), "binary-only");
     auto inputs = inputsFor(root);
     const auto plan = sources.plan(inputs);
-
-    auto cacheDirectory = eacp::TemporaryFile {};
-    const auto resolved =
-        resolvePlan(plan, inputs.env, CacheRoot {cacheDirectory.path()}, {});
+    const auto resolved = sources.resolve(plan, inputs.env);
 
     check(!resolved.ok);
     check(resolved.error.find("A is binary-only") == 0);
+};
+
+namespace
+{
+// root declares A and E; A's epm.cpp declares C with steps of its own and D;
+// only A has an epm.cpp.
+struct StepGraph
+{
+    StepGraph()
+    {
+        auto a = Project {};
+        a.add("C", "org/C", "v1").customBuild = true;
+        a.add("D", "org/D", "v1");
+        sources.add("A", "v1", a);
+        sources.add("C", "v1");
+        sources.add("D", "v1");
+        sources.add("E", "v1");
+
+        auto root = Project {};
+        root.add("A", "org/A", "v1");
+        root.add("E", "org/E", "v1");
+        inputs = inputsFor(root);
+        inputs.rootRecipe = rootRecipe;
+
+        for (const auto* name: {"A", "C", "D", "E"})
+            sources.prebuilt(name);
+    }
+
+    FakeSources sources;
+    GraphInputs inputs;
+    eacp::FilePath rootRecipe {"/work/app/epm.cpp"};
+};
+} // namespace
+
+auto tGraphStepOwners = test("Graph/steps/ownerAndDependencyOrder") = []
+{
+    auto graph = StepGraph {};
+    auto& sources = graph.sources;
+    const auto plan = sources.plan(graph.inputs);
+
+    check(plan.ok);
+    check(plan.notes.empty());
+    check(planned(plan, "C")->owner.customBuild);
+    check(!planned(plan, "D")->owner.customBuild);
+
+    const auto resolved = sources.resolve(plan, graph.inputs.env);
+
+    check(resolved.ok);
+    check(sources.stepOrder() == eacp::Vector<std::string> {"C", "D", "A", "E"});
+
+    const auto aRecipe = sources.recipeOf("A", "v1");
+    const auto ownerOf = [&](const std::string& name)
+    {
+        const auto* step = sources.stepOf(name);
+        return step ? step->recipe + "|" + step->recipeName : std::string {};
+    };
+
+    // The declarer's recipe for C (custom steps) and D (default ones), A's
+    // own for A, the root's for E.
+    check(ownerOf("C") == aRecipe + "|A");
+    check(ownerOf("D") == aRecipe + "|A");
+    check(ownerOf("A") == aRecipe + "|A");
+    check(ownerOf("E") == graph.rootRecipe.str() + "|");
+
+    // Each step after its dependencies', given their fingerprints and entries.
+    const auto* a = sources.stepOf("A");
+    check(
+        a
+        && a->deps
+               == std::map<std::string, std::string> {{"C", "fp-C"}, {"D", "fp-D"}});
+    check(a
+          && a->dependencies == eacp::Vector<std::string> {"C:/bin/C", "D:/bin/D"});
+    check(sources.stepOf("C")->deps.empty());
+
+    const auto* resolvedA = findPackage(resolved.graph.packages, "A");
+    check(resolvedA && resolvedA->fingerprint == "fp-A");
+    check(resolvedA && resolvedA->prefix == "/bin/A");
+    check(resolvedA && resolvedA->request.deps.at("C") == "fp-C");
+};
+
+auto tGraphRootOptionsKeepSteps =
+    test("Graph/steps/rootOptionsKeepDependencySteps") = []
+{
+    auto graph = StepGraph {};
+    auto& sources = graph.sources;
+
+    // The root's declaration of C, options only, wins the merge, but A's
+    // custom steps own C's step, and get the root's option.
+    setOption(graph.inputs.project.add("C"), "C_FLAG", "ON");
+    const auto plan = sources.plan(graph.inputs);
+
+    check(plan.ok);
+    check(plan.notes.empty());
+
+    const auto& owner = planned(plan, "C")->owner;
+    check(owner.customBuild);
+    check(owner.name == "A");
+    check(owner.recipe.str() == sources.recipeOf("A", "v1"));
+
+    const auto resolved = sources.resolve(plan, graph.inputs.env);
+    check(resolved.ok);
+
+    const auto* step = sources.stepOf("C");
+    check(step && step->recipe == sources.recipeOf("A", "v1"));
+    check(step && step->recipeName == "A");
+    check(step && step->options.contains("C_FLAG")
+          && step->options.at("C_FLAG") == "ON");
+};
+
+auto tGraphRootOwnsSteps = test("Graph/steps/rootCustomStepsWin") = []
+{
+    auto graph = StepGraph {};
+    auto& sources = graph.sources;
+
+    // The root's declaration of C with custom steps of its own wins: the
+    // root's recipe runs C's step, and A's custom steps for it do not run.
+    graph.inputs.project.add("C").customBuild = true;
+    const auto plan = sources.plan(graph.inputs);
+
+    check(plan.ok);
+    check(plan.notes
+          == eacp::Vector<std::string> {
+              "C: A declares custom build steps, which do not run: root's steps "
+              "run"});
+    check(planned(plan, "C")->owner.customBuild);
+
+    const auto resolved = sources.resolve(plan, graph.inputs.env);
+    check(resolved.ok);
+    check(sources.stepOf("C")->recipe == graph.rootRecipe.str());
+    check(sources.stepOf("C")->recipeName.empty());
+
+    graph.inputs.overrides.strict = true;
+    const auto strict = sources.plan(graph.inputs);
+    check(!strict.ok);
+    check(strict.error.find("root's steps run") != std::string::npos);
+    graph.inputs.overrides.strict = false;
+
+    // A root without a recipe file: the default steps, in this process, for C
+    // and E. C ends in source, which forces A there too; A's step still runs
+    // in its own recipe, in source mode.
+    graph.inputs.rootRecipe = {};
+    sources.steps.clear();
+    graph.inputs.overrides.buildMissingBinaries = false;
+    const auto noRecipe = sources.plan(graph.inputs);
+    const auto inProcess = sources.resolve(noRecipe, graph.inputs.env);
+    check(inProcess.ok);
+    check(sources.stepOrder() == eacp::Vector<std::string> {"D", "A"});
+
+    const auto* a = findPackage(inProcess.graph.packages, "A");
+    check(a && a->mode == "source");
+};
+
+auto tGraphFirstCustomStepsOwn = test("Graph/steps/firstCustomStepsOwn") = []
+{
+    // root declares A then B; both declare C, without an epm.cpp of its own.
+    const auto planWith = [](bool aCustom, bool bCustom)
+    {
+        auto sources = FakeSources {};
+        auto a = Project {};
+        a.add("C", "org/C", "v1").customBuild = aCustom;
+        auto b = Project {};
+        b.add("C", "org/C", "v1").customBuild = bCustom;
+        sources.add("A", "v1", a);
+        sources.add("B", "v1", b);
+        sources.add("C", "v1");
+
+        auto root = Project {};
+        root.add("A", "org/A", "v1");
+        root.add("B", "org/B", "v1");
+        auto plan = sources.plan(inputsFor(root));
+        const auto owner = plan.ok ? planned(plan, "C")->owner : StepOwner {};
+        return std::tuple {plan.ok, plan.notes, owner.name, owner.customBuild};
+    };
+
+    // A's declaration wins the merge, but only B's has custom steps.
+    const auto [bOk, bNotes, bOwner, bCustom] = planWith(false, true);
+    check(bOk && bNotes.empty() && bOwner == "B" && bCustom);
+
+    // Both have: the first, A's, runs, and B's are noted.
+    const auto [bothOk, bothNotes, bothOwner, bothCustom] = planWith(true, true);
+    check(bothOk && bothOwner == "A" && bothCustom);
+    check(bothNotes
+          == eacp::Vector<std::string> {
+              "C: B declares custom build steps, which do not run: A's steps run"});
+
+    // Neither: the winning declaration's recipe, with the default steps.
+    const auto [noneOk, noneNotes, noneOwner, noneCustom] = planWith(false, false);
+    check(noneOk && noneNotes.empty() && noneOwner == "A" && !noneCustom);
+};
+
+auto tGraphDependencyNamedRoot = test("Graph/steps/aDependencyNamedRoot") = []
+{
+    // A package called "root", whose epm.cpp declares X with custom steps:
+    // X's step runs in that package's recipe, not the root project's.
+    auto sources = FakeSources {};
+    auto rootPackage = Project {};
+    rootPackage.add("X", "org/X", "v1").customBuild = true;
+    sources.add("root", "v1", rootPackage);
+    sources.add("X", "v1");
+
+    auto inputs = inputsFor(declaring("root", "v1"));
+    inputs.rootRecipe = eacp::FilePath {"/work/app/epm.cpp"};
+    const auto plan = sources.plan(inputs);
+
+    check(plan.ok);
+    check(plan.notes.empty());
+
+    const auto& owner = planned(plan, "X")->owner;
+    check(owner.name == "root");
+    check(owner.recipe.str() == sources.recipeOf("root", "v1"));
+    check(owner.customBuild);
+
+    // The root project's own custom steps for X win, and the package's are
+    // noted as not running.
+    inputs.project.add("X").customBuild = true;
+    const auto rootWins = sources.plan(inputs);
+    check(rootWins.ok);
+    check(planned(rootWins, "X")->owner.recipe == inputs.rootRecipe);
+    check(planned(rootWins, "X")->owner.name.empty());
+    check(rootWins.notes
+          == eacp::Vector<std::string> {
+              "X: root declares custom build steps, which do not run: root's steps "
+              "run"});
+};
+
+auto tGraphCustomStepsOwnRecipe =
+    test("Graph/steps/customStepsForAPackageWithItsOwnRecipe") = []
+{
+    auto graph = StepGraph {};
+    auto& sources = graph.sources;
+    sources.add("C", "v1", Project {});
+
+    const auto plan = sources.plan(graph.inputs);
+
+    check(!plan.ok);
+    check(plan.error
+          == "A declares custom build steps for C, which has its own "
+             "epm.cpp");
+
+    // Without add<T>, C's own epm.cpp runs its step.
+    graph.inputs.project.packages.clear();
+    graph.inputs.project.add("C", "org/C", "v1");
+    const auto own = sources.plan(graph.inputs);
+    check(own.ok);
+    check(planned(own, "C")->owner.recipe.str() == sources.recipeOf("C", "v1"));
+    check(planned(own, "C")->owner.name == "C");
+};
+
+auto tGraphNoRecipeExecutables = test("Graph/steps/inProcessWithoutRecipes") = []
+{
+    auto graph = StepGraph {};
+    auto& sources = graph.sources;
+    sources.recipeExecutables = false;
+    graph.inputs.overrides.buildMissingBinaries = false;
+
+    // Custom steps need a recipe executable.
+    const auto plan = sources.plan(graph.inputs);
+    const auto custom = sources.resolve(plan, graph.inputs.env);
+
+    check(!custom.ok);
+    check(custom.error
+          == "A declares custom build steps for C, which need a recipe "
+             "executable: epm builds none on Windows yet (no MSVC support)");
+    check(sources.steps.empty());
+
+    // Without them, every step runs in this process.
+    graph.inputs.project.packages.clear();
+    graph.inputs.project.add("D", "org/D", "v1");
+    graph.inputs.project.add("E", "org/E", "v1");
+    const auto plain = sources.resolve(sources.plan(graph.inputs), graph.inputs.env);
+
+    check(plain.ok);
+    check(sources.steps.empty());
+    check(plain.graph.packages.size() == 2
+          && plain.graph.packages[0].mode == "source");
+
+    // With recipes, a source package's step runs in its owner's, for the
+    // options its hooks set.
+    sources.recipeExecutables = true;
+    graph.inputs.overrides.mode = "source";
+    const auto source =
+        sources.resolve(sources.plan(graph.inputs), graph.inputs.env);
+    check(source.ok);
+    check(sources.stepOrder() == eacp::Vector<std::string> {"D", "E"});
+    check(source.graph.packages.size() == 2
+          && source.graph.packages[1].mode == "source");
+
+    // A step that records prebuilt for a source package fails.
+    sources.honoursMode = false;
+    sources.steps.clear();
+    const auto prebuilt =
+        sources.resolve(sources.plan(graph.inputs), graph.inputs.env);
+    check(!prebuilt.ok);
+    check(prebuilt.error
+          == "the build step of D recorded prebuilt, but the package is in "
+             "source mode: end build() with useSource() when spec().mode is "
+             "source");
+};
+
+auto tGraphStepOptions = test("Graph/steps/optionsFromTheStep") = []
+{
+    auto graph = StepGraph {};
+    auto& sources = graph.sources;
+    graph.inputs.overrides.mode = "source";
+
+    // D's step records the options its hook set, E's none: graph.cmake hands
+    // D's to its add_subdirectory, and E keeps the request's.
+    setOption(graph.inputs.project.packages[1], "E_FLAG", "ON");
+    sources.honoursMode = false;
+
+    for (auto& [name, output]: sources.outputs)
+        output.mode = "source";
+
+    sources.outputs["D"].options = {{"D_HOOK", "ON"}, {"D_TYPED", "1"}};
+
+    const auto resolved =
+        sources.resolve(sources.plan(graph.inputs), graph.inputs.env);
+    check(resolved.ok);
+
+    const auto* d = findPackage(resolved.graph.packages, "D");
+    const auto* e = findPackage(resolved.graph.packages, "E");
+    check(d && d->options.at("D_HOOK") == "ON");
+    check(d && d->request.options.empty());
+    check(e && e->options.at("E_FLAG") == "ON");
+
+    const auto text = graphCMakeText(resolved.graph);
+    check(text.find("set(epm_D_OPTIONS \"D_HOOK=ON;D_TYPED=1\")\n")
+          != std::string::npos);
+    check(text.find("set(epm_E_OPTIONS \"E_FLAG=ON\")\n") != std::string::npos);
+};
+
+auto tGraphStepFails = test("Graph/steps/failureNamesThePackage") = []
+{
+    auto graph = StepGraph {};
+    auto& sources = graph.sources;
+    sources.stepErrors["D"] = "recipe build --package D failed: exit code 1\n"
+                              "-- epm: D: building D (Debug)\n"
+                              "error: D.cpp:1: nope";
+
+    const auto plan = sources.plan(graph.inputs);
+    const auto failed = sources.resolve(plan, graph.inputs.env);
+
+    check(!failed.ok);
+    check(failed.error.starts_with("the build step of D (in the recipe "
+                                   + sources.recipeOf("A", "v1") + "): "));
+    check(failed.error.ends_with("building D (Debug)\nerror: D.cpp:1: nope"));
+    check(sources.stepOrder() == eacp::Vector<std::string> {"C", "D"});
+
+    // A step that reports its failure: its error, and its details above it.
+    sources.stepErrors.clear();
+    sources.steps.clear();
+    sources.outputs["C"] = BuildOutput {};
+    sources.outputs["C"].name = "C";
+    sources.outputs["C"].error = "C is binary-only, but the cache has none";
+    sources.outputs["C"].details = "last lines";
+
+    const auto reported = sources.resolve(plan, graph.inputs.env);
+    check(!reported.ok);
+    check(reported.error == "C is binary-only, but the cache has none");
+    check(reported.details == "last lines");
+    check(sources.stepOrder() == eacp::Vector<std::string> {"C"});
 };
 
 auto tGraphDecide = test("Graph/decide/binaryOnly") = []
@@ -755,14 +1187,11 @@ auto tGraphCMake = test("GraphResponse/cmakeText") = []
         "set(epm_B_SOURCE_DIR \"/work/B\")\n"
         "set(epm_B_DEPS \"fmt\")\n"
         "set(epm_B_OPTIONS \"\")\n"
-        "set(epm_SYSTEM_PACKAGES \"\")\n"
         "set(epm_NOTES \"fmt: B declares 10.2.1, root declares 11.0.2;"
         "fmt: B declares configs Debug\\\\;Release, root leaves it unset\")\n";
 
     check(graphCMakeText(sampleGraph()) == expected);
-    check(
-        graphCMakeText({})
-        == "set(epm_PACKAGES \"\")\nset(epm_SYSTEM_PACKAGES \"\")\nset(epm_NOTES \"\")\n");
+    check(graphCMakeText({}) == "set(epm_PACKAGES \"\")\nset(epm_NOTES \"\")\n");
 };
 
 auto tGraphJsonRoundTrip = test("GraphResponse/jsonRoundTrip") = []
@@ -770,10 +1199,9 @@ auto tGraphJsonRoundTrip = test("GraphResponse/jsonRoundTrip") = []
     auto directory = eacp::TemporaryFile {};
     const auto graph = sampleGraph();
 
-    eacp::Files::writeFile(directory.path() / "graph.json",
-                           Miro::toJSONString(graph, 2));
+    check(writeGraphJson(directory.path() / "graph.json", graph));
 
-    const auto loaded = loadJsonFile<ResolvedGraph>(directory.path() / "graph.json");
+    const auto loaded = loadGraphJson(directory.path() / "graph.json");
 
     check(loaded.has_value());
     check(loaded->schema == 1);
@@ -787,7 +1215,7 @@ auto tGraphJsonRoundTrip = test("GraphResponse/jsonRoundTrip") = []
 
 auto tGraphDependencyClosure = test("Graph/dependencyClosure") = []
 {
-    const auto package = [](std::string name, EA::Vector<std::string> deps)
+    const auto package = [](std::string name, eacp::Vector<std::string> deps)
     {
         auto resolved = ResolvedPackage {};
         resolved.name = std::move(name);
@@ -805,7 +1233,7 @@ auto tGraphDependencyClosure = test("Graph/dependencyClosure") = []
 
     const auto names = [](const ResolvedGraph& closure)
     {
-        auto result = EA::Vector<std::string> {};
+        auto result = eacp::Vector<std::string> {};
 
         for (const auto& resolved: closure.packages)
             result.add(resolved.name);
@@ -814,29 +1242,11 @@ auto tGraphDependencyClosure = test("Graph/dependencyClosure") = []
     };
 
     check(names(dependencyClosure(graph, {"Leaf"}))
-          == EA::Vector<std::string> {"Leaf"});
+          == eacp::Vector<std::string> {"Leaf"});
     check(names(dependencyClosure(graph, {"Mid"}))
-          == EA::Vector<std::string> {"Leaf", "Mid"});
+          == eacp::Vector<std::string> {"Leaf", "Mid"});
     check(names(dependencyClosure(graph, {"Top", "Other"}))
-          == EA::Vector<std::string> {"Leaf", "Other", "Mid", "Top"});
+          == eacp::Vector<std::string> {"Leaf", "Other", "Mid", "Top"});
     check(dependencyClosure(graph, {}).packages.empty());
     check(dependencyClosure(graph, {"Mid"}).notes.empty());
-};
-
-auto tGraphSystemPackages = test("Graph/walk/systemPackagesAreNotFetched") = []
-{
-    auto sources = FakeSources {};
-    auto a = Project {};
-    a.addSystem("CURL");
-    sources.add("A", "v1", a);
-
-    auto root = Project {};
-    root.add("A", "org/A", "v1");
-    root.addSystem("Threads");
-    const auto plan = sources.plan(inputsFor(root));
-
-    check(plan.ok);
-    check(plan.systemPackages == EA::Vector<std::string> {"Threads", "CURL"});
-    check(planOrder(plan) == EA::Vector<std::string> {"A"});
-    check(sources.fetched == EA::Vector<std::string> {"A@v1"});
 };

@@ -10,7 +10,7 @@
 namespace epm
 {
 // The target names in an export file's `.names` companion, one per line.
-EA::Vector<std::string> parseTargetNames(std::string_view namesText);
+eacp::Vector<std::string> parseTargetNames(std::string_view namesText);
 
 // An ALIAS target the child build defined for one of its exported targets.
 struct TargetAlias
@@ -23,13 +23,13 @@ struct TargetAlias
 
 // The aliases in an export file's `.aliases` companion, one `<alias> <target>`
 // per line; malformed lines are skipped.
-EA::Vector<TargetAlias> parseTargetAliases(std::string_view aliasesText);
+eacp::Vector<TargetAlias> parseTargetAliases(std::string_view aliasesText);
 
 // Every distinct path in the export file that lies under `buildDirectory`,
 // relative to it, in order of first appearance. A path ends at the quote,
 // list separator or generator-expression bracket that closes it.
-EA::Vector<std::string> buildTreePaths(std::string_view exportFileText,
-                                       std::string_view buildDirectory);
+eacp::Vector<std::string> buildTreePaths(std::string_view exportFileText,
+                                         std::string_view buildDirectory);
 
 // The export file with every `buildDirectory` prefix replaced by `replacement`.
 std::string relocateBuildTree(std::string_view exportFileText,
@@ -50,8 +50,8 @@ bool mentionsThreads(std::string_view exportFileText);
 
 // The buildTreePaths that appear in INTERFACE_SOURCES properties: files the
 // consumer compiles itself (ResEmbed registration .cpp files).
-EA::Vector<std::string> interfaceSourcePaths(std::string_view exportFileText,
-                                             std::string_view buildDirectory);
+eacp::Vector<std::string> interfaceSourcePaths(std::string_view exportFileText,
+                                               std::string_view buildDirectory);
 
 // Where, relative to the prefix, an INTERFACE_SOURCES file with `contents`
 // is kept: gen/shared/<sha256(contents)[:12]>/<relative>. Content-addressed,
@@ -63,28 +63,30 @@ std::string sharedSourcePath(std::string_view contents, std::string_view relativ
 // The epm-targets.cmake facade over the export-<Config>.cmake of every
 // config in `configs`; each target links the per-config one that
 // configSelector picks. Each alias of a facade target becomes an ALIAS of it.
-std::string targetsFileText(const EA::Vector<std::string>& targetNames,
-                            const EA::Vector<TargetAlias>& aliases,
+std::string targetsFileText(const eacp::Vector<std::string>& targetNames,
+                            const eacp::Vector<TargetAlias>& aliases,
                             bool needsThreads,
-                            const EA::Vector<std::string>& configs);
+                            const eacp::Vector<std::string>& configs);
 
 // Rewrites <prefix>/epm-targets.cmake for `configs`, reading each config's
-// export file, .names and .aliases. Returns the error when one of them is
-// missing.
-std::optional<std::string> writeTargetsFile(const eacp::FilePath& prefix,
-                                            const EA::Vector<std::string>& configs);
+// export file, .names and .aliases (absent in entries exported before aliases
+// were recorded). Returns the error when the export file or .names is
+// unreadable.
+std::optional<std::string>
+    writeTargetsFile(const eacp::FilePath& prefix,
+                     const eacp::Vector<std::string>& configs);
 
 struct HarvestResult
 {
     bool ok = false;
-    EA::Vector<std::string> targetNames;
+    eacp::Vector<std::string> targetNames;
     bool needsThreads = false;
 
     // What was copied into <prefix>/gen/<config>, relative to it.
-    EA::Vector<std::string> relocatedPaths;
+    eacp::Vector<std::string> relocatedPaths;
 
     // What went to <prefix>/gen/shared, relative to the prefix.
-    EA::Vector<std::string> sharedPaths;
+    eacp::Vector<std::string> sharedPaths;
 
     // Set when the build tree had to be kept (a reference survived the rewrite).
     std::string warning;

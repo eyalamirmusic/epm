@@ -1,19 +1,20 @@
 cmake_minimum_required(VERSION 3.31)
 
-# epm builds itself with the released epm below, as a compiler builds with its
-# previous release: get_epm.cmake downloads it, and it resolves epm.cpp's
-# packages from epm-lock.json. -DEPM_EXECUTABLE=<an epm> uses another.
-set(EPM_VERSION "0.1.4...0.1.4")
-set(EPM_RELEASE_REPOSITORY "https://github.com/jamierpond/epm")
-list(APPEND CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${CMAKE_CURRENT_LIST_DIR}/CMake/get_epm.cmake")
-
-project(epm VERSION 0.1.4 LANGUAGES C CXX)
+project(epm VERSION 0.1.3 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
+# The configuration names the install's lib/<config>/ and the libraries epm's
+# own recipes link, so a single-configuration build of epm always has one.
+get_property(EPM_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+
+if (PROJECT_IS_TOP_LEVEL AND NOT EPM_MULTI_CONFIG AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "The build configuration" FORCE)
+endif ()
 
 if (MSVC)
     add_compile_options(/EHsc)
@@ -22,7 +23,7 @@ endif ()
 option(EPM_VERBOSE_CONFIGURE
         "Print the third-party fetch and probe detail hidden by default" OFF)
 
-# Same knobs as eacp's ConfigureLog.cmake: keep a clean configure down to epm's
+# Same knobs as eacp's ConfigureLog.cmake: keep a clean configure down to CPM's
 # one line per package.
 if (EPM_VERBOSE_CONFIGURE)
     set(CMAKE_MESSAGE_LOG_LEVEL VERBOSE)
@@ -30,6 +31,10 @@ else ()
     set(CMAKE_REQUIRED_QUIET ON)
     set(Threads_FIND_QUIETLY TRUE)
 endif ()
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
+
+include(CPM)
 
 find_package(eacp REQUIRED)
 find_package(Miro REQUIRED)
@@ -40,10 +45,12 @@ list(APPEND CMAKE_MODULE_PATH "${eacp_SOURCE_DIR}/CMake")
 add_subdirectory(Lib)
 add_subdirectory(Apps)
 
-# The whole install: the binary and the consumer module, with the provider it
-# includes from its own directory. eacp and Miro are static and linked in. A
-# tool entry of get_epm.cmake is exactly this install, whether unpacked from a
-# release archive or built from source.
+# The whole install: the binary (Apps/epm), the recipe SDK's headers and
+# per-configuration libraries (Lib/epm), and the consumer module, with the
+# provider it includes from its own directory. An installed prefix is what
+# get_epm.cmake uses: an epm on PATH (a release archive unpacked into a prefix
+# is one), else a tool entry of its own, built from source and installed there
+# (Debug and Release).
 install(FILES CMake/epm.cmake CMake/epm-provider.cmake DESTINATION share/epm/cmake)
 
 option(EPM_ENABLE_TESTS "Enable Tests for epm" ${PROJECT_IS_TOP_LEVEL})

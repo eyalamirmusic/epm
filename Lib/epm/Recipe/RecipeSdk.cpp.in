@@ -9,41 +9,39 @@ namespace epm
 {
 namespace
 {
-std::string identityOf(const RecipeSdk& sdk)
+BakedRecipeSdk bake()
 {
-    auto lines = eacp::Vector<std::string> {sdk.compilerId,
-                                            sdk.cxxStandard,
-                                            sdk.cxxExtensions ? "ON" : "OFF",
-                                            eacp::Strings::join(sdk.flags, " "),
-                                            eacp::Strings::join(sdk.osxArchitectures, " "),
-                                            sdk.osxDeploymentTarget,
-                                            eacp::Strings::join(sdk.compileDefinitions, " "),
-                                            eacp::Strings::join(sdk.compileOptions, " ")};
-
-    return eacp::Strings::join(lines, "\n");
-}
-
-RecipeSdk bakedSdk()
-{
-    auto sdk = RecipeSdk {};
+    auto baked = BakedRecipeSdk {};
+    auto& sdk = baked.sdk;
+    sdk.compiler = R"epmsdk(@CMAKE_CXX_COMPILER@)epmsdk";
     sdk.compilerId = R"epmsdk(@CMAKE_CXX_COMPILER_ID@)epmsdk";
     sdk.cxxStandard = R"epmsdk(@CMAKE_CXX_STANDARD@)epmsdk";
     sdk.cxxExtensions = std::string {"@EPM_SDK_CXX_EXTENSIONS@"} == "ON";
+    sdk.config = R"epmsdk($<CONFIG>)epmsdk";
     sdk.flags = splitList(R"epmsdk(@EPM_SDK_CXX_FLAGS@)epmsdk");
+    sdk.osxSysroot = R"epmsdk(@CMAKE_OSX_SYSROOT@)epmsdk";
     sdk.osxArchitectures = splitList(R"epmsdk(@EPM_SDK_OSX_ARCHITECTURES@)epmsdk");
     sdk.osxDeploymentTarget = R"epmsdk(@CMAKE_OSX_DEPLOYMENT_TARGET@)epmsdk";
+    sdk.includeDirectories = splitList(
+        R"epmsdk($<REMOVE_DUPLICATES:$<TARGET_PROPERTY:epm-recipe,INCLUDE_DIRECTORIES>;$<TARGET_PROPERTY:epm-recipe,INTERFACE_INCLUDE_DIRECTORIES>>)epmsdk");
     sdk.compileDefinitions =
-        splitList(R"epmsdk($<TARGET_PROPERTY:epm-core,COMPILE_DEFINITIONS>)epmsdk");
+        splitList(R"epmsdk($<TARGET_PROPERTY:epm-recipe,COMPILE_DEFINITIONS>)epmsdk");
     sdk.compileOptions =
-        splitList(R"epmsdk($<TARGET_PROPERTY:epm-core,COMPILE_OPTIONS>)epmsdk");
-    sdk.identity = identityOf(sdk);
-    return sdk;
+        splitList(R"epmsdk($<TARGET_PROPERTY:epm-recipe,COMPILE_OPTIONS>)epmsdk");
+    sdk.libraries[sdk.config] = splitList(R"epmsdk(@EPM_SDK_LIBRARIES@)epmsdk");
+    sdk.linkOptions = splitList(R"epmsdk(@EPM_SDK_LINK_OPTIONS@)epmsdk");
+
+    baked.includeDestination = R"epmsdk(@EPM_RECIPE_INCLUDE_DESTINATION@)epmsdk";
+    baked.libraryDestination = R"epmsdk(@EPM_RECIPE_LIBRARY_DESTINATION@)epmsdk";
+    baked.installedLibraries =
+        splitList(R"epmsdk(@EPM_SDK_INSTALLED_LIBRARIES@)epmsdk");
+    return baked;
 }
 } // namespace
 
-const RecipeSdk& recipeSdk()
+const BakedRecipeSdk& bakedRecipeSdk()
 {
-    static const auto sdk = bakedSdk();
-    return sdk;
+    static const auto baked = bake();
+    return baked;
 }
 } // namespace epm

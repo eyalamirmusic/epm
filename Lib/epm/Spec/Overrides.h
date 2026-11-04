@@ -19,13 +19,13 @@ struct PackageOverride
 
     // A local checkout used instead of fetching; makes the package source.
     std::string source;
-    EA::Vector<std::string> configs;
+    eacp::Vector<std::string> configs;
     std::map<std::string, std::string> options;
 
     MIRO_REFLECT(mode, source, configs, options)
 };
 
-// overrides.json, written by get_epm.cmake from the CMake
+// overrides.json (Docs/Graph.md §3), written by get_epm.cmake from the CMake
 // variables it sees. Unset strings and lists are empty.
 struct Overrides
 {
@@ -33,7 +33,7 @@ struct Overrides
     std::string mode;
 
     // ["auto"] asks for the PoC's auto rule explicitly.
-    EA::Vector<std::string> configs;
+    eacp::Vector<std::string> configs;
     std::string abiMatch;
     bool strict = false;
 
@@ -59,6 +59,6 @@ std::map<std::string, std::string> parseOptionList(std::string_view text);
 // _OPTIONS for each of `names` (options merge by key). EPM_STRICT only turns
 // strict on, since a CMake OFF cannot be told from an unset one.
 Overrides withEnvironment(Overrides fromCMake,
-                          const EA::Vector<std::string>& names,
+                          const eacp::Vector<std::string>& names,
                           const EnvironmentLookup& lookup);
 } // namespace epm

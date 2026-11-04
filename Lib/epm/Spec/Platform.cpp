@@ -27,7 +27,7 @@ std::string architectureName(std::string_view processor)
 // holds both arm64 and x86_64.
 std::string appleArchitecture(const Env& env)
 {
-    auto architectures = EA::Vector<std::string> {};
+    auto architectures = Vector<std::string> {};
 
     for (const auto& architecture: splitList(env.osxArchitectures))
         architectures.addIfNotThere(architectureName(architecture));

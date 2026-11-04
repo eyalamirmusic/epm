@@ -13,26 +13,48 @@ namespace epm
 {
 using namespace eacp;
 
-CommandResult runCommand(const std::string& executable,
-                         const EA::Vector<std::string>& arguments)
+namespace
+{
+// What runCommand keeps of output it echoed, which is on the screen already:
+// enough for a failure report's last lines.
+constexpr auto echoedOutputKept = std::size_t {64 * 1024};
+
+// The end of `text`, at most `limit` bytes, from a line start.
+std::string keptTail(std::string_view text, std::size_t limit)
+{
+    if (text.size() <= limit)
+        return std::string {text};
+
+    auto tail = text.substr(text.size() - limit);
+
+    if (const auto newline = tail.find('\n'); newline != std::string_view::npos)
+        tail.remove_prefix(newline + 1);
+
+    return std::string {tail};
+}
+
+Processes::ProcessOptions processOptions(const std::string& executable,
+                                         const Vector<std::string>& arguments,
+                                         const FilePath& workingDirectory)
 {
     auto options = Processes::ProcessOptions {};
     options.executable = executable;
     options.arguments = arguments;
-    options.mergeErrorOutput = true;
+    options.workingDirectory = workingDirectory.str();
+    return options;
+}
 
-    if (Log::isVerbose())
-        options.onOutput = [](std::string_view chunk) { Log::stream(chunk); };
-
-    const auto result = Processes::run(std::move(options));
-
+CommandResult commandResultFor(const std::string& executable,
+                               const Processes::ProcessResult& result,
+                               std::string output)
+{
     auto commandResult = CommandResult {};
-    commandResult.output = result.output;
+    commandResult.output = std::move(output);
+    commandResult.errorOutput = result.errorOutput;
+    commandResult.exitCode = result.launched ? result.exitCode : -1;
 
     if (!result.launched)
         commandResult.error = "could not run " + executable;
-    else if (!result.exited)
-        commandResult.error = executable + " did not exit normally";
     else if (result.exitCode != 0)
         commandResult.error =
             executable + " exited with code " + std::to_string(result.exitCode);
@@ -40,6 +62,51 @@ CommandResult runCommand(const std::string& executable,
         commandResult.ok = true;
 
     return commandResult;
+}
+} // namespace
+
+CommandResult runCommand(const std::string& executable,
+                         const Vector<std::string>& arguments,
+                         const FilePath& workingDirectory,
+                         Echo echo)
+{
+    auto options = processOptions(executable, arguments, workingDirectory);
+    options.mergeErrorOutput = true;
+
+    if (echo == Echo::always)
+        options.onOutput = [](std::string_view chunk) { Log::echo(chunk); };
+    else if (Log::isVerbose())
+        options.onOutput = [](std::string_view chunk) { Log::stream(chunk); };
+
+    const auto result = Processes::run(std::move(options));
+    auto output = echo == Echo::always ? keptTail(result.output, echoedOutputKept)
+                                       : result.output;
+    return commandResultFor(executable, result, std::move(output));
+}
+
+CommandResult runCommandKeepingErrors(const std::string& executable,
+                                      const Vector<std::string>& arguments,
+                                      const FilePath& workingDirectory)
+{
+    auto options = processOptions(executable, arguments, workingDirectory);
+    options.onOutput = [](std::string_view chunk) { Log::echo(chunk); };
+
+    const auto result = Processes::run(std::move(options));
+    return commandResultFor(
+        executable, result, keptTail(result.output, echoedOutputKept));
+}
+
+// Above 128 is how eacp::Processes reports a signal (or a shell's 128 + N).
+std::string failureReason(const std::string& executable, const CommandResult& result)
+{
+    constexpr auto signalBase = 128;
+
+    if (result.exitCode > signalBase)
+        return executable + " was terminated by signal "
+               + std::to_string(result.exitCode - signalBase) + " (exit code "
+               + std::to_string(result.exitCode) + ")";
+
+    return result.error;
 }
 
 std::string lastLines(std::string_view text, int count)

@@ -2,6 +2,7 @@
 
 #include <epm/Build/Configs.h>
 #include <epm/Emit/GraphResponse.h>
+#include <epm/Recipe/CMakePackage.h>
 #include <epm/Resolve/Resolve.h>
 #include <epm/Util/Log.h>
 #include <epm/Util/Text.h>
@@ -22,39 +23,13 @@ struct Node
     std::optional<ManifestPackage> root;
 
     // Declarations by dependencies, in walk order: the first one wins.
-    EA::Vector<Declaration> declarations;
+    Vector<Declaration> declarations;
     bool visiting = false;
     bool done = false;
     SourceSnapshot snapshot;
-    EA::Vector<std::string> deps;
-
-    // The requirement minimal version selection chose, and how many
-    // declarations the choice was made from.
-    Requirement selected;
-    int selectedFromDeclarations = 0;
+    bool hasManifest = false;
+    Vector<std::string> deps;
 };
-
-// Every declaration of the node that names a source: the root's, then the
-// dependencies' in walk order.
-EA::Vector<Requirement> requirementsOf(const Node& node)
-{
-    auto requirements = EA::Vector<Requirement> {};
-
-    if (node.root && !node.root->git.empty() && !node.root->tag.empty())
-        requirements.add(
-            {rootDeclarer, expandGitUrl(node.root->git), node.root->tag, {}});
-
-    for (const auto& declaration: node.declarations)
-    {
-        const auto& package = declaration.package;
-
-        if (!package.git.empty() && !package.tag.empty())
-            requirements.add(
-                {declaration.declarer, expandGitUrl(package.git), package.tag, {}});
-    }
-
-    return requirements;
-}
 
 std::optional<Declaration> firstDependency(const Node& node)
 {
@@ -64,9 +39,77 @@ std::optional<Declaration> firstDependency(const Node& node)
     return node.declarations.front();
 }
 
-EA::Vector<std::string> declarersOf(const Node& node)
+// Every declaration of the package in merge order: the root's first, then
+// the dependencies' in walk order. The first one wins the merge.
+Vector<Declaration> declarationsOf(const Node& node)
 {
-    auto declarers = EA::Vector<std::string> {};
+    auto declarations = Vector<Declaration> {};
+
+    if (node.root)
+        declarations.add({rootDeclarer, *node.root, true});
+
+    for (const auto& declaration: node.declarations)
+        declarations.add(declaration);
+
+    return declarations;
+}
+
+bool sameDeclarer(const Declaration& a, const Declaration& b)
+{
+    return a.isRoot == b.isRoot && a.declarer == b.declarer;
+}
+
+// The first declaration with custom steps (add<T>) for the package.
+std::optional<Declaration> firstCustomSteps(const Node& node)
+{
+    const auto declarations = declarationsOf(node);
+
+    if (const auto* custom =
+            declarations.findIf([](const Declaration& declaration)
+                                { return declaration.package.customBuild; }))
+        return *custom;
+
+    return std::nullopt;
+}
+
+// Whose recipe runs the build step of a package without an epm.cpp of its
+// own: the winning declaration's when it has custom steps, else the first
+// declaration's that has, else the winning one's (default steps). Options
+// reach the step through the merged request whoever owns it, so a root that
+// only tunes options keeps a dependency's custom steps.
+Declaration stepsDeclaration(const Node& node)
+{
+    if (auto custom = firstCustomSteps(node))
+        return std::move(*custom);
+
+    return declarationsOf(node).front();
+}
+
+// Custom steps that never run: declared beside another declaration's custom
+// steps, which own the step. (With an epm.cpp of its own, any custom steps
+// are an error.)
+Vector<std::string> unusedStepsNotes(const std::string& name, const Node& node)
+{
+    auto notes = Vector<std::string> {};
+
+    if (node.hasManifest)
+        return notes;
+
+    // A project declares a package once, so its declarer names a declaration.
+    const auto owner = stepsDeclaration(node);
+
+    for (const auto& declaration: declarationsOf(node))
+        if (declaration.package.customBuild && !sameDeclarer(declaration, owner))
+            notes.add(name + ": " + declaration.declarer
+                      + " declares custom build steps, which do not run: "
+                      + owner.declarer + "'s steps run");
+
+    return notes;
+}
+
+Vector<std::string> declarersOf(const Node& node)
+{
+    auto declarers = Vector<std::string> {};
 
     if (node.root)
         declarers.add(rootDeclarer);
@@ -78,9 +121,8 @@ EA::Vector<std::string> declarersOf(const Node& node)
 }
 
 // The dependency in `sourceNames` that forces a package into source.
-std::optional<std::string>
-    sourceDependency(const EA::Vector<std::string>& deps,
-                     const EA::Vector<std::string>& sourceNames)
+std::optional<std::string> sourceDependency(const Vector<std::string>& deps,
+                                            const Vector<std::string>& sourceNames)
 {
     for (const auto& dep: deps)
         if (sourceNames.contains(dep))
@@ -89,9 +131,9 @@ std::optional<std::string>
     return std::nullopt;
 }
 
-void forceSourceDependents(EA::Vector<PlannedPackage>& packages)
+void forceSourceDependents(Vector<PlannedPackage>& packages)
 {
-    auto sourceNames = EA::Vector<std::string> {};
+    auto sourceNames = Vector<std::string> {};
 
     for (auto& package: packages)
     {
@@ -111,7 +153,7 @@ void forceSourceDependents(EA::Vector<PlannedPackage>& packages)
     }
 }
 
-std::string configsText(const EA::Vector<std::string>& configs)
+std::string configsText(const Vector<std::string>& configs)
 {
     if (configs.empty())
         return {};
@@ -120,7 +162,7 @@ std::string configsText(const EA::Vector<std::string>& configs)
         return "auto";
 
     const auto built = buildConfigsFor(configs);
-    return eacp::Strings::join(built.empty() ? configs : built, ";");
+    return joinList(built.empty() ? configs : built, ";");
 }
 
 // A field of the winning declaration and who declared it.
@@ -162,9 +204,9 @@ std::string noteText(const std::string& name,
 
 // Rule 4: every later declaration asking for something the winning one does
 // not give, field by field (only the fields the later one sets).
-EA::Vector<std::string> declarationNotes(const std::string& name, const Node& node)
+Vector<std::string> declarationNotes(const std::string& name, const Node& node)
 {
-    auto notes = EA::Vector<std::string> {};
+    auto notes = Vector<std::string> {};
     const auto& declarations = node.declarations;
 
     struct Field
@@ -176,8 +218,12 @@ EA::Vector<std::string> declarationNotes(const std::string& name, const Node& no
 
     const auto equal = [](const std::string& a, const std::string& b)
     { return a == b; };
-    // Git and tag are selected, not merged, so they make no note.
-    const auto fields = EA::Vector<Field> {
+    const auto fields = Vector<Field> {
+        {"git",
+         [](const ManifestPackage& p) { return expandGitUrl(p.git); },
+         [](const std::string& a, const std::string& b)
+         { return repositoryKey(a) == repositoryKey(b); }},
+        {"", [](const ManifestPackage& p) { return p.tag; }, equal},
         {"configs",
          [](const ManifestPackage& p) { return configsText(p.configs); },
          equal},
@@ -219,11 +265,10 @@ EA::Vector<std::string> declarationNotes(const std::string& name, const Node& no
 }
 
 // Rule 5.
-EA::Vector<std::string>
-    sameRepositoryNotes(const EA::Vector<PlannedPackage>& packages)
+Vector<std::string> sameRepositoryNotes(const Vector<PlannedPackage>& packages)
 {
-    auto keys = EA::Vector<std::string> {};
-    auto names = std::map<std::string, EA::Vector<std::string>> {};
+    auto keys = Vector<std::string> {};
+    auto names = std::map<std::string, Vector<std::string>> {};
 
     for (const auto& package: packages)
     {
@@ -237,12 +282,12 @@ EA::Vector<std::string>
         names[key].add(request.name);
     }
 
-    auto notes = EA::Vector<std::string> {};
+    auto notes = Vector<std::string> {};
 
     for (const auto& key: keys)
         if (names[key].size() > 1)
-            notes.add(eacp::Strings::join(names[key], " and ")
-                      + " are the same repository (" + key + ")");
+            notes.add(joinList(names[key], " and ") + " are the same repository ("
+                      + key + ")");
 
     return notes;
 }
@@ -266,16 +311,10 @@ public:
         if (auto problem = projectError(inputs.project))
             return failed(plan, "the root manifest: " + *problem);
 
-        auto rootNames = EA::Vector<std::string> {};
+        auto rootNames = Vector<std::string> {};
 
         for (const auto& package: inputs.project.packages)
         {
-            if (package.system)
-            {
-                addSystemPackage(package.name);
-                continue;
-            }
-
             rootNames.add(package.name);
             nodes[package.name].root = package;
         }
@@ -284,10 +323,6 @@ public:
 
         for (const auto& name: rootNames)
             if (startsAtRoot(name) && !visit(name))
-                return failed(plan, error);
-
-        for (const auto& name: order)
-            if (!reselect(name))
                 return failed(plan, error);
 
         for (const auto& name: rootNames)
@@ -308,11 +343,15 @@ public:
         }
 
         forceSourceDependents(plan.packages);
-        plan.systemPackages = systemPackages;
 
         for (const auto& name: order)
+        {
             for (auto& note: declarationNotes(name, nodes[name]))
                 plan.notes.add(std::move(note));
+
+            for (auto& note: unusedStepsNotes(name, nodes[name]))
+                plan.notes.add(std::move(note));
+        }
 
         for (auto& note: sameRepositoryNotes(plan.packages))
             plan.notes.add(std::move(note));
@@ -320,7 +359,7 @@ public:
         if (overrides.strict && !plan.notes.empty())
             return failed(plan,
                           "EPM_STRICT is on and the graph has notes:\n  "
-                              + eacp::Strings::join(plan.notes, "\n  "));
+                              + joinList(plan.notes, "\n  "));
 
         plan.ok = true;
         return plan;
@@ -372,8 +411,8 @@ private:
             return true;
 
         if (node.visiting)
-            return fail("dependency cycle: " + eacp::Strings::join(stack, " -> ")
-                        + " -> " + name);
+            return fail("dependency cycle: " + joinList(stack, " -> ") + " -> "
+                        + name);
 
         node.visiting = true;
         stack.add(name);
@@ -403,53 +442,21 @@ private:
             return true;
         }
 
-        const auto requirements = requirementsOf(node);
+        const auto git = winningValue(node, [](auto& p) { return p.git; }).value;
+        const auto tag = winningValue(node, [](auto& p) { return p.tag; }).value;
 
-        if (requirements.empty())
-            return fail(name + " has no git and tag (declared by "
-                        + eacp::Strings::join(declarersOf(node), ", ") + ")");
+        if (git.empty() || tag.empty())
+            return fail(name + " has no " + (git.empty() ? "git" : "tag")
+                        + " (declared by " + joinList(declarersOf(node), ", ")
+                        + ")");
 
-        const auto fetched = fetch(name, requirements);
+        const auto fetched = fetch(name, expandGitUrl(git), tag);
 
         if (!fetched.ok)
             return fail(fetched.error);
 
         node.snapshot = fetched.snapshot;
-        node.selected = fetched.selected;
-        node.selectedFromDeclarations = node.declarations.size();
         return true;
-    }
-
-    // A declaration met after the package was fetched takes part in the
-    // selection too. When it changes the choice, the lock now records it, and
-    // the next configure fetches the new choice from the start.
-    bool reselect(const std::string& name)
-    {
-        auto& node = nodes[name];
-
-        if (!sourceOverride(name).empty()
-            || node.declarations.size() == node.selectedFromDeclarations)
-            return true;
-
-        const auto fetched = fetch(name, requirementsOf(node));
-
-        if (!fetched.ok)
-            return fail(fetched.error);
-
-        if (fetched.snapshot.hash != node.snapshot.hash)
-            return fail(name + " was fetched at '" + node.selected.requestedRef
-                        + "', and then " + fetched.selected.requestedBy
-                        + " asked for '" + fetched.selected.requestedRef
-                        + "', which minimal version selection takes instead. The "
-                          "lock now holds it; configure again.");
-
-        return true;
-    }
-
-    void addSystemPackage(const std::string& name)
-    {
-        if (!systemPackages.contains(name))
-            systemPackages.add(name);
     }
 
     // Declaring and visiting one dependency at a time keeps the walk depth
@@ -462,6 +469,8 @@ private:
             const auto path = node.snapshot.directory / manifestFileName;
             return "the manifest of " + name + " (" + path.str() + "): ";
         };
+
+        node.hasManifest = loader.hasManifest(node.snapshot.directory);
 
         auto loadError = std::string {};
         const auto project =
@@ -479,12 +488,6 @@ private:
 
             if (dep == name)
                 continue;
-
-            if (package.system)
-            {
-                addSystemPackage(dep);
-                continue;
-            }
 
             nodes[dep].declarations.add({name, package});
             node.deps.add(dep);
@@ -516,11 +519,6 @@ private:
 
         if (merged.effective.source.empty())
         {
-            merged.effective.request.gitUrl = node.selected.url;
-            merged.effective.request.gitRef = node.selected.requestedRef;
-            merged.effective.provenance["git"] = node.selected.requestedBy;
-            merged.effective.provenance["tag"] = node.selected.requestedBy;
-
             if (auto requestProblem = requestError(merged.effective.request))
             {
                 fail(*requestProblem);
@@ -528,10 +526,44 @@ private:
             }
         }
 
+        const auto owner = stepOwner(name, node);
+
+        if (!owner)
+            return std::nullopt;
+
         return PlannedPackage {std::move(merged.effective),
                                node.snapshot,
                                node.deps,
-                               declarersOf(node)};
+                               declarersOf(node),
+                               *owner};
+    }
+
+    // Always a package's own epm.cpp when it has one, even without add<T>
+    // anywhere: an override of its Recipe's build() shows nowhere else.
+    std::optional<StepOwner> stepOwner(const std::string& name, const Node& node)
+    {
+        if (node.hasManifest)
+        {
+            if (const auto custom = firstCustomSteps(node))
+            {
+                fail(custom->declarer + " declares custom build steps for " + name
+                     + ", which has its own epm.cpp");
+                return std::nullopt;
+            }
+
+            return StepOwner {name, node.snapshot.directory / manifestFileName};
+        }
+
+        const auto owner = stepsDeclaration(node);
+        const auto customBuild = owner.package.customBuild;
+
+        if (owner.isRoot)
+            return StepOwner {{}, inputs.rootRecipe, customBuild};
+
+        const auto& declarer = nodes.at(owner.declarer);
+        return StepOwner {owner.declarer,
+                          declarer.snapshot.directory / manifestFileName,
+                          customBuild};
     }
 
     const GraphInputs& inputs;
@@ -539,9 +571,8 @@ private:
     ManifestLoader& loader;
     Overrides overrides;
     std::map<std::string, Node> nodes;
-    EA::Vector<std::string> order;
-    EA::Vector<std::string> systemPackages;
-    EA::Vector<std::string> stack;
+    Vector<std::string> order;
+    Vector<std::string> stack;
     std::string error;
 };
 
@@ -562,6 +593,8 @@ ResolvedPackage resolvedPackage(const PlannedPackage& planned,
     package.deps = planned.deps;
     package.declaredBy = planned.declaredBy;
     package.provenance = std::move(provenance);
+    package.options =
+        resolved.options.empty() ? package.request.options : resolved.options;
 
     if (response.mode != "prebuilt")
         return package;
@@ -573,6 +606,85 @@ ResolvedPackage resolvedPackage(const PlannedPackage& planned,
     package.fingerprint = resolved.fingerprintHash;
     package.note = response.note;
     return package;
+}
+
+// The build step's view of `deps`, every one already in `graph`.
+Vector<PackageDependency> packageDependencies(const ResolvedGraph& graph,
+                                              const Vector<std::string>& deps)
+{
+    auto dependencies = Vector<PackageDependency> {};
+
+    for (const auto& dep: deps)
+        if (const auto* package = findPackage(graph.packages, dep))
+            dependencies.add({package->name,
+                              package->mode,
+                              package->fingerprint,
+                              package->prefix,
+                              package->targetsFile,
+                              package->configs});
+
+    return dependencies;
+}
+
+std::string ownerText(const StepOwner& owner)
+{
+    return owner.name.empty() ? std::string {rootDeclarer} : owner.name;
+}
+
+ResolveResult stepFailure(std::string error)
+{
+    auto result = ResolveResult {};
+    result.error = std::move(error);
+    return result;
+}
+
+// A step asked for source that recorded a prebuilt entry would hand the
+// consumer binaries built without its source dependencies.
+ResolveResult checkedMode(const BuildInput& input, ResolveResult result)
+{
+    if (result.ok && input.request.mode == "source"
+        && result.response.mode != "source")
+        return stepFailure("the build step of " + input.request.name + " recorded "
+                           + result.response.mode
+                           + ", but the package is in source mode: end build() "
+                             "with useSource() when spec().mode is source");
+
+    return result;
+}
+
+// Runs the package's build step in its owner's recipe executable, source
+// packages too (their hooks set the options the consumer's add_subdirectory
+// gets); the default steps in this process for an owner without a recipe,
+// and where there are no recipe executables.
+ResolveResult
+    runStep(const PlannedPackage& planned, BuildInput input, ManifestLoader& steps)
+{
+    const auto& owner = planned.owner;
+    const auto& name = input.request.name;
+
+    if (!steps.runsSteps() && owner.customBuild && input.request.mode != "source")
+        return stepFailure(ownerText(owner) + " declares custom build steps for "
+                           + name
+                           + ", which need a recipe executable: epm builds none "
+                             "on Windows yet (no MSVC support)");
+
+    if (owner.recipe.empty() || !steps.runsSteps())
+        return resolveResultFor(buildInProcess(input));
+
+    input.recipeName = owner.name;
+    input.customBuild = owner.customBuild;
+
+    // This process holds no PackageLock here, and must not: the step takes
+    // the package's lock itself (Package::cached), and eacp's IPC::Lock is
+    // not re-entrant, so it would wait out the timeout on one held here.
+    auto error = std::string {};
+    const auto output = steps.build(owner.recipe, input, error);
+
+    if (!output)
+        return stepFailure("the build step of " + name + " (in the recipe "
+                           + owner.recipe.str() + "): " + error);
+
+    return checkedMode(input, resolveResultFor(*output));
 }
 } // namespace
 
@@ -608,7 +720,7 @@ GraphPlan planGraph(const GraphInputs& inputs,
 }
 
 ResolvedGraph dependencyClosure(const ResolvedGraph& graph,
-                                const EA::Vector<std::string>& deps)
+                                const Vector<std::string>& deps)
 {
     auto closure = std::set<std::string> {};
     auto pending = deps;
@@ -638,11 +750,11 @@ ResolvedGraph dependencyClosure(const ResolvedGraph& graph,
 GraphResult resolvePlan(const GraphPlan& plan,
                         const Env& env,
                         const CacheRoot& cache,
-                        const LockForChildBuilds& childLock)
+                        ManifestLoader& steps)
 {
     auto result = GraphResult {};
     auto fingerprints = std::map<std::string, std::string> {};
-    auto sourceNames = EA::Vector<std::string> {};
+    auto sourceNames = Vector<std::string> {};
 
     for (const auto& planned: plan.packages)
     {
@@ -669,8 +781,15 @@ GraphResult resolvePlan(const GraphPlan& plan,
                 graphCMakeText(dependencyClosure(result.graph, planned.deps));
         }
 
-        const auto resolved = resolveSnapshot(
-            request, env, cache, planned.snapshot, childLock, dependencyGraph);
+        const auto resolved =
+            runStep(planned,
+                    buildInputFor(request,
+                                  env,
+                                  cache,
+                                  planned.snapshot,
+                                  dependencyGraph,
+                                  packageDependencies(result.graph, planned.deps)),
+                    steps);
 
         if (!resolved.ok)
         {
@@ -689,17 +808,19 @@ GraphResult resolvePlan(const GraphPlan& plan,
     }
 
     result.graph.notes = plan.notes;
-    result.graph.systemPackages = plan.systemPackages;
     result.ok = true;
     return result;
 }
 
 GraphResult configureGraph(const GraphInputs& inputs,
                            const CacheRoot& cache,
-                           const SourceFetcher& fetch,
-                           ManifestLoader& loader,
-                           const LockForChildBuilds& childLock)
+                           ManifestLoader& loader)
 {
+    const auto fetch = [&cache](const std::string& name,
+                                const std::string& url,
+                                const std::string& ref)
+    { return fetchSource(cache, name, url, ref); };
+
     const auto plan = planGraph(inputs, fetch, loader);
 
     if (!plan.ok)
@@ -709,6 +830,6 @@ GraphResult configureGraph(const GraphInputs& inputs,
         return result;
     }
 
-    return resolvePlan(plan, inputs.env, cache, childLock);
+    return resolvePlan(plan, inputs.env, cache, loader);
 }
 } // namespace epm

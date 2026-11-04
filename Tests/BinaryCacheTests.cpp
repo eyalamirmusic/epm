@@ -1,9 +1,5 @@
-#include "TestDirectory.h"
-
-#include <epm/Build/ChildBuild.h>
 #include <epm/Build/Configs.h>
 #include <epm/Cache/BinaryCache.h>
-#include <epm/Lock/LockFile.h>
 #include <epm/Spec/JsonFile.h>
 #include <epm/Util/Text.h>
 
@@ -31,7 +27,7 @@ AbiFingerprint cacheFingerprint(std::string compilerPath = "/usr/bin/c++",
     fingerprint.systemName = "Darwin";
     fingerprint.systemProcessor = "arm64";
     fingerprint.options = {{"EACP_ENABLE_TESTS", "OFF"}};
-    fingerprint.sourceHash = "abc";
+    fingerprint.sourceId = "abc";
     return fingerprint;
 }
 
@@ -48,7 +44,6 @@ BinaryEntry cacheEntry(std::string directory,
     return {eacp::FilePath {"/cache/bin/eacp/macos-arm64"} / directory,
             std::move(fingerprint),
             std::move(configs),
-            {},
             std::move(createdAt)};
 }
 
@@ -96,6 +91,31 @@ auto tPickExact = test("BinaryCache/pick/exactPreferred") = []
     check(chosen(partial, xcodeFingerprint(), compatible, {"Debug"}) == "xcode");
 };
 
+auto tPickBuiltFirst = test("BinaryCache/pick/anEmptyEntryComesLast") = []
+{
+    const auto both = Configs {"Debug", "Release"};
+
+    // An exact entry a failed build left without configs loses to a
+    // compatible one that holds them.
+    const auto entries = Entries {cacheEntry("ninja", cacheFingerprint(), both),
+                                  cacheEntry("xcode", xcodeFingerprint(), {})};
+
+    check(chosen(entries, xcodeFingerprint(), compatible, both) == "ninja");
+
+    // Alone, it is still picked, to build into.
+    check(chosen(Entries {cacheEntry("xcode", xcodeFingerprint(), {})},
+                 xcodeFingerprint(),
+                 compatible,
+                 both)
+          == "xcode");
+
+    // Among entries holding configs, exact still wins.
+    const auto partial =
+        Entries {cacheEntry("ninja", cacheFingerprint(), both),
+                 cacheEntry("xcode", xcodeFingerprint(), {"Debug"})};
+    check(chosen(partial, xcodeFingerprint(), compatible, both) == "xcode");
+};
+
 auto tPickComplete = test("BinaryCache/pick/thenCompleteThenNewest") = []
 {
     const auto entries = Entries {
@@ -141,16 +161,19 @@ auto tEntriesOnDisk = test("BinaryCache/entries/readFromDisk") = []
     check(prefix.parentDirectory() == cache.bin() / "eacp" / "macos-arm64");
     check(prefix.fileName() == fingerprintId(fingerprint).substr(0, 12));
 
-    const auto manifest =
-        EntryManifest {EntryManifest {}.schema, fingerprint, "abc", "2026-11-02"};
+    const auto manifest = EntryManifest {2, fingerprint, "abc", "2026-11-02"};
     const auto release = ConfigMarker {"Release", "2026-11-02", {}, {}};
 
-    eacp::Files::writeFile(prefix / "manifest.json",
-                           Miro::toJSONString(manifest, 2));
-    eacp::Files::writeFile(prefix / "Release.json", Miro::toJSONString(release, 2));
+    check(saveJsonFile(prefix / "manifest.json", manifest));
+    check(saveJsonFile(prefix / "Release.json", release));
 
     // A marker whose name and contents disagree does not count.
-    eacp::Files::writeFile(prefix / "Debug.json", Miro::toJSONString(release, 2));
+    check(saveJsonFile(prefix / "Debug.json", release));
+
+    // An entry of the old bin/<name>/<key12> layout is never seen.
+    check(writeTextFile(cache.bin() / "eacp" / "8ea428e72a65" / "manifest.json",
+                        "{\"schema\": 1}"));
+    check(writeTextFile(cache.bin() / "eacp" / "8ea428e72a65.json", "{}"));
 
     const auto entries = findEntries(cache, "eacp", "macos-arm64");
 
@@ -161,80 +184,4 @@ auto tEntriesOnDisk = test("BinaryCache/entries/readFromDisk") = []
     check(entries[0].targetsFile() == prefix / "epm-targets.cmake");
     check(allEntries(cache).size() == 1);
     check(findEntries(cache, "eacp", "macos-x64").empty());
-};
-
-namespace BinaryCacheLockTests
-{
-constexpr auto dependencyName = "Miro";
-constexpr auto builtDependencyHash = "1111";
-constexpr auto changedDependencyHash = "2222";
-
-eacp::FilePath writeLockWithDependencyHash(const eacp::FilePath& directory,
-                                           const std::string& hash)
-{
-    auto package = LockedPackage {};
-    package.name = dependencyName;
-    package.hash = hash;
-
-    const auto path = directory / lockFileName;
-    auto lock = LockFile {};
-    lock.storePackage(package);
-    writeLockFile(path, lock);
-    return path;
-}
-
-BinaryEntry entryBuiltWithDependency()
-{
-    auto entry = cacheEntry("aaa", cacheFingerprint(), {"Debug", "Release"});
-    entry.lockedDependencies["Debug"] = {{dependencyName, builtDependencyHash}};
-    entry.lockedDependencies["Release"] = {{dependencyName, changedDependencyHash}};
-    return entry;
-}
-
-ChildBuild createLockedChildBuild()
-{
-    auto build = ChildBuild {};
-    build.request.name = "eacp";
-    build.sourceDirectory = eacp::FilePath {"/c/src/eacp"};
-    build.buildDirectory = eacp::FilePath {"/c/build/eacp/Debug"};
-    build.prefix = eacp::FilePath {"/c/bin/eacp/macos-arm64/f685faf3d9f4"};
-    build.cacheRoot = eacp::FilePath {"/c"};
-    build.epmExecutable = eacp::FilePath {"/epm/bin/epm"};
-    build.childLock = {eacp::FilePath {"/project/epm-lock.json"},
-                       "offline",
-                       eacp::FilePath {"/project/epm.cpp"}};
-    build.config = "Debug";
-    return build;
-}
-} // namespace BinaryCacheLockTests
-
-auto tConfigsMatchTheLock =
-    test("BinaryCache/lock/configsBuiltAgainstOtherHashesAreMissing") = []
-{
-    using namespace BinaryCacheLockTests;
-    const auto directory = createEmptyTestDirectory("binary-cache-lock");
-    const auto lock = writeLockWithDependencyHash(directory, builtDependencyHash);
-    const auto entry = withConfigsMatchingTheLock(entryBuiltWithDependency(), lock);
-
-    check(entry.configs == Configs {"Debug"});
-    check(withConfigsMatchingTheLock(entryBuiltWithDependency(),
-                                     directory / "missing.lock")
-              .configs.empty());
-};
-
-auto tChildLockArguments = test("BinaryCache/childBuild/injectsEpmAndTheLock") = []
-{
-    using namespace BinaryCacheLockTests;
-    const auto arguments = configureArguments(createLockedChildBuild());
-
-    check(
-        arguments.contains("-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=/c/build/eacp/Debug/"
-                           "epm-export.cmake;/c/build/eacp/Debug/epm.cmake"));
-    check(arguments.contains("-DEPM_NESTED=ON"));
-    check(arguments.contains("-DEPM_EXECUTABLE=/epm/bin/epm"));
-    check(arguments.contains("-DEPM_LOCK_FILE=/project/epm-lock.json"));
-    check(arguments.contains("-DEPM_LOCK_MODE=offline"));
-    check(arguments.contains("-DEPM_MANIFEST_FILE=/project/epm.cpp"));
-    check(arguments.contains("-DEPM_ROOT_NAME=eacp"));
-    check(arguments.contains("-DEPM_CACHE=/c"));
 };

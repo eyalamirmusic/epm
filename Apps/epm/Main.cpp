@@ -2,27 +2,26 @@
 #include <epm/Cache/CacheRoot.h>
 #include <epm/Emit/GraphResponse.h>
 #include <epm/Emit/RecipeSdkCMake.h>
-#include <epm/Lock/LockFile.h>
+#include <epm/Emit/Response.h>
 #include <epm/Recipe/RecipeBuild.h>
-#include <epm/Recipe/RecipeLoader.h>
-#include <epm/Resolve/Commands.h>
+#include <epm/Recipe/RecipeConfigure.h>
+#include <epm/Recipe/RecipeRun.h>
+#include <epm/Resolve/Resolve.h>
 #include <epm/Spec/JsonFile.h>
-#include <epm/Spec/PackageArguments.h>
+#include <epm/Util/Command.h>
 #include <epm/Util/Log.h>
-
-#include <eacp/Core/Utils/Environment.h>
+#include <epm/Util/Paths.h>
+#include <epm/Util/Text.h>
 
 #include "Version.h"
 
 #include <eacp/Core/App/App.h>
 #include <eacp/Core/App/Args.h>
-#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
-#include <eacp/Core/Utils/StdPath.h>
+#include <eacp/Core/Utils/TemporaryFile.h>
 
-#include <algorithm>
-#include <filesystem>
+#include <optional>
 
 using namespace eacp;
 
@@ -32,32 +31,19 @@ constexpr auto usage =
     "usage: epm <command>\n"
     "\n"
     "commands:\n"
-    "  configure    resolve an epm.cpp graph through the lock for\n"
-    "               get_epm.cmake\n"
+    "  configure    resolve an epm.cpp graph for get_epm.cmake\n"
     "  graph-cmake  write graph.cmake from a graph.json\n"
     "  describe     print the project an epm.cpp describes\n"
     "  recipe-sdk   write how epm compiles an epm.cpp, for CMake\n"
-    "  resolve      resolve one package for epm.cmake; its CMake arguments\n"
-    "               follow --\n"
-    "  provide      the same, for FetchContent_MakeAvailable\n"
-    "  find         the same, for find_package of a name outside the graph\n"
-    "  lock begin   start a configure: record the overrides, note a new lock\n"
-    "  lock update  re-resolve the named packages' refs (all when none are\n"
-    "               named) and rewrite the lock\n"
-    "  lock verify  check each locked package's cache entry still hashes to\n"
-    "               its lock hash (--full rehashes every tree), fetching a\n"
-    "               package the cache does not have\n"
-    "  lock root    print the root hash over every package in the lock\n"
+    "  resolve      resolve one package request for epm.cmake\n"
     "  cache path   print the cache root\n"
     "  cache ls     list the cached binaries, sources and tools\n"
     "  --version    print the version";
 
-constexpr auto argumentSeparator = std::string_view {"--"};
-
-EA::Vector<std::string> argumentsAfter(int count)
+Vector<std::string> argumentsAfter(int count)
 {
     const auto& all = Apps::commandLineArgs();
-    auto rest = EA::Vector<std::string> {};
+    auto rest = Vector<std::string> {};
 
     for (auto i = count; i < all.size(); ++i)
         rest.add(all[i]);
@@ -76,185 +62,197 @@ int fail(const std::string& message)
 epm::CacheRoot canonical(const epm::CacheRoot& cache)
 {
     Files::createDirectories(cache.path());
-    auto failure = std::error_code {};
-    const auto resolved =
-        std::filesystem::weakly_canonical(toStdPath(cache.path()), failure);
-
-    return failure ? cache : epm::CacheRoot {FilePath {resolved}};
+    return epm::CacheRoot {epm::resolvedPath(cache.path())};
 }
 
-FilePath getCacheDirectory(const FilePath& requested)
+int resolve()
 {
-    const auto cache = requested.empty() ? epm::CacheRoot::fromEnvironment()
-                                         : epm::CacheRoot {requested};
-    return canonical(cache).path();
-}
-
-// epm-lock.json in the top-level source directory, else the current directory.
-FilePath getDefaultLockFile(const FilePath& sourceDirectory)
-{
-    if (!sourceDirectory.empty())
-        return sourceDirectory / epm::lockFileName;
-
-    return FilePath::currentDirectory() / epm::lockFileName;
-}
-
-int runPackageCommand(const std::string& command, int argumentsToSkip)
-{
-    auto arguments = argumentsAfter(argumentsToSkip);
-    auto options = epm::CommandOptions {};
-    options.command = command;
-
-    auto separator =
-        std::find(arguments.begin(), arguments.end(), argumentSeparator);
-
-    if (separator != arguments.end())
-    {
-        options.packageArguments.assign(separator + 1, arguments.end());
-        arguments.getVector().erase(separator, arguments.end());
-    }
-
-    auto ciValue = std::string {};
-    auto envFile = FilePath {};
+    auto request = FilePath {};
+    auto env = FilePath {};
+    auto response = FilePath {};
+    auto cache = FilePath {};
     auto verbose = false;
-    auto buildMissingValue = std::string {"ON"};
-    auto parser = Args::Parser {"epm " + command, "Resolves packages for CMake."};
 
-    if (command == "update")
-        parser.positional(options.names, "name", "the packages to re-resolve");
+    auto cli = Args::Parser {"epm resolve", "Resolves one package request."};
+    cli.option("--request", request, "the request JSON").required();
+    cli.option("--env", env, "the env JSON").required();
+    cli.option("--response", response, "the response CMake file to write")
+        .required();
+    cli.option("--cache", cache, "the cache root (default: $EPM_CACHE)");
+    cli.flag("--verbose", verbose, "log each step");
 
-    parser.option(
-        "--mode", options.mode, "locked, update or offline [default: locked]");
-    parser.option(
-        "--ci", ciValue, "ON refuses <Name>_SOURCE overrides in locked mode");
-    parser.option("--lock",
-                  options.lock,
-                  "the lock file [default: <source-dir>/epm-lock.json]");
-    parser.option("--manifest",
-                  options.manifest,
-                  "the root project's epm.cpp, whose overrides win");
-    parser.option("--overrides",
-                  options.overridesFile,
-                  "configure: the overrides.json epm.cmake wrote");
-    parser.option("--out",
-                  options.outputDirectory,
-                  "configure: the directory for graph.cmake and graph.json");
-    auto configsValue = std::string {};
-    auto graphPackagesValue = std::string {};
-    parser.option("--configs",
-                  configsValue,
-                  "the configs to build and cache, comma-separated, as epm.cmake "
-                  "resolved them");
-    parser.option("--graph-packages",
-                  graphPackagesValue,
-                  "the epm.cpp graph's packages (;-separated), which a package "
-                  "call loads from the graph");
-    parser.option("--abi-match",
-                  options.abiMatch,
-                  "which cached build may be used: compatible, strict or any");
-    parser.option("--root-name",
-                  options.rootName,
-                  "who the top-level project's requirements are recorded as");
-    parser.option("--cache", options.cache, "the cache root (default: $EPM_CACHE)");
-    parser.option("--cmake", options.cmake, "the cmake that extracts tar archives");
-    parser.option("--env", envFile, "the env JSON epm.cmake wrote");
-    parser.option(
-        "--source-dir", options.sourceDirectory, "the top-level source directory");
-    parser.option(
-        "--build-dir", options.buildDirectory, "the top-level build directory");
-    parser.option(
-        "--requested-by", options.requestedBy, "the directory asking for a package");
-    parser.option("--requested-by-file",
-                  options.requestedByFile,
-                  "the CMake file asking for a package");
-    parser.option("--requested-binary-dir",
-                  options.requestedBinaryDirectory,
-                  "its binary directory, which a relative SOURCE_DIR is under");
-    parser.option("--output", options.output, "the CMake file to write");
-    parser.option("--default-mode",
-                  options.defaultMode,
-                  "MODE when the call names none [default: auto]");
-    parser.option("--build-missing-binaries",
-                  buildMissingValue,
-                  "OFF makes MODE auto fall back to source [default: ON]");
-    parser.option("--override",
-                  options.overrides,
-                  "EPM_<Name>_SOURCE or CPM_<Name>_SOURCE=<dir>, for begin");
-    parser.flag("--full",
-                options.isFullVerify,
-                "verify rehashes every tree instead of trusting stamps");
-    parser.flag(
-        "--announce", options.shouldAnnounce, "root prints '-- epm: root <hash>'");
-    parser.flag("--verbose", verbose, "log each step");
-
-    if (auto code = parser.exitCodeFor(parser.parse(arguments)))
+    if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
         return *code;
 
     epm::Log::setVerbose(verbose);
-    options.isCI = epm::isCMakeTrue(ciValue);
-
-    for (const auto& config: Strings::split(configsValue, ','))
-    {
-        if (!config.empty())
-            options.configs.add(config);
-    }
-
-    for (const auto& name: Strings::split(graphPackagesValue, ';'))
-    {
-        if (!name.empty())
-            options.graphPackages.add(name);
-    }
-    options.buildMissingBinaries = !epm::isCMakeFalse(buildMissingValue);
-    options.cache = getCacheDirectory(options.cache);
 
     try
     {
-        if (!envFile.empty())
+        const auto envSpec = epm::loadJsonFile<epm::Env>(env);
+
+        if (!envSpec)
+            return fail("cannot read the env file " + env.str());
+
+        const auto requestSpec = epm::loadJsonFile<epm::Request>(request);
+
+        if (!requestSpec)
+            return fail("cannot read the request file " + request.str());
+
+        const auto cacheRoot = cache.empty() ? epm::CacheRoot::fromEnvironment()
+                                             : epm::CacheRoot {cache};
+        const auto result =
+            epm::resolvePackage(*requestSpec, *envSpec, canonical(cacheRoot));
+
+        if (!result.ok)
         {
-            const auto env = epm::loadJsonFile<epm::Env>(envFile);
+            if (!result.details.empty())
+                Console::printError(result.details);
 
-            if (!env)
-                return fail("cannot read the env file " + envFile.str());
-
-            options.env = *env;
+            return fail(result.error);
         }
 
-        if (options.lock.empty())
-            options.lock = getDefaultLockFile(options.sourceDirectory);
-        else if (!options.lock.isAbsolute())
-            options.lock = FilePath::currentDirectory() / options.lock.str();
-
-        if (command == "resolve")
-            return epm::runResolveCommand(options);
-
-        if (command == "configure")
-            return epm::runConfigureCommand(options);
-
-        if (command == "provide")
-            return epm::runProvideCommand(options);
-
-        if (command == "find")
-            return epm::runFindCommand(options);
-
-        if (command == "begin")
-            return epm::runBeginCommand(options);
-
-        if (command == "update")
-            return epm::runUpdateCommand(options);
-
-        if (command == "verify")
-            return epm::runVerifyCommand(options);
-
-        if (command == "root")
-            return epm::runRootCommand(options);
+        if (!epm::writeResponse(response, result.response))
+            return fail("cannot write " + response.str());
     }
     catch (const std::exception& error)
     {
         return fail(error.what());
     }
 
-    Console::printError("epm: unknown command '" + command + "'\n\n" + usage);
-    return Args::badArguments;
+    return 0;
+}
+
+// The child's stderr, the failure it reports, as this process's own.
+void passOnErrors(std::string errors)
+{
+    while (!errors.empty() && errors.back() == '\n')
+        errors.pop_back();
+
+    if (!errors.empty())
+        Console::printError(errors);
+}
+
+// epm configure in the root recipe's executable, compiled into the cache: its
+// configure command (RecipeMain) drives the graph, running the steps the root
+// owns in its own process and every other recipe in an executable of its own.
+// It runs in the manifest's directory, with its stdout streamed and its
+// stderr passed on; its exit code is this one's. The env it gets names this
+// epm when env.json does not, as the recipe SDK and nested child builds need.
+int configureInRecipe(const epm::ConfigureArgs& args,
+                      epm::Env env,
+                      const epm::CacheRoot& cache)
+{
+    const auto scratch = TemporaryFile {};
+    auto envFile = epm::resolvedPath(args.env);
+
+    if (env.epmExecutable.empty())
+    {
+        env.epmExecutable = Files::executablePath().str();
+        envFile = scratch.path() / "env.json";
+
+        if (!epm::saveJsonFile(envFile, env))
+            return fail("cannot write " + envFile.str());
+    }
+
+    const auto manifest = epm::resolvedPath(args.manifest);
+    const auto build =
+        epm::buildRecipe(manifest, cache, FilePath {env.epmExecutable});
+
+    if (!build.ok)
+        return fail("the manifest " + args.manifest.str() + ": "
+                    + epm::recipeBuildError(build));
+
+    epm::Log::step((build.cached ? "cached " : "built ") + build.executable.str());
+
+    auto arguments = Vector<std::string> {"configure",
+                                          "--manifest",
+                                          manifest.str(),
+                                          "--env",
+                                          envFile.str(),
+                                          "--overrides",
+                                          epm::resolvedPath(args.overrides).str(),
+                                          "--out",
+                                          epm::resolvedPath(args.out).str(),
+                                          "--cache",
+                                          cache.path().str()};
+
+    if (args.verbose)
+        arguments.add("--verbose");
+
+    const auto program = build.executable.str();
+    epm::Log::step("running " + program + " " + epm::joinList(arguments, " "));
+
+    const auto result =
+        epm::runCommandKeepingErrors(program, arguments, manifest.parentDirectory());
+    passOnErrors(result.errorOutput);
+
+    // Above 128 it was killed (Command.h), and reported nothing itself.
+    constexpr auto signalBase = 128;
+
+    if (result.exitCode >= 0 && result.exitCode <= signalBase)
+        return result.exitCode;
+
+    auto error = "the manifest " + args.manifest.str() + ": " + program
+                 + " configure failed: " + epm::failureReason(program, result);
+
+    if (const auto tail = epm::lastLines(result.output, 20); !tail.empty())
+        error += "\n" + tail;
+
+    return fail(error);
+}
+
+int configure()
+{
+    auto args = epm::ConfigureArgs {};
+
+    auto cli = Args::Parser {"epm configure",
+                             "Resolves the dependency graph of an epm.cpp."};
+    cli.option("--manifest", args.manifest, "the root epm.cpp").required();
+    cli.option("--env", args.env, "the env JSON").required();
+    cli.option("--overrides", args.overrides, "the overrides JSON").required();
+    cli.option("--out", args.out, "the directory for graph.cmake and graph.json")
+        .required();
+    cli.option("--cache", args.cache, "the cache root (default: $EPM_CACHE)");
+    cli.flag("--verbose", args.verbose, "log each step");
+
+    if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
+        return *code;
+
+    epm::Log::setVerbose(args.verbose);
+
+    try
+    {
+        auto error = std::string {};
+        const auto inputs = epm::configureInputs(args, error);
+
+        if (!inputs)
+            return fail(error);
+
+        const auto cache = epm::configureCache(args);
+        auto loader =
+            epm::RecipeManifestLoader {cache, epm::configureStepsDirectory(args)};
+
+        if (loader.runsSteps())
+            return configureInRecipe(args, inputs->env, cache);
+
+        // No recipe executables (Windows): the graph in this process, which
+        // fails at the first recipe, as buildRecipe does there.
+        const auto result = epm::runConfigure(args, loader);
+
+        if (!result.ok)
+        {
+            if (!result.details.empty())
+                Console::printError(result.details);
+
+            return fail(result.error);
+        }
+    }
+    catch (const std::exception& error)
+    {
+        return fail(error.what());
+    }
+
+    return 0;
 }
 
 int graphCMake()
@@ -272,12 +270,13 @@ int graphCMake()
 
     try
     {
-        const auto loaded = epm::loadJsonFile<epm::ResolvedGraph>(graph);
+        const auto loaded = epm::loadGraphJson(graph);
 
         if (!loaded)
             return fail("cannot read the graph file " + graph.str());
 
-        Files::writeFileAtomically(out, epm::graphCMakeText(*loaded));
+        if (!epm::writeGraphCMake(out, *loaded))
+            return fail("cannot write " + out.str());
     }
     catch (const std::exception& error)
     {
@@ -287,29 +286,13 @@ int graphCMake()
     return 0;
 }
 
-// The module epm_add_recipe built: the project's compiler and flags, which
-// need only be close enough to epm's for the Recipe ABI to match.
-epm::RecipeLoad loadProjectModule(const FilePath& module, const FilePath& recipe)
-{
-    epm::Log::step("loading " + module.str()
-                   + (recipe.empty() ? "" : " (built from " + recipe.str() + ")"));
-    auto load = epm::loadRecipe(module);
-
-    if (!load.recipe)
-        load.error += "\n(was " + module.str()
-                      + " built with another kind of compiler than epm's, "
-                      + epm::recipeSdk().compilerId + "?)";
-
-    return load;
-}
-
-std::optional<epm::RecipeLoad> loadCachedModule(const FilePath& recipe,
-                                                const FilePath& cache,
-                                                const epm::Env& env)
+// The recipe executable for `recipe`, compiled into the cache unless it is
+// there already; nullopt once the failure is reported.
+std::optional<FilePath> builtRecipe(const FilePath& recipe, const FilePath& cache)
 {
     const auto cacheRoot =
         cache.empty() ? epm::CacheRoot::fromEnvironment() : epm::CacheRoot {cache};
-    const auto build = epm::buildRecipe(recipe, canonical(cacheRoot), env);
+    const auto build = epm::buildRecipe(recipe, canonical(cacheRoot));
 
     if (!build.ok)
     {
@@ -320,44 +303,41 @@ std::optional<epm::RecipeLoad> loadCachedModule(const FilePath& recipe,
         return std::nullopt;
     }
 
-    epm::Log::step((build.cached ? "cached " : "built ") + build.module.str());
-    return epm::loadRecipe(build.module);
+    epm::Log::step((build.cached ? "cached " : "built ") + build.executable.str());
+    return build.executable;
 }
 
 int describe()
 {
     auto recipe = FilePath {};
-    auto module = FilePath {};
+    auto executable = FilePath {};
     auto env = FilePath {};
     auto cache = FilePath {};
     auto verbose = false;
 
     auto cli = Args::Parser {"epm describe",
-                             "Compiles an epm.cpp (or takes a --module built from "
-                             "one), loads it and prints the project it "
-                             "describes."};
-    cli.positional(recipe,
-                   "epm.cpp",
-                   "the recipe to describe (only informational with --module)");
-    cli.option("--module",
-               module,
-               "load this module instead of compiling the epm.cpp, such as "
-               "epm_add_recipe's Debug build, to debug it");
-    cli.option("--env",
-               env,
-               "the env JSON, whose C++ compiler compiles the epm.cpp (default: "
-               "an empty env, which only a --module needs)");
+                             "Compiles an epm.cpp (or takes an --exe built from "
+                             "one), runs it and prints the project it describes."};
+    cli.positional(
+        recipe,
+        "epm.cpp",
+        "the recipe to describe (with --exe, only the directory to run it in)");
+    cli.option("--exe",
+               executable,
+               "run this recipe executable instead of compiling the epm.cpp, "
+               "such as epm_add_recipe's Debug build, to debug it");
+    cli.option("--env", env, "the env JSON (default: an empty env)");
     cli.option("--cache", cache, "the cache root (default: $EPM_CACHE)");
     cli.flag("--verbose", verbose, "log each step");
 
     if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
         return *code;
 
-    if (recipe.empty() && module.empty())
-        return cli.fail("give an epm.cpp, a --module, or both");
+    if (recipe.empty() && executable.empty())
+        return cli.fail("give an epm.cpp, an --exe, or both");
 
-    if (!module.empty() && !Files::isFile(module))
-        return fail("no recipe module at " + module.str()
+    if (!executable.empty() && !Files::isFile(executable))
+        return fail("no recipe executable at " + executable.str()
                     + ": build its epm_add_recipe target first");
 
     epm::Log::setVerbose(verbose);
@@ -374,16 +354,25 @@ int describe()
                 return fail("cannot read the env file " + env.str());
         }
 
-        auto load = module.empty() ? loadCachedModule(recipe, cache, envSpec)
-                                   : loadProjectModule(module, recipe);
+        if (executable.empty())
+        {
+            if (auto built = builtRecipe(recipe, cache))
+                executable = std::move(*built);
+            else
+                return 1;
+        }
 
-        if (!load)
-            return 1;
+        // In the epm.cpp's directory, as configure runs it; an --exe alone runs
+        // where epm was started.
+        const auto workingDirectory =
+            recipe.empty() ? FilePath {}
+                           : epm::resolvedPath(recipe).parentDirectory();
+        const auto run = epm::runRecipe(executable, envSpec, workingDirectory);
 
-        if (!load->recipe)
-            return fail(load->error);
+        if (!run.project)
+            return fail(run.error);
 
-        Console::print(Miro::toJSONString(load->recipe->describe(envSpec), 2));
+        Console::print(Miro::toJSONString(*run.project, 2));
     }
     catch (const std::exception& error)
     {
@@ -396,30 +385,19 @@ int describe()
 int recipeSdk()
 {
     auto out = FilePath {};
-    auto cache = FilePath {};
 
     auto cli = Args::Parser {"epm recipe-sdk",
-                             "Writes the headers embedded in this epm into the "
-                             "cache, and the standard, include directory, "
-                             "definitions and options it compiles an epm.cpp "
+                             "Writes the compiler, standard, include directories, "
+                             "definitions, options and per-configuration "
+                             "libraries epm compiles and links an epm.cpp "
                              "with, as CMake variables (epm.cmake's epm::recipe)."};
     cli.option("--out", out, "the CMake file to write").required();
-    cli.option("--cache", cache, "the cache root (default: $EPM_CACHE)");
 
     if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
         return *code;
 
-    try
-    {
-        const auto cacheRoot = cache.empty() ? epm::CacheRoot::fromEnvironment()
-                                             : epm::CacheRoot {cache};
-        epm::writeRecipeSdkCMake(
-            out, epm::recipeSdk(), epm::writeRecipeHeaders(canonical(cacheRoot)));
-    }
-    catch (const std::exception& error)
-    {
-        return fail("cannot write " + out.str() + ": " + error.what());
-    }
+    if (!epm::writeRecipeSdkCMake(out, epm::recipeSdk()))
+        return fail("cannot write " + out.str());
 
     return 0;
 }
@@ -478,15 +456,14 @@ int run()
         return 0;
     }
 
-    if (command == "resolve" || command == "provide" || command == "find"
-        || command == "configure")
-        return runPackageCommand(command, 2);
-
-    if (command == "lock" && args.size() >= 3)
-        return runPackageCommand(args[2], 3);
+    if (command == "configure")
+        return configure();
 
     if (command == "graph-cmake")
         return graphCMake();
+
+    if (command == "resolve")
+        return resolve();
 
     if (command == "describe")
         return describe();

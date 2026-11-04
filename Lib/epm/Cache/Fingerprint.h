@@ -18,8 +18,7 @@ namespace epm
 // whose objects are std::maps, so keys (options included) come out sorted.
 struct AbiFingerprint
 {
-    // 3: the sources are named by their Merkle hash, not url + commit.
-    int schema = 3;
+    int schema = 2;
     std::string platform;
     std::string compilerId;
     std::string compilerVersion;
@@ -35,9 +34,7 @@ struct AbiFingerprint
     // sha256 of the toolchain file's contents; empty without one.
     std::string toolchainFileHash;
     std::map<std::string, std::string> options;
-
-    // The Merkle hash of the sources, as epm-lock.json records it.
-    std::string sourceHash;
+    std::string sourceId;
 
     // Direct dependency name -> that dependency's fingerprint hash (the
     // request's deps). Every policy compares it.
@@ -57,7 +54,7 @@ struct AbiFingerprint
                  toolchainFile,
                  toolchainFileHash,
                  options,
-                 sourceHash,
+                 sourceId,
                  deps)
 };
 
@@ -85,12 +82,12 @@ std::string compilerMajor(std::string_view version);
 // left to the caller (makeFingerprint), so this stays free of file access.
 AbiFingerprint fingerprintFor(const Request& request,
                               const Env& env,
-                              const std::string& sourceHash);
+                              const std::string& sourceId);
 
 // fingerprintFor plus the sha256 of the toolchain file, when there is one.
 AbiFingerprint makeFingerprint(const Request& request,
                                const Env& env,
-                               const std::string& sourceHash);
+                               const std::string& sourceId);
 
 std::string canonicalFingerprint(const AbiFingerprint& fingerprint);
 

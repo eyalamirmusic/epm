@@ -1,4 +1,4 @@
-# Self-test of the overrides.json writer in CMake/epm.cmake.
+# Self-test of the overrides.json writer in CMake/epm.cmake (Docs/Graph.md §3).
 #
 #   cmake -P Tests/EpmOverrides.cmake
 
@@ -43,7 +43,7 @@ expect_overrides([=[{"schema": 1, "mode": "", "configs": [],
 # absolute against CMAKE_SOURCE_DIR, with a leading ~ expanded (a shell leaves
 # -DEPM_C_SOURCE=~/... alone); an empty value is left out; options split
 # at the first `=`, a bare name meaning ON; variables that only look alike
-# (EPM_SOURCE_DIR, epm_fmt_MODE) are not package overrides, and
+# (EPM_BOOTSTRAP_SOURCE_DIR, epm_fmt_MODE) are not package overrides, and
 # EPM_PROFILE goes to env.json instead.
 set(CMAKE_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/Graph")
 set(b_source "${CMAKE_CURRENT_LIST_DIR}/B")
@@ -82,7 +82,7 @@ expect_overrides("${expected}"
         "EPM_my_lib_MODE=binary-only"
         "EPM_empty_MODE="
         "EPM_BUILD_MISSING_BINARIES=ON"
-        "EPM_SOURCE_DIR=/somewhere"
+        "EPM_BOOTSTRAP_SOURCE_DIR=/somewhere"
         "epm_fmt_MODE=prebuilt")
 
 # EPM_STRICT and EPM_BUILD_MISSING_BINARIES off are false.

@@ -22,7 +22,7 @@ struct Env
     std::string makeProgram;
     bool isMultiConfig = false;
     std::string buildType;
-    EA::Vector<std::string> configurationTypes;
+    eacp::Vector<std::string> configurationTypes;
     std::string cCompiler;
     std::string cxxCompiler;
     std::string cxxCompilerId;
@@ -40,19 +40,15 @@ struct Env
     std::string cxxStandard;
     std::string toolchainFile;
 
-    // CMAKE_PREFIX_PATH, so a child build finds what the consumer's
-    // find_package calls find.
-    std::string prefixPath;
-
     // EPM_PROFILE (CMake variable, else environment): a name for epm.cpp
     // recipes to branch on. epm itself gives it no meaning, and it is not
     // part of any fingerprint.
     std::string profile;
 
-    // The C++ compiler epm.cpp recipes are compiled with: CMAKE_CXX_COMPILER,
-    // or for a project without CXX the one CMake's check_language finds. Not
-    // part of any fingerprint.
-    std::string recipeCompiler;
+    // EPM_EXECUTABLE: the epm binary running this configure, whose install
+    // prefix holds the recipe SDK (RecipeSdk). Not part of any fingerprint;
+    // empty when unknown, which means the running executable.
+    std::string epmExecutable;
 
     MIRO_REFLECT(schema,
                  cmake,
@@ -74,8 +70,7 @@ struct Env
                  androidAbi,
                  cxxStandard,
                  toolchainFile,
-                 prefixPath,
                  profile,
-                 recipeCompiler)
+                 epmExecutable)
 };
 } // namespace epm

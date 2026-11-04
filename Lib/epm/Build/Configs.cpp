@@ -11,7 +11,7 @@ using namespace eacp;
 namespace
 {
 const auto standardConfigs =
-    EA::Vector<std::string> {"Debug", "Release", "RelWithDebInfo", "MinSizeRel"};
+    Vector<std::string> {"Debug", "Release", "RelWithDebInfo", "MinSizeRel"};
 
 std::optional<std::string> standardSpelling(std::string_view name)
 {
@@ -42,9 +42,9 @@ std::optional<std::string> buildConfigFor(std::string_view name)
     return "Release";
 }
 
-EA::Vector<std::string> canonicalConfigs(const EA::Vector<std::string>& names)
+Vector<std::string> canonicalConfigs(const Vector<std::string>& names)
 {
-    auto unique = EA::Vector<std::string> {};
+    auto unique = Vector<std::string> {};
 
     for (const auto& name: names)
         unique.addIfNotThere(standardSpelling(name).value_or(name));
@@ -54,9 +54,9 @@ EA::Vector<std::string> canonicalConfigs(const EA::Vector<std::string>& names)
     return unique;
 }
 
-EA::Vector<std::string> buildConfigsFor(const EA::Vector<std::string>& names)
+Vector<std::string> buildConfigsFor(const Vector<std::string>& names)
 {
-    auto configs = EA::Vector<std::string> {};
+    auto configs = Vector<std::string> {};
 
     for (const auto& name: names)
         if (auto config = buildConfigFor(name))
@@ -65,11 +65,11 @@ EA::Vector<std::string> buildConfigsFor(const EA::Vector<std::string>& names)
     return canonicalConfigs(configs);
 }
 
-EA::Vector<std::string> missingConfigs(const EA::Vector<std::string>& present,
-                                       const EA::Vector<std::string>& wanted)
+Vector<std::string> missingConfigs(const Vector<std::string>& present,
+                                   const Vector<std::string>& wanted)
 {
     const auto have = canonicalConfigs(present);
-    auto missing = EA::Vector<std::string> {};
+    auto missing = Vector<std::string> {};
 
     for (const auto& config: canonicalConfigs(wanted))
         if (!have.contains(config))
@@ -79,7 +79,7 @@ EA::Vector<std::string> missingConfigs(const EA::Vector<std::string>& present,
 }
 
 std::string mapConsumerConfig(std::string_view consumer,
-                              const EA::Vector<std::string>& available)
+                              const Vector<std::string>& available)
 {
     for (const auto& config: available)
         if (Strings::equalsCaseInsensitive(config, consumer))
@@ -96,7 +96,7 @@ std::string exportNamespace(std::string_view config)
     return "epm_" + Strings::toLower(std::string {config}) + "::";
 }
 
-std::string configSelector(const EA::Vector<std::string>& available,
+std::string configSelector(const Vector<std::string>& available,
                            std::string_view target)
 {
     const auto configs = canonicalConfigs(available);
@@ -120,13 +120,13 @@ std::string configSelector(const EA::Vector<std::string>& available,
         if (config == fallback)
             continue;
 
-        auto mapped = EA::Vector<std::string> {};
+        auto mapped = Vector<std::string> {};
 
         for (const auto& consumer: consumers)
             if (mapConsumerConfig(consumer, configs) == config)
                 mapped.add(consumer);
 
-        expression = "$<IF:$<CONFIG:" + eacp::Strings::join(mapped, ",") + ">,"
+        expression = "$<IF:$<CONFIG:" + joinList(mapped, ",") + ">,"
                      + targetIn(config) + "," + expression + ">";
     }
 

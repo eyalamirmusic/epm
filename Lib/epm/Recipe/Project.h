@@ -6,32 +6,16 @@
 
 #include <Miro/Reflect.h>
 
-#include <map>
 #include <optional>
 #include <string>
 
 namespace epm
 {
-// Go's `replace` for one package: it replaces every requirement on the
-// package, whoever declares it; empty fields keep what the requirements say.
-// Only the root project's overrides count.
-struct ManifestOverride
-{
-    std::string url;
-    std::string commit;
-    std::string tag;
-
-    MIRO_REFLECT(url, commit, tag)
-};
-
 // What an epm.cpp describes: the packages its project depends on, in the
-// order that decides among them.
+// order that decides among them (Docs/Graph.md §5 rule 3).
 struct Project
 {
     eacp::Vector<ManifestPackage> packages;
-
-    // Settles, by name, what minimal version selection cannot.
-    std::map<std::string, ManifestOverride> overrides;
 
     // Appends a dependency. The reference is valid until the next add. The
     // root project may leave git and tag empty to only add options (or
@@ -39,17 +23,7 @@ struct Project
     ManifestPackage&
         add(std::string name, std::string git = {}, std::string tag = {});
 
-    // Appends a package find_package finds with CMake's own search, never
-    // fetched: the only way a find_package of a name outside the graph
-    // reaches that search.
-    ManifestPackage& addSystem(std::string name);
-
-    // The override of `name`, created empty on first use.
-    ManifestOverride& overridePackage(const std::string& name);
-
-    std::optional<ManifestOverride> findOverride(const std::string& name) const;
-
-    MIRO_REFLECT(packages, overrides)
+    MIRO_REFLECT(packages)
 };
 
 // Each sets one field of `package` and returns it, so calls chain:

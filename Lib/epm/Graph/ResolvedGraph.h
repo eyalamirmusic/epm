@@ -34,23 +34,35 @@ struct ResolvedPackage
     std::string prefix;
     std::string targetsFile;
     std::string platform;
-    EA::Vector<std::string> configs;
+    eacp::Vector<std::string> configs;
 
     // Prebuilt only: fingerprintId of the entry used, full hex.
     std::string fingerprint;
     std::string note;
 
     // Direct dependencies, names.
-    EA::Vector<std::string> deps;
+    eacp::Vector<std::string> deps;
 
     // Every manifest declaring the package, "root" first, then in walk order.
-    EA::Vector<std::string> declaredBy;
+    eacp::Vector<std::string> declaredBy;
 
     // Which source set each effective value (Graph/Merge.h).
     std::map<std::string, std::string> provenance;
 
+    // The options the build step built or configured the package with
+    // (BuildOutput::options, a hook's included), else request.options: what
+    // graph.cmake's OPTIONS hands a source package.
+    std::map<std::string, std::string> options;
+
+    // options, or request.options for a graph.json written without them.
+    const std::map<std::string, std::string>& effectiveOptions() const
+    {
+        return options.empty() ? request.options : options;
+    }
+
     MIRO_REFLECT(name,
                  request,
+                 options,
                  mode,
                  sourceDir,
                  source,
@@ -66,18 +78,15 @@ struct ResolvedPackage
                  provenance)
 };
 
-// graph.json: what `epm configure` resolved.
+// graph.json (Docs/Graph.md §6): what `epm configure` resolved.
 struct ResolvedGraph
 {
     int schema = 1;
 
     // In dependency order: every package after its dependencies.
-    EA::Vector<ResolvedPackage> packages;
-    EA::Vector<std::string> notes;
+    eacp::Vector<ResolvedPackage> packages;
+    eacp::Vector<std::string> notes;
 
-    // Names some manifest marks "system": find_package searches for them.
-    EA::Vector<std::string> systemPackages;
-
-    MIRO_REFLECT(schema, packages, notes, systemPackages)
+    MIRO_REFLECT(schema, packages, notes)
 };
 } // namespace epm

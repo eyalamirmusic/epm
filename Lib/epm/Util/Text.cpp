@@ -1,15 +1,35 @@
 #include "Text.h"
 
 #include <eacp/Core/Utils/Files.h>
-#include <eacp/Core/Utils/Strings.h>
 
 namespace epm
 {
 using namespace eacp;
 
-EA::Vector<std::string_view> splitLines(std::string_view text)
+bool writeTextFile(const FilePath& path, std::string_view text)
 {
-    auto result = EA::Vector<std::string_view> {};
+    const auto directory = path.parentDirectory();
+
+    // A bare file name has no parent, and createDirectories("") fails.
+    if (!directory.empty() && !Files::createDirectories(directory))
+        return false;
+
+    try
+    {
+        Files::writeFileAtomically(
+            path, {reinterpret_cast<const std::uint8_t*>(text.data()), text.size()});
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+Vector<std::string_view> splitLines(std::string_view text)
+{
+    auto result = Vector<std::string_view> {};
 
     while (!text.empty())
     {
@@ -52,9 +72,9 @@ std::string
     return result;
 }
 
-EA::Vector<std::string> splitList(std::string_view text, char separator)
+Vector<std::string> splitList(std::string_view text, char separator)
 {
-    auto items = EA::Vector<std::string> {};
+    auto items = Vector<std::string> {};
 
     while (!text.empty())
     {
@@ -73,4 +93,18 @@ EA::Vector<std::string> splitList(std::string_view text, char separator)
     return items;
 }
 
+std::string joinList(const Vector<std::string>& items, std::string_view separator)
+{
+    auto result = std::string {};
+
+    for (auto i = 0; i < items.size(); ++i)
+    {
+        if (i > 0)
+            result += separator;
+
+        result += items[i];
+    }
+
+    return result;
+}
 } // namespace epm

@@ -1,12 +1,11 @@
 #include "CacheListing.h"
 #include "BinaryCache.h"
-#include <epm/Source/SourceSnapshot.h>
+#include "SourceCache.h"
 
 #include <epm/Spec/JsonFile.h>
 #include <epm/Util/Text.h>
 
 #include <eacp/Core/Utils/File.h>
-#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Format.h>
 
@@ -31,15 +30,15 @@ struct ToolMarker
 
 namespace
 {
-using Row = EA::Vector<std::string>;
+using Row = Vector<std::string>;
 
-EA::Vector<FilePath> entriesOfKind(const FilePath& directory,
-                                   Files::EntryKind kind,
-                                   const std::string& pattern = {})
+Vector<FilePath> entriesOfKind(const FilePath& directory,
+                               Files::EntryKind kind,
+                               const std::string& pattern = {})
 {
     auto options = Files::DirectoryOptions {};
     options.pattern = pattern;
-    auto paths = EA::Vector<FilePath> {};
+    auto paths = Vector<FilePath> {};
 
     for (const auto& entry: Files::listDirectory(directory, options))
         if (entry.kind == kind)
@@ -48,9 +47,9 @@ EA::Vector<FilePath> entriesOfKind(const FilePath& directory,
     return paths;
 }
 
-std::string table(const EA::Vector<Row>& rows)
+std::string table(const Vector<Row>& rows)
 {
-    auto widths = EA::Vector<std::size_t> {};
+    auto widths = Vector<std::size_t> {};
 
     for (const auto& row: rows)
         for (auto column = 0; column < row.size(); ++column)
@@ -81,14 +80,14 @@ std::string table(const EA::Vector<Row>& rows)
     return text;
 }
 
-std::string section(const std::string& title, const EA::Vector<Row>& rows)
+std::string section(const std::string& title, const Vector<Row>& rows)
 {
     return title + "\n" + (rows.empty() ? std::string {"  (none)\n"} : table(rows));
 }
 
-EA::Vector<Row> binaryRows(const CacheRoot& cache)
+Vector<Row> binaryRows(const CacheRoot& cache)
 {
-    auto rows = EA::Vector<Row> {};
+    auto rows = Vector<Row> {};
 
     for (const auto& entry: allEntries(cache))
     {
@@ -99,7 +98,7 @@ EA::Vector<Row> binaryRows(const CacheRoot& cache)
         rows.add({name,
                   fingerprint.platform,
                   entry.configs.empty() ? std::string {"(none)"}
-                                        : eacp::Strings::join(entry.configs, "+"),
+                                        : joinList(entry.configs, "+"),
                   fingerprint.compilerId + " " + fingerprint.compilerMajor,
                   humanSize(directorySize(entry.prefix)),
                   entry.prefix.fileName()});
@@ -108,20 +107,46 @@ EA::Vector<Row> binaryRows(const CacheRoot& cache)
     return rows;
 }
 
-// src/<merkle hash>: the trees the lock names, by hash.
-EA::Vector<Row> sourceRows(const CacheRoot& cache)
+// bin/<name>/<key12> with its <key12>.json beside it: epm 0.1.2 and older.
+Vector<FilePath> oldLayoutEntries(const CacheRoot& cache)
 {
-    auto rows = EA::Vector<Row> {};
+    auto entries = Vector<FilePath> {};
 
-    for (const auto& tree: entriesOfKind(cache.src(), Files::EntryKind::directory))
-        rows.add({tree.fileName().substr(0, 12), humanSize(directorySize(tree))});
+    for (const auto& nameDirectory:
+         entriesOfKind(cache.bin(), Files::EntryKind::directory))
+        for (const auto& marker:
+             entriesOfKind(nameDirectory, Files::EntryKind::file, "*.json"))
+        {
+            const auto directory = nameDirectory / marker.stem();
+
+            if (Files::isFile(directory / "epm-targets.cmake"))
+                entries.add(directory);
+        }
+
+    return entries;
+}
+
+Vector<Row> sourceRows(const CacheRoot& cache)
+{
+    auto rows = Vector<Row> {};
+
+    for (const auto& nameDirectory:
+         entriesOfKind(cache.src(), Files::EntryKind::directory))
+        for (const auto& file:
+             entriesOfKind(nameDirectory, Files::EntryKind::file, "*.json"))
+            if (const auto marker = loadJsonFile<SourceMarker>(file))
+                rows.add({nameDirectory.fileName(),
+                          file.stem(),
+                          marker->commit.substr(0, 12),
+                          humanSize(directorySize(nameDirectory / file.stem())),
+                          marker->url});
 
     return rows;
 }
 
-EA::Vector<Row> toolRows(const CacheRoot& cache)
+Vector<Row> toolRows(const CacheRoot& cache)
 {
-    auto rows = EA::Vector<Row> {};
+    auto rows = Vector<Row> {};
     const auto tools = cache.path() / "tool";
 
     for (const auto& file: entriesOfKind(tools, Files::EntryKind::file, "*.json"))
@@ -178,6 +203,22 @@ std::string cacheListing(const CacheRoot& cache)
                 + section("binaries", binaryRows(cache)) + "\n"
                 + section("sources", sourceRows(cache)) + "\n"
                 + section("tools", toolRows(cache));
+
+    const auto old = oldLayoutEntries(cache);
+
+    if (!old.empty())
+    {
+        auto bytes = std::uint64_t {0};
+
+        for (const auto& directory: old)
+            bytes += directorySize(directory);
+
+        text += "\nignored: " + std::to_string(old.size())
+                + (old.size() == 1 ? " entry" : " entries")
+                + " of the old bin/<name>/<key> layout (epm 0.1.2 and older), "
+                + humanSize(bytes) + "; safe to delete, or delete all of "
+                + cache.bin().str() + " once\n";
+    }
 
     text.pop_back();
     return text;

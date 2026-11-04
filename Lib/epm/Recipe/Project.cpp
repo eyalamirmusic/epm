@@ -13,27 +13,6 @@ ManifestPackage& Project::add(std::string name, std::string git, std::string tag
     return package;
 }
 
-ManifestPackage& Project::addSystem(std::string name)
-{
-    auto& package = packages.create();
-    package.name = std::move(name);
-    package.system = true;
-    return package;
-}
-
-ManifestOverride& Project::overridePackage(const std::string& name)
-{
-    return overrides[name];
-}
-
-std::optional<ManifestOverride> Project::findOverride(const std::string& name) const
-{
-    if (auto found = overrides.find(name); found != overrides.end())
-        return found->second;
-
-    return std::nullopt;
-}
-
 ManifestPackage&
     setOption(ManifestPackage& package, std::string key, std::string value)
 {

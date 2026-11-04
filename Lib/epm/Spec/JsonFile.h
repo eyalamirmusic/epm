@@ -5,6 +5,7 @@
 #include <Miro/Json.h>
 #include <Miro/Reflect.h>
 
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -35,5 +36,29 @@ std::optional<T> loadJsonFile(const eacp::FilePath& path)
         return std::nullopt;
 
     return Miro::createFromJSON<T>(*json);
+}
+
+template <typename T>
+bool saveJsonFile(const eacp::FilePath& path, const T& value)
+{
+    const auto text = Miro::toJSONString(value, 2) + "\n";
+    const auto directory = path.parentDirectory();
+
+    // A bare file name has no parent, and createDirectories("") fails.
+    // (Upstream candidate: eacp's createDirectories should accept it.)
+    if (!directory.empty() && !eacp::Files::createDirectories(directory))
+        return false;
+
+    try
+    {
+        eacp::Files::writeFileAtomically(
+            path, {reinterpret_cast<const std::uint8_t*>(text.data()), text.size()});
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+
+    return true;
 }
 } // namespace epm

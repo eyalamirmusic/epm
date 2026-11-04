@@ -5,7 +5,7 @@
 using namespace nano;
 using namespace epm;
 
-using Configs = EA::Vector<std::string>;
+using Configs = eacp::Vector<std::string>;
 
 auto tCfgBuildConfig = test("Configs/buildConfigFor") = []
 {

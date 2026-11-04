@@ -21,7 +21,7 @@ struct ManifestPackage
     std::string git;
     std::string tag;
     std::map<std::string, std::string> options;
-    EA::Vector<std::string> configs;
+    eacp::Vector<std::string> configs;
 
     // "auto", "prebuilt", "binary-only" or "source".
     std::string mode;
@@ -29,11 +29,11 @@ struct ManifestPackage
     // "strict", "compatible" or "any".
     std::string abiMatch;
 
-    // Found by CMake's own find_package search, never fetched: the explicit
-    // opt-in a find_package of a name outside the graph needs.
-    bool system = false;
+    // Declared with Recipe::add<T>: the recipe has build steps of its own for
+    // the package (`epm-recipe build --package <name>`).
+    bool customBuild = false;
 
-    MIRO_REFLECT(name, git, tag, options, configs, mode, abiMatch, system)
+    MIRO_REFLECT(name, git, tag, options, configs, mode, abiMatch, customBuild)
 };
 
 // https://github.com/<owner>/<repo>.git for an owner/repo shorthand: anything
@@ -43,7 +43,7 @@ std::string expandGitUrl(std::string_view git);
 
 // The entry named `name` of `packages`; nullptr when there is none.
 template <typename Package>
-const Package* findPackage(const EA::Vector<Package>& packages,
+const Package* findPackage(const eacp::Vector<Package>& packages,
                            std::string_view name)
 {
     return packages.findIf([name](const Package& package)

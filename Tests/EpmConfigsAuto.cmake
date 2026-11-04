@@ -58,6 +58,36 @@ expect_error("Profile")
 expect_error("Debug;Coverage")
 expect_error(";")
 
+# Which configurations of epm's recipe libraries epm::recipe maps a build
+# configuration to, best first.
+macro(expect_recipe_configs config available expected)
+    epm_recipe_config_preference("${config}" "${available}" actual)
+
+    if (NOT "${actual}" STREQUAL "${expected}")
+        message(SEND_ERROR "epm_recipe_config_preference('${config}', "
+                "'${available}') is '${actual}', expected '${expected}'")
+        math(EXPR failures "${failures} + 1")
+    endif ()
+endmacro()
+
+expect_recipe_configs(Debug "DEBUG;RELEASE" "DEBUG;RELEASE")
+expect_recipe_configs(debug "RELEASE;DEBUG" "DEBUG;RELEASE")
+expect_recipe_configs(Release "DEBUG;RELEASE" "RELEASE;DEBUG")
+expect_recipe_configs(RelWithDebInfo "DEBUG;RELEASE" "RELEASE;DEBUG")
+expect_recipe_configs(MinSizeRel "DEBUG;RELEASE" "RELEASE;DEBUG")
+expect_recipe_configs(NOCONFIG "DEBUG;RELEASE" "RELEASE;DEBUG")
+expect_recipe_configs("" "DEBUG;RELEASE" "RELEASE;DEBUG")
+expect_recipe_configs(Profile "DEBUG;RELEASE" "RELEASE;DEBUG")
+
+# A configuration epm installed under the same name comes first; one that is
+# missing falls back to the other.
+expect_recipe_configs(RelWithDebInfo "DEBUG;RELEASE;RELWITHDEBINFO"
+        "RELWITHDEBINFO;RELEASE;DEBUG")
+expect_recipe_configs(Debug "RELEASE" "RELEASE")
+expect_recipe_configs(Release "DEBUG" "DEBUG")
+expect_recipe_configs("" "DEBUG" "DEBUG")
+expect_recipe_configs(Debug "MINSIZEREL;RELEASE" "RELEASE;MINSIZEREL")
+
 if (failures GREATER 0)
     message(FATAL_ERROR "${failures} EPM_CONFIGS resolution check(s) failed")
 endif ()

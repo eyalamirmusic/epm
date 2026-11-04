@@ -8,93 +8,154 @@ say "do not commit or push". Leave changes in the working tree (or on the
 current branch, uncommitted) and report them; the user decides when they land.
 
 epm is a C++ package manager for CMake projects, built on the eacp framework
-(`eacp-core` only). `README.md` describes what it does; `PLAN.md` is the
+(`eacp-core`, and `eacp-network` for `IPC::Lock`). `Docs/Graph.md` is the
+contract for the manifest (`epm.cpp`, a recipe the binary compiles into an
+executable and runs in two phases: `describe()` declares the dependencies, and
+the `build()` of each package's steps, `add<T>` or the default `CMakePackage`,
+builds it into the cache), the dependency provider and `epm configure`;
+`Docs/PoC.md` for the cache layout, fingerprint, child build and bootstrap, and
+for the per-call `epm_add_package` flow kept for migration. `PLAN.md` is the
 longer-term design and background.
 
 ## Layout
 
-- `Lib/epm/` — static library `epm-core`, namespace `epm::`. Included as
-  `<epm/Area/File.h>`.
+- `Lib/epm/` — namespace `epm::`, included as `<epm/Area/File.h>`, one static
+  library, `epm-recipe`, linking eacp-core, eacp-network and Miro. It is both
+  the recipe SDK, what a recipe executable links so it can run a build step on
+  its own (`Spec/`, `Cache/`, `Build/{ChildBuild,Harvest,Configs}` with the
+  embedded scripts, `Util/` and the recipe API, whose headers and the archives
+  are the installed SDK), and the driver that epm links (`Graph/`,
+  `Resolve/`, `Emit/`, `Cache/CacheListing` and
+  `Recipe/{RecipeBuild,RecipeRun,RecipeSdk}`, headers not installed).
   - `Util/` — `Sha256`, `Git` (git CLI through `eacp::Processes`, never
-    interactive, always run from the temp directory), `LongPath`, `Status`,
-    `Command` (child processes, `findExecutable`), `Log` (`--verbose`), `Text`,
-    `Timestamp` (durations).
-  - `Spec/` — `Env` (`env.json`, including `profile`), `Request`, `Manifest`
-    (`ManifestPackage`, one dependency entry), `Overrides` (`overrides.json`,
-    filled from the environment): Miro-reflected structs whose field names are
-    the JSON keys; `JsonFile.h` loads and saves them. `Platform` names the
-    target platform from `Env`. `PackageArguments` is the one parser of
-    CPMAddPackage / FetchContent_Declare / epm_add_package arguments, plus
-    epm's `MODE`.
-  - `Recipe/` — `epm.cpp` recipes: `Recipe.h` (the header a recipe includes:
-    `Recipe`, `EPM_RECIPE`), `Project` (what `describe` fills: `add`,
-    `addSystem`, `overridePackage` and the
-    `setOption`/`addConfig`/`setMode`/`setAbiMatch` helpers, `projectError`),
-    `RecipeSdk` (the toolchain baked in through `RecipeSdk.cpp.in` and
-    `file(GENERATE)`), `RecipeBuild` (one compiler call into
-    `<cache>/recipe/<key12>/`), `RecipeLoader` (loads the module into this
-    process). `epm_export_recipe_api(<target>)` in `Lib/epm/CMakeLists.txt`
-    makes an executable export what recipes bind to; `epm` and `epmTests`
-    use it.
-  - `Cache/` — `CacheRoot`, `BinaryCache` (entries under
-    `bin/<name>/<platform>/<fp12>`, picking, additive config builds, configs
-    invalidated when the lock changes what they were built against),
-    `Fingerprint` (the ABI fingerprint, keyed on the Merkle hash, and the
-    `EPM_ABI_MATCH` policies), `CacheListing` (`epm cache ls`), `CrossProcessLock`
-    (one package's or URL's lock across processes: eacp `IPC::Lock`, hence
+    interactive), `Command` (child processes, `Echo` for streaming their
+    output, `failureReason`, `lastLines`, `findExecutable`), `Log`
+    (`--verbose`, `progress` lines), `Text`, `Timestamp`, `Paths`
+    (`resolvedPath`: absolute, then `weakly_canonical`).
+  - `Spec/` — `Env` (`env.json`, including `profile` and `epmExecutable`),
+    `Request` (and
+    `decide`, the mode decision), `Manifest` (`ManifestPackage`, one dependency
+    entry, `customBuild` for `add<T>`), `Overrides` (`overrides.json`, filled
+    from the environment): Miro-reflected structs whose field names are the
+    JSON keys; `JsonFile.h` loads and saves them. `Platform` names the target
+    platform from `Env`.
+  - `Recipe/` — `epm.cpp` recipes, each a standalone executable whose
+    contract with epm is JSON. Recipe API (`epm-recipe`): `Recipe.h` (the
+    header a recipe includes: `Recipe : CMakePackage`, `describe()`,
+    `add`/`add<T>`, `PackageDecl`, and `EPM_RECIPE`, a shorthand for the
+    `main()` returning `recipeMain<T>(argc, argv)` that an `epm.cpp` writes),
+    `Package` (one package's build step: `fetch`, `fingerprint`, `cached`,
+    `cmake`, `exportPrefix`/`useSource`, `runPackage`), `CMakePackage` (the
+    default steps with `configure`/`afterBuild` hooks, `buildInProcess`),
+    `CMakeBuild` (one child build per config: `option`/`define`/`configs`/
+    `generator`/`into`, `configure`/`build`/`harvest`/`run`), `Prefix` (the
+    entry `cached` hands a step), `BuildProtocol` (`BuildInput`/`BuildOutput`,
+    the step's JSON), `BuildError` (what the helpers throw), `RecipeMain` (that
+    `main()`: `[configure] --manifest --env --overrides --out [--cache]
+    [--verbose]`, the default, which is epm configure itself, run in the
+    manifest's directory whatever directory it starts in;
+    `describe --env --out`; `build --package --in --out [--quiet]`),
+    `Project` (what `describe` fills, `projectError`). Driver:
+    `RecipeConfigure` (`describedRecipe`/`runRecipeStep`, describe and a step
+    in this process; `ConfigureArgs`, `configureInputs` and `runConfigure`,
+    the configure shared by epm and the recipe executable; `SelfRecipeLoader`,
+    the recipe executable's `ManifestLoader`: its own recipe described and its
+    own steps run in-process, still keeping their `steps/` files with
+    `<name>.command` naming this executable, every other recipe through
+    `RecipeManifestLoader`), `RecipeSdk` (the compiler, flags, headers and
+    per-config archives: the install prefix's, found beside the binary, or
+    beside `env.epmExecutable` through `recipeSdkFor`, else the build tree's
+    baked in through `RecipeSdk.cpp.in` and `file(GENERATE)`), `RecipeBuild`
+    (one compiler call into `<cache>/recipe/<key12>/epm-recipe`), `RecipeRun`
+    (runs its `describe` in a scratch directory and reads the `Project`
+    back).
+  - `Cache/` — `CacheRoot`, `SourceCache`, `BinaryCache` (entries under
+    `bin/<name>/<platform>/<fp12>`, picking, additive config builds),
+    `Fingerprint` (the ABI fingerprint and the `EPM_ABI_MATCH` policies),
+    `CacheListing` (`epm cache ls`), `PackageLock` (eacp `IPC::Lock`, hence
     the `eacp-network` dependency).
-  - `Source/` — `SourceCache` (bare clones under `git/`, archives under
-    `downloads/`, trees under `src/<merkle hash>`), `BareClone` (git plumbing,
-    git-lfs), `Submodules`, `Download`, `SourceSnapshot` (a cached tree, and
-    `isFullCommitHash`). Ported from lockstep.
-  - `Lock/` — `LockFile` (`epm-lock.json`), `MerkleHash`, `Requirements`
-    (minimal version selection), `Session`
-    (`<build>/epm/session.json`), `ErrorMessages`. Ported from lockstep.
   - `Build/` — `ChildBuild`, `Harvest`, `Configs` (config mapping and the
-    facade's `$<CONFIG>` selector). `CMake/epm-export.cmake`, `CMake/epm.cmake`
-    and `CMake/epm-provider.cmake` are compiled into the binary through
-    `Build/EmbeddedScripts.cpp.in` and written into every child build, so a
-    dependency's own package calls go through the consumer's lock.
-  - `Emit/` — `Response` (the CMake a package call runs for a prebuilt
-    entry, and `cmakeQuoted`/`cmakeQuotedList`), `GraphResponse`
-    (`graph.cmake` and `graph.json`), `RecipeSdkCMake` (`recipe-sdk.cmake`,
-    the `RecipeSdk` as `EPM_RECIPE_*` variables).
+    facade's `$<CONFIG>` selector). `CMake/epm-export.cmake` and
+    `CMake/epm-provider.cmake` (as the core of `epm-nested.cmake`, the
+    provider of nested child builds) are compiled into `epm-recipe`, so into
+    epm and every recipe executable, through `Build/EmbeddedScripts.cpp.in`.
+  - `Emit/` — `Response` (the `responses/<name>.cmake` writer, and
+    `cmakeQuoted`/`cmakeQuotedList`), `GraphResponse` (`graph.cmake` and
+    `graph.json`), `RecipeSdkCMake` (`recipe-sdk.cmake`, the `RecipeSdk` as
+    `EPM_RECIPE_*` variables).
   - `Graph/` — `Merge` (one package's effective request and its provenance),
-    `ManifestLoader` (a directory's `epm.cpp` as a `Project`: the interface
-    the walk is given, and `RecipeManifestLoader`, the real one), `Graph`
-    (the manifest walk, notes, `dependencyClosure`, resolution in
-    dependency order: `epm configure`; git and tag are selected through the
-    lock), `ResolvedGraph` (`graph.json`).
-  - `Resolve/` — `Commands` (resolve, provide, configure and the `lock`
-    subcommands: overrides, lock modes, minimal version selection, the CMake
-    each call runs) and `Resolve` (the mode decision and the binary half).
+    `ManifestLoader` (a directory's `epm.cpp` as a `Project`, and running a
+    build step in a recipe executable: the interface the walk is given, and
+    `RecipeManifestLoader`, the real one, which keeps each step's
+    `<name>.in.json`/`.out.json`/`.command` in `<out>/steps/`, written by
+    `writeStepFiles`), `Graph` (the
+    manifest walk, notes, step owners, `dependencyClosure`, `resolvePlan`
+    running the steps in dependency order: `epm configure`), `ResolvedGraph`
+    (`graph.json`).
+  - `Resolve/` — the `epm resolve` pipeline (default steps, in-process) and
+    `buildInputFor`.
 - `Apps/epm/Main.cpp` — the `epm` executable (`configure`, `graph-cmake`,
-  `describe`, `recipe-sdk`, `resolve`, `provide`, `find`, `lock`, `cache`): `Apps::runConsole` plus manual
-  subcommand dispatch on `argv[1]`, `Args::Parser` per subcommand.
-- `epm.cpp`, `epm-lock.json` — epm's own dependencies (eacp, Miro,
-  NanoTest), resolved by the released epm `CMakeLists.txt` pins.
-- `CMake/` — `get_epm.cmake` (the file consumers vendor: finds
+  `describe`, `recipe-sdk`, `resolve`, `cache`): `Apps::runConsole` plus
+  manual subcommand dispatch on `argv[1]`, `Args::Parser` per subcommand.
+  `configure` is a bootstrapper: it compiles the root `epm.cpp` into the cache
+  and runs that executable's `configure` with the same (absolute) arguments
+  in the manifest's directory, its stdout streamed, its stderr passed on and
+  its exit code returned, an env naming this epm when `env.json` names none;
+  where there are no recipe executables (Windows) it runs `runConfigure` in
+  its own process over a `RecipeManifestLoader`.
+- `CMake/` — vendored `CPM.cmake`, `Find<dep>.cmake` shims (one
+  `CPMAddPackage` each), `get_epm.cmake` (the file consumers vendor: finds
   the binary, then registers the provider when there is an `epm.cpp`),
   `epm.cmake` (the consumer module, installed with the binary; also
-  `epm_add_recipe`, which builds the project's `epm.cpp` as a module target
-  against `epm::recipe`, from `epm recipe-sdk`, and adds a test and a
-  `<target>-describe` target running `epm describe --module` over that
-  module, which is how a recipe is debugged),
+  `epm_add_recipe`, which builds the project's `epm.cpp` as an executable
+  target against `epm::recipe`, from `epm recipe-sdk`, whose default
+  arguments, and the `<target>-configure` target, run the whole configure in
+  it (`configure --manifest <src> --env <build>/epm/env.json --overrides
+  <build>/epm/overrides.json --out <build>/epm`, plus `--cache`/`--verbose`
+  as `epm_run_binary` adds them; the inputs written by a deferred
+  `epm_write_recipe_inputs`), and a test running the same into
+  `<build>/epm/test`; launching it with those arguments is how `describe` and
+  the root's hooks are debugged, with
+  `build --package <n> --in <build>/epm/steps/<n>.in.json --out <file>` one
+  build step the root owns (`steps/<n>.command` holds the exact command the
+  configure ran, with the executable that ran it: epm's cached one for any
+  owner under the CMake configure, this target after `<target>-configure`,
+  less the `--quiet` epm passes so a failure goes only to `--out`: run by
+  hand, it prints the failure on stderr too), and `epm describe --exe` runs
+  its `describe` in place of epm's own build),
   `epm-provider.cmake` (the dependency provider and `epm_load_package`,
   installed beside `epm.cmake`) and `epm-export.cmake` (injected into child
   builds).
 - `Tests/` — NanoTest, one `<Area>Tests.cpp` per area (`RecipeTests` compiles
-  and loads `Tests/Recipe/epm.cpp` with the real toolchain; `GraphTests` walks
-  graphs over an in-memory `ManifestLoader`), plus `cmake -P`
+  and runs `Tests/Recipe/epm.cpp` with the real toolchain, `describe`,
+  `build --package` and a whole `configure` from a copy of the executable,
+  Tiny's `add<Tiny>` step in-process, fetched from a local git repository
+  named by `EPM_TEST_TINY_GIT`; `PackageTests` drives `Package`/`CMakeBuild` steps
+  in-process against a scratch cache; `GraphTests` walks graphs, step owners
+  included, over an in-memory `ManifestLoader`), plus `cmake -P`
   self-tests: `GetEpmRanges.cmake` (get_epm's `EPM_VERSION` range handling,
-  ctest `get_epm_ranges`), `EpmConfigsAuto.cmake` (epm.cmake's
+  ctest `get_epm_ranges`), `GetEpmSourceDir.cmake` (get_epm's
+  `EPM_SOURCE_DIR` decisions, ctest `get_epm_source_dir`), `GetEpmLatest.cmake`
+  (get_epm's reading of a stale or corrupt `tool/latest.json`, ctest
+  `get_epm_latest`), `EpmConfigsAuto.cmake` (epm.cmake's
   `EPM_CONFIGS` resolution, ctest `epm_configs_auto`), `EpmOverrides.cmake`
   (the `overrides.json` writer, ctest `epm_overrides`), `GraphProvider.cmake`
   (the provider over fixtures in `Tests/Graph/`, ctest `epm_graph_provider`)
   and `GraphNested.cmake` (ctest `epm_graph_nested`: the real binary over two
-  local git repositories from `Tests/Nested/`, a package and its dependency,
-  prebuilt and from source, plus the consumer's `epm_add_recipe` module and
-  test; skipped without git).
+  local git repositories from `Tests/Nested/`, Mid and the Leaf it declares
+  with `add<LeafSteps>`, prebuilt and from source; Leaf's step runs in Mid's
+  recipe executable, its option lands in Leaf's fingerprint and, in source
+  mode, in `graph.json` and `graph.cmake`'s `OPTIONS`, the
+  `<build>/epm/steps/` files are kept and Leaf's step is re-run by hand from
+  them; plus the consumer's `epm_add_recipe` executable: its test, a whole
+  configure into `<build>/epm/test`, its `-configure` target refreshing
+  `<build>/epm/graph.cmake` with everything cached and the dependencies'
+  steps still in their cached recipe executables, its `describe` command and
+  `describe --exe`; skipped without git and on Windows) and
+  `InstallRoundTrip.cmake` (ctest `epm_install_round_trip`, not on Windows:
+  the installed epm through a symlink, `recipe-sdk`, `describe` and a
+  `configure` of an empty recipe against the prefix only, and which `bin/epm`
+  a second configuration's install leaves).
 - `Examples/` — consumer projects: `HelloEacp` (`epm_add_package`) and
   `HelloGraph` (the same through `epm.cpp` and `find_package`).
 
@@ -106,11 +167,28 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-`cmake --install build --prefix <dir>` installs only `bin/epm`,
-`share/epm/cmake/epm.cmake` and `share/epm/cmake/epm-provider.cmake`. Consumers vendor `CMake/get_epm.cmake`, which uses
-an in-range epm on PATH, else downloads the latest release (its
-`manifest.json`) into `<cache>/tool/<tag>/`, or builds it there through those
-same install rules, then includes that entry's `epm.cmake`.
+A top-level single-config build defaults `CMAKE_BUILD_TYPE` to Release.
+`cmake --install build --config <C> --prefix <dir>` installs only `bin/epm`
+(the Release one; another config only when no Release one is there),
+`lib/<C>/lib{epm-recipe,eacp-network,eacp-core,fmt,miniz,Miro,ResEmbed}.a`
+(same names in every config, no LTO), `include/` (`epm`, `eacp/Core`,
+`eacp/Network`, `Miro`, `ResEmbed`, `ea_data_structures`),
+`share/epm/cmake/{epm,epm-provider}.cmake` and
+`share/epm/epm-config` (one line: the configuration of the installed
+`bin/epm`; Release always wins `bin/epm`); the
+binary finds them relative to itself (`Docs/PoC.md` §8). On Linux,
+eacp-network needs libcurl's development package (`find_package(CURL)`), and
+recipes link libcurl by name (`-lcurl`, `-L<dir>` only for a non-default
+directory: `epm_shared_library_options`). Consumers vendor
+`CMake/get_epm.cmake`, which never downloads a binary (recipes link epm's
+archives, so they must come from the local compiler). In order:
+`EPM_EXECUTABLE`; `EPM_SOURCE_DIR` (or the enclosing checkout) built into
+`<cache>/tool/local-<hash>/`; an in-range epm on PATH; the newest in-range
+`<cache>/tool/v*/`; else the newest in-range tag from `git ls-remote`
+(`EPM_REPOSITORY`, cached a day in `tool/latest.json`), shallow-fetched into
+`<entry>/src`, built Debug then Release as a host build (consumer toolchain
+unset) and installed into `<cache>/tool/<tag>/`, whose build dirs are then
+pruned. Then it includes that entry's `epm.cmake`.
 `CMake/epm.cmake` requires `EPM_EXECUTABLE` and has no bootstrap of its own.
 A `get_epm.cmake` inside an epm checkout (`<dir>/CMake/`, `<dir>/CMakeLists.txt`
 with `project(epm`) defaults `EPM_SOURCE_DIR` to that checkout, so the examples,
@@ -122,12 +200,14 @@ One version: `project(epm VERSION ...)` (`Apps/epm/Version.h.in` carries it
 into `epm --version`, release.yml names the assets after it and checks it
 against a `v*` tag). No version or hash is kept anywhere else, and CI never
 commits. To release: bump `project(VERSION)`, merge to main, tag `vX.Y.Z` and
-push the tag; release.yml publishes the archives, `SHA256SUMS`,
-`manifest.json` and `get_epm.cmake`. Never move or delete a published tag.
+push the tag; release.yml publishes the archives (each an installed epm:
+`bin`, `lib`, `include`, `share`), `SHA256SUMS` and `get_epm.cmake`; get_epm
+itself downloads none of it and builds the tag from source. Never move or
+delete a published tag.
 
 `EPM_ENABLE_TESTS` defaults ON when epm is the top-level project.
 `EPM_VERBOSE_CONFIGURE=ON` brings back the configure detail hidden by default.
-Use a local eacp with `-DEPM_eacp_SOURCE=/path/to/eacp`.
+Use a local eacp with `-DCPM_eacp_SOURCE=/path/to/eacp`.
 
 ## Code style
 

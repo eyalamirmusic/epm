@@ -1,19 +1,17 @@
 #include "RecipeBuild.h"
 
-#include <epm/Cache/CrossProcessLock.h>
+#include <epm/Cache/PackageLock.h>
 #include <epm/Util/Command.h>
 #include <epm/Util/Log.h>
-#include <eacp/Core/Utils/Sha256.h>
+#include <epm/Util/Paths.h>
+#include <epm/Util/Sha256.h>
 #include <epm/Util/Text.h>
-
-#include <ResEmbed/ResEmbed.h>
 
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Utils/Files.h>
-#include <eacp/Core/Utils/StdPath.h>
 
-#include <filesystem>
-#include <stdexcept>
+#include <map>
+#include <mutex>
 
 namespace epm
 {
@@ -21,22 +19,68 @@ using namespace eacp;
 
 namespace
 {
-constexpr auto moduleFileName =
-    Platform::isApple() ? "epm-recipe.dylib" : "epm-recipe.so";
+constexpr auto executableFileName =
+    Platform::isWindows() ? "epm-recipe.exe" : "epm-recipe";
 constexpr auto failureLines = 30;
 
-// The module resolves its symbols against this very binary, so a rebuilt epm
-// gets fresh modules. Hashed once per process.
-const std::string& executableHash()
+// What recipes are built against for one epm binary: its SDK, the binary's
+// hash and recipeInputsHash. The binary is rebuilt with whatever a recipe
+// compiles against, so its hash covers what recipeInputsHash leaves out:
+// eacp's and Miro's headers.
+struct RecipeToolchain
 {
-    static const auto hash = computeFileSha256Hex(Files::executablePath());
-    return hash;
+    FilePath epmExecutable;
+    RecipeSdk sdk;
+    std::string executableHash;
+    std::optional<std::string> inputsHash;
+};
+
+// The toolchain of `epmExecutable`, this executable when empty. Located and
+// hashed once per binary and process.
+const RecipeToolchain& toolchainFor(const FilePath& epmExecutable)
+{
+    static auto mutex = std::mutex {};
+    static auto toolchains = std::map<std::string, RecipeToolchain> {};
+
+    const auto epm = epmExecutable.empty() ? Files::executablePath() : epmExecutable;
+    const auto key = resolvedPath(epm).str();
+    const auto lock = std::lock_guard {mutex};
+
+    if (const auto found = toolchains.find(key); found != toolchains.end())
+        return found->second;
+
+    auto toolchain = RecipeToolchain {};
+    toolchain.epmExecutable = epm;
+    toolchain.sdk = recipeSdkFor(epm);
+    toolchain.executableHash = sha256HexOfFile(epm).value_or(std::string {});
+    toolchain.inputsHash = recipeInputsHash(toolchain.sdk);
+    return toolchains.emplace(key, std::move(toolchain)).first->second;
+}
+
+// epm's own headers: those under the include directory holding
+// <epm/Recipe/Recipe.h>, the build tree's sources or the install's include/.
+Vector<FilePath> epmHeaders(const RecipeSdk& sdk)
+{
+    for (const auto& directory: sdk.includeDirectories)
+    {
+        const auto headers = FilePath {directory} / "epm";
+
+        if (!Files::isFile(headers / "Recipe" / "Recipe.h"))
+            continue;
+
+        auto options = Files::DirectoryOptions {};
+        options.recursive = true;
+        options.pattern = "*.h";
+        return Files::listFiles(headers, options);
+    }
+
+    return {};
 }
 
 std::string commandLine(const std::string& executable,
                         const Vector<std::string>& arguments)
 {
-    return executable + " " + eacp::Strings::join(arguments, " ");
+    return executable + " " + joinList(arguments, " ");
 }
 
 std::string firstErrorLine(std::string_view output)
@@ -56,25 +100,38 @@ RecipeBuild failure(std::string error, std::string details = {})
     return build;
 }
 
-RecipeBuild compile(const RecipeToolchain& toolchain,
+// A link item as CMake's target_link_libraries takes it, as compiler driver
+// arguments: "-framework Foundation" is two, a bare name is a system library.
+void addLinkOption(Vector<std::string>& arguments, const std::string& option)
+{
+    constexpr auto framework = std::string_view {"-framework "};
+
+    if (option.starts_with(framework))
+        arguments.add({"-framework", option.substr(framework.size())});
+    else if (option.starts_with('-') || option.find('/') != std::string::npos)
+        arguments.add(option);
+    else
+        arguments.add("-l" + option);
+}
+
+RecipeBuild compile(const RecipeSdk& sdk,
                     const FilePath& source,
-                    const FilePath& module,
+                    const FilePath& executable,
                     const FilePath& log)
 {
-    const auto& sdk = recipeSdk();
     const auto temporary =
-        module.sibling(module.stem() + ".tmp" + module.extension());
-    const auto arguments = recipeCompileArguments(sdk, toolchain, source, temporary);
-    const auto command = commandLine(toolchain.compiler, arguments);
+        executable.sibling(executable.stem() + ".tmp" + executable.extension());
+    const auto arguments = recipeCompileArguments(sdk, source, temporary);
+    const auto command = commandLine(sdk.compiler, arguments);
 
     Log::step("compiling " + source.str());
     Log::step(command);
 
-    const auto result = runCommand(toolchain.compiler, arguments);
-    Files::writeFileAtomically(log, command + "\n\n" + result.output);
+    const auto result = runCommand(sdk.compiler, arguments);
+    writeTextFile(log, command + "\n\n" + result.output);
 
     auto build = RecipeBuild {};
-    build.module = module;
+    build.executable = executable;
     build.log = log;
 
     if (!result.ok)
@@ -87,77 +144,58 @@ RecipeBuild compile(const RecipeToolchain& toolchain,
         return build;
     }
 
-    if (!Files::moveFile(temporary, module))
+    if (!Files::moveFile(temporary, executable))
     {
-        build.error = "cannot move the recipe module into " + module.str();
+        Files::removeFile(temporary);
+        build.error = "cannot move the recipe executable into " + executable.str();
         return build;
     }
 
     build.ok = true;
     return build;
 }
-constexpr auto recipeHeadersCategory = "RecipeHeaders";
-constexpr auto binaryHashLength = 12;
 } // namespace
 
-FilePath writeRecipeHeaders(const CacheRoot& cache)
+std::optional<std::string> recipeInputsHash(const RecipeSdk& sdk)
 {
-    const auto root =
-        cache.path() / "recipe-sdk" / executableHash().substr(0, binaryHashLength);
-    const auto include = root / "include";
-    const auto complete = root / "complete";
+    auto files = Vector<FilePath> {};
 
-    if (Files::isFile(complete))
-        return include;
+    for (const auto& library: recipeLibraries(sdk))
+        files.add(FilePath {library});
 
-    const auto headers = ResEmbed::getCategory(recipeHeadersCategory);
+    for (const auto& header: epmHeaders(sdk))
+        files.add(header);
 
-    if (headers.empty())
-        throw std::runtime_error("this epm embeds no recipe headers");
+    auto lines = std::string {};
 
-    const auto lock =
-        CrossProcessLock {cache, "recipe-sdk", crossProcessLockTimeout};
+    for (const auto& file: files)
+    {
+        const auto hash = sha256HexOfFile(file);
 
-    if (!lock.isLocked())
-        throw std::runtime_error("timed out waiting for another epm to write "
-                                 + include.str());
+        if (!hash)
+            return std::nullopt;
 
-    if (Files::isFile(complete))
-        return include;
+        lines += *hash + " " + file.str() + "\n";
+    }
 
-    for (const auto& [name, data]: headers)
-        Files::writeFileAtomically(include / name, data.toStringView());
-
-    Files::writeFileAtomically(complete, std::string_view {});
-    return include;
-}
-
-RecipeToolchain recipeToolchainFor(const Env& env, const CacheRoot& cache)
-{
-    return {env.recipeCompiler,
-            env.cxxCompilerId,
-            env.osxSysroot,
-            writeRecipeHeaders(cache)};
+    return sha256Hex(lines);
 }
 
 std::string recipeKey(const RecipeSdk& sdk,
-                      const RecipeToolchain& toolchain,
                       std::string_view executableHash,
+                      std::string_view inputsHash,
                       std::string_view source)
 {
-    return computeSha256Hex(
-        sdk.identity + "\n" + toolchain.compiler + "\n" + toolchain.osxSysroot + "\n"
-        + std::string {executableHash} + "\n" + computeSha256Hex(source));
+    return sha256Hex(sdk.identity + "\n" + std::string {executableHash} + "\n"
+                     + std::string {inputsHash} + "\n" + sha256Hex(source));
 }
 
 Vector<std::string> recipeCompileArguments(const RecipeSdk& sdk,
-                                           const RecipeToolchain& toolchain,
                                            const FilePath& source,
-                                           const FilePath& module)
+                                           const FilePath& output)
 {
     auto arguments = Vector<std::string> {};
     arguments.add((sdk.cxxExtensions ? "-std=gnu++" : "-std=c++") + sdk.cxxStandard);
-    arguments.add({"-shared", "-fPIC", "-fvisibility=hidden"});
 
     for (const auto& flag: sdk.flags)
         arguments.add(flag);
@@ -166,8 +204,8 @@ Vector<std::string> recipeCompileArguments(const RecipeSdk& sdk,
     // compile beats a Release -O3.
     arguments.add("-O1");
 
-    if (!toolchain.osxSysroot.empty())
-        arguments.add({"-isysroot", toolchain.osxSysroot});
+    if (!sdk.osxSysroot.empty())
+        arguments.add({"-isysroot", sdk.osxSysroot});
 
     for (const auto& architecture: sdk.osxArchitectures)
         arguments.add({"-arch", architecture});
@@ -175,96 +213,97 @@ Vector<std::string> recipeCompileArguments(const RecipeSdk& sdk,
     if (!sdk.osxDeploymentTarget.empty())
         arguments.add("-mmacosx-version-min=" + sdk.osxDeploymentTarget);
 
-    arguments.add("-I" + toolchain.includeDirectory.str());
+    for (const auto& directory: sdk.includeDirectories)
+        arguments.add("-I" + directory);
 
     for (const auto& definition: sdk.compileDefinitions)
         arguments.add("-D" + definition);
 
-    // epm-core's warning flags are only meant for the compiler that built it.
-    if (toolchain.compilerId == sdk.compilerId)
-    {
-        for (const auto& option: sdk.compileOptions)
-            arguments.add(option);
-    }
+    for (const auto& option: sdk.compileOptions)
+        arguments.add(option);
 
-    // The module's undefined symbols are epm's, bound when it is loaded.
-    if (Platform::isApple())
-        arguments.add("-Wl,-undefined,dynamic_lookup");
+    arguments.add({"-o", output.str(), source.str()});
 
-    // So the last dlclose really unmaps it (eacp's EacpPlugin.cmake).
-    if (toolchain.compilerId == "GNU")
-        arguments.add("-fno-gnu-unique");
+    // After the source, each archive before those it depends on: a
+    // single-pass linker (GNU ld) only takes from an archive what is already
+    // undefined.
+    for (const auto& library: recipeLibraries(sdk))
+        arguments.add(library);
 
-    arguments.add({"-o", module.str(), source.str()});
+    for (const auto& option: sdk.linkOptions)
+        addLinkOption(arguments, option);
+
     return arguments;
 }
 
 RecipeBuild buildRecipe(const FilePath& sourceToBuild,
                         const CacheRoot& cache,
-                        const Env& env)
+                        const FilePath& epmExecutable)
 {
+    // MSVC needs its own argument shape (/std:, /Fe, .lib names), not a
+    // different design: a recipe is an executable on every platform.
     if (Platform::isWindows())
         return failure("epm.cpp recipes are not supported on Windows yet");
 
-    if (env.recipeCompiler.empty())
-        return failure("no C++ compiler to build " + sourceToBuild.str()
-                       + " with: the configure found none");
-
-    if (!Files::isFile(FilePath {env.recipeCompiler}))
-        return failure("the configure's C++ compiler " + env.recipeCompiler
-                       + " does not exist");
-
-    auto toolchain = RecipeToolchain {};
-
-    try
-    {
-        toolchain = recipeToolchainFor(env, cache);
-    }
-    catch (const std::exception& error)
-    {
-        return failure(error.what());
-    }
-
     // Absolute, so the compiler's diagnostics in compile.log name it fully.
-    auto failed = std::error_code {};
-    const auto absolute =
-        std::filesystem::absolute(toStdPath(sourceToBuild), failed);
-    const auto source = failed ? sourceToBuild : FilePath {absolute};
+    const auto source = resolvedPath(sourceToBuild);
 
     if (!Files::isFile(source))
         return failure("no recipe at " + source.str());
 
-    if (executableHash().empty())
-        return failure("cannot hash the epm executable "
-                       + Files::executablePath().str());
+    const auto& toolchain = toolchainFor(epmExecutable);
+    const auto& sdk = toolchain.sdk;
 
-    const auto key =
-        recipeKey(recipeSdk(), toolchain, executableHash(), Files::readFile(source))
-            .substr(0, 12);
+    if (toolchain.executableHash.empty())
+        return failure("cannot hash the epm executable "
+                       + toolchain.epmExecutable.str());
+
+    if (recipeLibraries(sdk).empty())
+        return failure("this epm has no recipe libraries for its configuration '"
+                       + sdk.config + "'");
+
+    if (!toolchain.inputsHash)
+        return failure("cannot read this epm's recipe libraries and headers");
+
+    const auto key = recipeKey(sdk,
+                               toolchain.executableHash,
+                               *toolchain.inputsHash,
+                               Files::readFile(source))
+                         .substr(0, 12);
     const auto directory = cache.recipe() / key;
-    const auto module = directory / moduleFileName;
+    const auto executable = directory / executableFileName;
     const auto log = directory / "compile.log";
 
     auto cached = RecipeBuild {};
     cached.ok = true;
     cached.cached = true;
-    cached.module = module;
+    cached.executable = executable;
     cached.log = log;
 
-    if (Files::isFile(module))
+    if (Files::isFile(executable))
         return cached;
 
-    const auto lock =
-        CrossProcessLock {cache, "recipe-" + key, crossProcessLockTimeout};
+    if (!Files::isFile(sdk.compiler))
+        return failure("the compiler that built epm is gone: " + sdk.compiler);
+
+    const auto lock = PackageLock {cache, "recipe-" + key, packageLockTimeout};
 
     if (!lock.isLocked())
         return failure("timed out waiting for another epm to compile "
                        + source.str());
 
-    if (Files::isFile(module))
+    if (Files::isFile(executable))
         return cached;
 
     Files::createDirectories(directory);
-    return compile(toolchain, source, module, log);
+    return compile(sdk, source, executable, log);
+}
+
+std::string recipeBuildError(const RecipeBuild& build)
+{
+    if (build.firstDiagnostic.empty())
+        return build.error;
+
+    return build.error + "\n  " + build.firstDiagnostic;
 }
 } // namespace epm

@@ -31,9 +31,9 @@ Request fingerprintRequest()
     return request;
 }
 
-AbiFingerprint fingerprintWith(const Env& env, const std::string& sourceHash = "abc")
+AbiFingerprint fingerprintWith(const Env& env, const std::string& sourceId = "abc")
 {
-    return fingerprintFor(fingerprintRequest(), env, sourceHash);
+    return fingerprintFor(fingerprintRequest(), env, sourceId);
 }
 
 // Xcode's clang against the command line tools' clang, same major version.
@@ -56,7 +56,7 @@ auto tFpFields = test("Fingerprint/fields") = []
     check(fingerprint.compilerVersion == "17.0.0.17000013");
     check(fingerprint.compilerMajor == "17");
     check(fingerprint.compilerPath == "/usr/bin/c++");
-    check(fingerprint.sourceHash == "abc");
+    check(fingerprint.sourceId == "abc");
     check(fingerprint.toolchainFileHash.empty());
 };
 
@@ -78,7 +78,7 @@ auto tFpCanonical = test("Fingerprint/canonicalIsCompactAndSorted") = []
 
     check(text.find('\n') == std::string::npos);
     check(text.find("\"options\":{\"A\":\"1\",\"B\":\"2\"}") != std::string::npos);
-    check(text.find("\"sourceHash\":\"abc\"") != std::string::npos);
+    check(text.find("\"sourceId\":\"abc\"") != std::string::npos);
     check(fingerprintId(fingerprintFor(request, fingerprintEnv(), "abc")).size()
           == 64);
 };

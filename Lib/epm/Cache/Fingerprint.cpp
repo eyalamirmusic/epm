@@ -1,32 +1,16 @@
 #include "Fingerprint.h"
 
 #include <epm/Spec/Platform.h>
+#include <epm/Util/Sha256.h>
 #include <epm/Util/Text.h>
 
 #include <eacp/Core/Utils/FilePath.h>
-#include <eacp/Core/Utils/Strings.h>
-#include <eacp/Core/Utils/Sha256.h>
 
 #include <Miro/Json.h>
 
 namespace epm
 {
 using namespace eacp;
-
-namespace
-{
-// "unreadable" stands for a toolchain file that cannot be read, so it still
-// changes the fingerprint.
-std::string toolchainFileHash(const FilePath& file)
-{
-    auto hash = computeFileSha256Hex(file);
-
-    if (hash.empty())
-        return "unreadable";
-
-    return hash;
-}
-} // namespace
 
 std::optional<AbiMatch> parseAbiMatch(std::string_view text)
 {
@@ -49,7 +33,7 @@ std::string compilerMajor(std::string_view version)
 
 AbiFingerprint fingerprintFor(const Request& request,
                               const Env& env,
-                              const std::string& sourceHash)
+                              const std::string& sourceId)
 {
     auto fingerprint = AbiFingerprint {};
     fingerprint.platform = platformName(env);
@@ -64,20 +48,20 @@ AbiFingerprint fingerprintFor(const Request& request,
     fingerprint.cxxStandard = env.cxxStandard;
     fingerprint.toolchainFile = env.toolchainFile;
     fingerprint.options = request.options;
-    fingerprint.sourceHash = sourceHash;
+    fingerprint.sourceId = sourceId;
     fingerprint.deps = request.deps;
     return fingerprint;
 }
 
 AbiFingerprint makeFingerprint(const Request& request,
                                const Env& env,
-                               const std::string& sourceHash)
+                               const std::string& sourceId)
 {
-    auto fingerprint = fingerprintFor(request, env, sourceHash);
+    auto fingerprint = fingerprintFor(request, env, sourceId);
 
     if (!env.toolchainFile.empty())
         fingerprint.toolchainFileHash =
-            toolchainFileHash(FilePath {env.toolchainFile});
+            sha256HexOfFile(FilePath {env.toolchainFile}).value_or("unreadable");
 
     return fingerprint;
 }
@@ -89,7 +73,7 @@ std::string canonicalFingerprint(const AbiFingerprint& fingerprint)
 
 std::string fingerprintId(const AbiFingerprint& fingerprint)
 {
-    return eacp::computeSha256Hex(canonicalFingerprint(fingerprint));
+    return sha256Hex(canonicalFingerprint(fingerprint));
 }
 
 bool abiMatches(const AbiFingerprint& recorded,
@@ -101,8 +85,8 @@ bool abiMatches(const AbiFingerprint& recorded,
 
     const auto sameBase =
         recorded.schema == wanted.schema && recorded.platform == wanted.platform
-        && recorded.options == wanted.options
-        && recorded.sourceHash == wanted.sourceHash && recorded.deps == wanted.deps;
+        && recorded.options == wanted.options && recorded.sourceId == wanted.sourceId
+        && recorded.deps == wanted.deps;
 
     if (policy == AbiMatch::any || !sameBase)
         return sameBase;
@@ -132,7 +116,7 @@ std::optional<std::string> abiNote(const AbiFingerprint& recorded,
         return "built with " + recorded.compilerPath + ", current "
                + current.compilerPath;
 
-    auto fields = EA::Vector<std::string> {};
+    auto fields = Vector<std::string> {};
     const auto compare = [&](const char* name, const auto& a, const auto& b)
     {
         if (a != b)
@@ -151,6 +135,6 @@ std::optional<std::string> abiNote(const AbiFingerprint& recorded,
         "toolchainFileHash", recorded.toolchainFileHash, current.toolchainFileHash);
     compare("deps", recorded.deps, current.deps);
 
-    return "built with a different " + eacp::Strings::join(fields, ", ");
+    return "built with a different " + joinList(fields, ", ");
 }
 } // namespace epm

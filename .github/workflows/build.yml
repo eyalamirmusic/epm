@@ -27,16 +27,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `platform` is the release asset suffix and must match the manifest
-        # keys get_epm.cmake looks up (get_epm_host_platform).
-        # `cmake-flags` apply to epm and to the HelloEacp smoke build,
-        # `epm-flags` to epm only. Linux links with lld: eacp's
+        # `platform` is the release asset suffix (epm-<version>-<platform>);
+        # the PATH smoke test downloads v0.1.1's asset by it, so keep the
+        # names stable. `cmake-flags` apply to epm and to the HelloEacp smoke
+        # build, `epm-flags` to epm only. Linux links with lld: eacp's
         # set_default_target_setting turns on LTO for Release, and GNU ld
         # cannot read clang's bitcode archives without the LLVMgold plugin.
+        # `source-smoke` runs the smoke tests in which get_epm.cmake builds a
+        # release tag from source (Debug and Release, a few minutes), on one
+        # job only.
         include:
           - platform: macos-universal
             os: macos-15
             epm-flags: '-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"'
+            source-smoke: true
           - platform: windows-x64
             os: windows-latest
             msvc-arch: x64
@@ -84,6 +88,7 @@ jobs:
           {
             echo "ROOT=$root"
             echo "EXE_SUFFIX=$suffix"
+            echo "CPM_SOURCE_CACHE=$root/.cpm-cache"
           } >> "$GITHUB_ENV"
 
       - name: Show the toolchain
@@ -96,10 +101,23 @@ jobs:
             clang++ --version
           fi
 
+      # eacp is fetched at GIT_TAG main, which CPM never refreshes inside an
+      # existing source cache, so eacp's current commit is part of the key and a
+      # new eacp commit starts a fresh cache rather than restoring a stale one.
+      - name: Resolve eacp main
+        id: eacp
+        run: |
+          echo "sha=$(git ls-remote https://github.com/eyalamirmusic/eacp refs/heads/main | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache CPM sources
+        uses: actions/cache@v6
+        with:
+          path: .cpm-cache
+          key: cpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMake/Find*.cmake') }}-eacp-${{ steps.eacp.outputs.sha }}
+
       - name: Configure
         run: >
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          -DEPM_LOCK_MODE=locked -DEPM_CI=ON "-DEPM_CACHE=${{ env.ROOT }}/.epm-self-cache"
           ${{ matrix.cmake-flags }} ${{ matrix.epm-flags }}
 
       - name: Build
@@ -117,17 +135,6 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
-      # epm built itself in locked mode from epm-lock.json: every package must still
-      # hash to its lock entry (glslang, which eacp asks for on Linux only, is
-      # fetched by verify elsewhere), the configure must not have changed one byte of
-      # the lock, and the root is printed so the lanes can be compared.
-      - name: Verify epm's own lock
-        run: |
-          git diff --exit-code epm-lock.json
-          "build/Apps/epm/epm$EXE_SUFFIX" lock verify --full --lock epm-lock.json \
-            "--cache=$ROOT/.epm-self-cache"
-          echo "root: $("build/Apps/epm/epm$EXE_SUFFIX" lock root --lock epm-lock.json)"
-
       # (a) The full consumer path with this epm: get_epm.cmake takes
       # EPM_EXECUTABLE and, finding no module installed beside it, the
       # repository's CMake/epm.cmake. MODE auto, so eacp is fetched and built
@@ -139,22 +146,112 @@ jobs:
         run: |
           cmake -S Examples/HelloEacp -B build-hello -G Ninja -DCMAKE_BUILD_TYPE=Release \
             "-DEPM_EXECUTABLE=$ROOT/build/Apps/epm/epm$EXE_SUFFIX" \
-            "-DEPM_CACHE=$ROOT/.epm-cache" \
-            -DEPM_VERBOSE=ON ${{ matrix.cmake-flags }}
+            "-DEPM_CACHE=$ROOT/.epm-cache" -DEPM_VERBOSE=ON \
+            ${{ matrix.cmake-flags }}
           cmake --build build-hello
           "./build-hello/hello$EXE_SUFFIX"
-          # A fresh configure against Examples/HelloEacp/epm-lock.json must take eacp
-          # from the binary cache rather than build it again.
-          cmake -S Examples/HelloEacp -B build-hello-hit -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            "-DEPM_EXECUTABLE=$ROOT/build/Apps/epm/epm$EXE_SUFFIX" \
-            "-DEPM_CACHE=$ROOT/.epm-cache" \
-            -DEPM_VERBOSE=ON ${{ matrix.cmake-flags }} | tee hello-hit.log
-          if grep -q "epm: building eacp" hello-hit.log; then
-            echo "the second configure rebuilt eacp instead of hitting the binary cache"
+
+      # The consumer smoke tests below share one cache, $CONSUMER_CACHE: (b)
+      # starts it empty, (c) deletes only its tool/ directory and (d) reuses
+      # the tool entry (c) built, so each reuses the eacp build of the step
+      # before. (c) and (d) run on the `source-smoke` job only: get_epm.cmake
+      # never downloads a binary, so a consumer without an installed epm builds
+      # the newest release tag from source, Debug and Release.
+      #
+      # They configure a vendored copy of HelloEacp, not Examples/HelloEacp: a
+      # get_epm.cmake inside the epm checkout builds that checkout by default,
+      # which would bypass the PATH, release tag and EPM_VERSION paths these
+      # steps test. The copy keeps include(../../CMake/get_epm.cmake) working with
+      # no epm CMakeLists.txt above CMake/, as in a real consumer.
+      - name: Stage a vendored HelloEacp
+        if: inputs.smoke
+        run: |
+          temp="$(cygpath -m "$RUNNER_TEMP" 2>/dev/null || echo "$RUNNER_TEMP")"
+          smoke="$temp/smoke"
+          rm -rf "$smoke"
+          cmake -E copy_directory Examples/HelloEacp "$smoke/Examples/HelloEacp"
+          cmake -E copy CMake/get_epm.cmake "$smoke/CMake/get_epm.cmake"
+          if [ -e "$smoke/CMakeLists.txt" ]; then
+            echo "::error::$smoke/CMakeLists.txt exists; the copy would not look vendored"
             exit 1
           fi
-          cmake --build build-hello-hit
-          "./build-hello-hit/hello$EXE_SUFFIX"
+          {
+            echo "VENDORED_HELLO=$smoke/Examples/HelloEacp"
+            echo "CONSUMER_CACHE=$ROOT/.epm-cache-consumer"
+          } >> "$GITHUB_ENV"
+
+      # (b) An epm 0.1.1 installed on PATH (a release archive: bin/ and share/)
+      # is preferred when no range is given.
+      - name: HelloEacp PATH smoke test
+        if: inputs.smoke
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then ext=zip; else ext=tar.gz; fi
+          curl -fsSL -o "epm-0.1.1.$ext" \
+            "https://github.com/eyalamirmusic/epm/releases/download/v0.1.1/epm-0.1.1-${{ matrix.platform }}.$ext"
+          rm -rf .epm-path && mkdir .epm-path
+          (cd .epm-path && cmake -E tar xf "../epm-0.1.1.$ext")
+          export PATH="$PWD/.epm-path/bin:$PATH"
+          epm --version
+          rm -rf "$CONSUMER_CACHE"
+          cmake -S "$VENDORED_HELLO" -B build-hello-path -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            "-DEPM_CACHE=$CONSUMER_CACHE" \
+            ${{ matrix.cmake-flags }} 2>&1 | tee configure-path.log
+          grep -q 'epm: using epm 0.1.1 from' configure-path.log
+          cmake --build build-hello-path
+          "./build-hello-path/hello$EXE_SUFFIX"
+
+      # (c) A consumer with nothing set and no epm on PATH: get_epm.cmake lists
+      # the release tags and builds the newest into <cache>/tool/v<x.y.z>/.
+      - name: HelloEacp release source build smoke test
+        if: inputs.smoke && matrix.source-smoke
+        run: |
+          if command -v epm; then
+            echo "::error::an epm is on PATH; this test needs none"
+            exit 1
+          fi
+          rm -rf "$CONSUMER_CACHE/tool"
+          cmake -S "$VENDORED_HELLO" -B build-hello-source -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            "-DEPM_CACHE=$CONSUMER_CACHE" \
+            ${{ matrix.cmake-flags }} 2>&1 | tee configure-source.log
+          grep -Eq 'epm: building epm v[0-9.]+ into .*/tool/v[0-9.]+ \(Debug and Release; first time only\)' configure-source.log
+          grep -Eq 'epm: epm v[0-9.]+: installing Debug' configure-source.log
+          grep -Eq 'epm: epm v[0-9.]+: installing Release' configure-source.log
+          grep -Eq 'epm: built epm [0-9.]+ into .*/tool/v[0-9.]+' configure-source.log
+          cmake --build build-hello-source
+          "./build-hello-source/hello$EXE_SUFFIX"
+
+      # (d) epm 0.1.1 on PATH again, but EPM_VERSION 0.1.2 (>= 0.1.2) rules it
+      # out: the release tag (c) built is in range and used from the cache,
+      # with nothing built.
+      - name: HelloEacp version range smoke test
+        if: inputs.smoke && matrix.source-smoke
+        run: |
+          export PATH="$PWD/.epm-path/bin:$PATH"
+          cmake -S "$VENDORED_HELLO" -B build-hello-range -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            "-DEPM_CACHE=$CONSUMER_CACHE" -DEPM_VERSION=0.1.2 \
+            ${{ matrix.cmake-flags }} 2>&1 | tee configure-range.log
+          if grep -q 'epm: using epm 0.1.1 from' configure-range.log; then
+            echo "::error::EPM_VERSION 0.1.2 still used the epm 0.1.1 on PATH"
+            exit 1
+          fi
+          if grep -q 'epm: building epm' configure-range.log; then
+            echo "::error::EPM_VERSION 0.1.2 built an epm instead of using the cached one"
+            exit 1
+          fi
+          grep -Eq 'epm: using epm [0-9.]+ from .*/tool/v[0-9.]+/bin/epm' configure-range.log
+          cmake --build build-hello-range
+          "./build-hello-range/hello$EXE_SUFFIX"
+
+      # A usable prefix holds the recipe libraries of both configurations
+      # (lib/Debug/ and lib/Release/), so the package needs a Debug build of
+      # epm beside the Release one in `build`. Ninja is single-config: a second
+      # build directory, without the tests.
+      - name: Build Debug for the package
+        if: inputs.package
+        run: |
+          cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DEPM_ENABLE_TESTS=OFF \
+            ${{ matrix.cmake-flags }} ${{ matrix.epm-flags }}
+          cmake --build build-debug --parallel
 
       - name: Package
         if: inputs.package
@@ -166,19 +263,36 @@ jobs:
             exit 1
           fi
 
+          # Debug and then Release, as get_epm.cmake fills a tool entry:
+          # lib/<config>/ of each, and bin/epm the Release one.
           name="epm-$version-${{ matrix.platform }}"
           stage="stage/$name"
-          cmake --install build --prefix "$stage"
+          rm -rf "$stage"
+          cmake --install build-debug --config Debug --prefix "$stage"
+          cmake --install build --config Release --prefix "$stage"
           (cd "$stage" && find . -type f | sort)
           [ "$("$stage/bin/epm$EXE_SUFFIX" --version)" = "$version" ]
+          # epm-recipe links eacp-network (IPC::Lock, through PackageLock.h).
+          for config in Debug Release; do
+            for library in epm-recipe eacp-network; do
+              if ! ls "$stage/lib/$config/"*"$library".* > /dev/null; then
+                echo "::error::no $library library in $stage/lib/$config"
+                exit 1
+              fi
+            done
+          done
+          [ -f "$stage/include/epm/Recipe/Recipe.h" ]
+          [ -f "$stage/include/eacp/Network/IPC/Lock.h" ]
+          [ -f "$stage/share/epm/cmake/epm.cmake" ]
+          [ -f "$stage/share/epm/cmake/epm-provider.cmake" ]
 
-          # bin/ and share/ at the archive root: unpacked as is into
-          # <cache>/tool/<ref>/ by the bootstrap.
+          # The install as is at the archive root: unpacked into a prefix, it is
+          # an installed epm (bin/epm with share/epm/cmake/epm.cmake beside it).
           mkdir -p dist
           if [ "$RUNNER_OS" = "Windows" ]; then
-            (cd "$stage" && cmake -E tar cf "$ROOT/dist/$name.zip" --format=zip bin share)
+            (cd "$stage" && cmake -E tar cf "$ROOT/dist/$name.zip" --format=zip bin lib include share)
           else
-            (cd "$stage" && cmake -E tar czf "$ROOT/dist/$name.tar.gz" bin share)
+            (cd "$stage" && cmake -E tar czf "$ROOT/dist/$name.tar.gz" bin lib include share)
           fi
           ls -l dist
 

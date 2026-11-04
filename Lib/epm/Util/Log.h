@@ -19,4 +19,8 @@ void progress(std::string_view line);
 
 // A chunk of child output, written as is, only when verbose.
 void stream(std::string_view chunk);
+
+// The same, verbose or not: the output of a child that filters its own, as a
+// build step does (progress lines, and its child builds under --verbose).
+void echo(std::string_view chunk);
 } // namespace epm::Log

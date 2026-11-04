@@ -4,6 +4,7 @@
 #include <epm/Spec/Env.h>
 #include <epm/Spec/Request.h>
 
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -24,52 +25,51 @@ struct Generator
 Generator chooseGenerator(const Env& env,
                           const std::optional<eacp::FilePath>& ninja);
 
-// The consumer's lock, which the child's own CPMAddPackage and FetchContent
-// calls resolve against, and the root epm.cpp whose overrides apply there.
-struct LockForChildBuilds
-{
-    eacp::FilePath lock;
-    std::string mode = "locked";
-    eacp::FilePath manifest;
-};
-
 // One configuration of a dependency, built straight into a binary cache prefix.
 struct ChildBuild
 {
+    // The package's name, and its options as -D<KEY>=<VALUE>.
     Request request;
+
+    // Raw -D<NAME>=<VALUE> definitions passed after the options, so one may
+    // override what epm itself passes (CMAKE_CXX_STANDARD, ...). NAME may
+    // carry a :TYPE.
+    std::map<std::string, std::string> definitions;
+
     Env env;
     Generator generator;
     eacp::FilePath sourceDirectory;
     eacp::FilePath buildDirectory;
     eacp::FilePath prefix;
+    eacp::FilePath cpmCache;
     std::string config;
 
-    // graph.cmake of the package's dependency closure, all
-    // prebuilt, which the nested provider loads. Empty for a package
-    // without dependencies.
+    // graph.cmake (Docs/Graph.md §7) of the package's dependency closure, all
+    // prebuilt, which the nested provider loads (§10). Empty for a package
+    // without dependencies: no provider is injected.
     std::string dependencyGraph;
 
-    // EPM_EXECUTABLE in the child, whose epm.cmake runs it.
+    // Handed to a child with dependencies as EPM_EXECUTABLE, so a get_epm.cmake
+    // of its own finds the epm that runs the graph. It comes from the build
+    // step's input (BuildInput::epmExecutable): inside a recipe executable,
+    // this process is the recipe, not epm.
     eacp::FilePath epmExecutable;
-    eacp::FilePath cacheRoot;
-    LockForChildBuilds childLock;
 };
 
-// The child's `cmake -S -B` arguments. Toolchain values the consumer left
-// empty are not passed at all. Every child also gets EPM_NESTED, the lock
-// settings and epm.cmake after epm-export.cmake in
-// CMAKE_PROJECT_TOP_LEVEL_INCLUDES, so its own package calls go through the
-// lock; with a dependencyGraph also EPM_GRAPH.
-EA::Vector<std::string> configureArguments(const ChildBuild& build);
+// The `cmake -S -B` arguments of PoC §5. Toolchain values the consumer left
+// empty are not passed at all. With a dependencyGraph also EPM_NESTED,
+// EPM_GRAPH, EPM_EXECUTABLE and epm-nested.cmake after epm-export.cmake in
+// CMAKE_PROJECT_TOP_LEVEL_INCLUDES (Docs/Graph.md §10).
+eacp::Vector<std::string> configureArguments(const ChildBuild& build);
 
-EA::Vector<std::string> buildArguments(const ChildBuild& build);
+eacp::Vector<std::string> buildArguments(const ChildBuild& build);
 
 // epm-export.cmake as it was when this binary was built.
 std::string_view embeddedExportScript();
 
-// epm.cmake and epm-provider.cmake as they were when this binary was built.
-std::string_view embeddedModuleScript();
-std::string_view embeddedProviderScript();
+// epm-nested.cmake: epm-provider.cmake as it was when this binary was built,
+// plus a tail registering the provider over ${EPM_GRAPH}.
+std::string_view embeddedNestedScript();
 
 struct ChildBuildResult
 {
@@ -81,8 +81,11 @@ struct ChildBuildResult
     std::string details;
 };
 
-// Writes epm-export.cmake, epm.cmake and epm-provider.cmake into the build
-// directory (with dependencies also epm-graph.cmake), then configures and
-// builds.
-ChildBuildResult runChildBuild(const ChildBuild& build);
+// Writes epm-export.cmake into the build directory (with dependencies also
+// epm-nested.cmake and epm-graph.cmake), then runs the configure step. The
+// output goes to epm-configure.log in the build directory.
+ChildBuildResult configureChildBuild(const ChildBuild& build);
+
+// `cmake --build` of a configured build directory, logged to epm-build.log.
+ChildBuildResult buildChildBuild(const ChildBuild& build);
 } // namespace epm
