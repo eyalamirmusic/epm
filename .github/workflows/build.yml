@@ -174,6 +174,9 @@ jobs:
           rm -rf "$smoke"
           cmake -E copy_directory Examples/HelloEacp "$smoke/Examples/HelloEacp"
           cmake -E copy CMake/get_epm.cmake "$smoke/CMake/get_epm.cmake"
+          # The releases these steps run predate epm.json and search for
+          # CURL, PkgConfig and Threads themselves.
+          rm "$smoke/Examples/HelloEacp/epm.json"
           if [ -e "$smoke/CMakeLists.txt" ]; then
             echo "::error::$smoke/CMakeLists.txt exists; the copy would not look vendored"
             exit 1
