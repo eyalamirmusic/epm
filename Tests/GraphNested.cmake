@@ -266,7 +266,7 @@ function(expect_recipe_test)
             OUTPUT_VARIABLE test_output
             ERROR_VARIABLE test_output)
 
-    if (NOT result EQUAL 0 OR NOT test_output MATCHES "100% tests passed out of 1")
+    if (NOT result EQUAL 0 OR NOT test_output MATCHES "100% tests passed(, 0 tests failed)? out of 1")
         fail("ctest of ConsumerRecipe failed (${result}):\n${test_output}")
     endif ()
 
