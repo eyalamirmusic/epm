@@ -1,7 +1,8 @@
 # End-to-end self-test of nested child builds with the real
-# epm binary. Commits Tests/Nested/Leaf and Tests/Nested/Mid (whose epm.json
+# epm binary. Commits Tests/Nested/Leaf and Tests/Nested/Mid (whose epm.cpp
 # declares Leaf) into local git repositories, then configures, builds and runs
-# Tests/Nested/Consumer (whose epm.json declares only Mid) once per scenario:
+# Tests/Nested/Consumer (whose epm.cpp declares only Mid) once per scenario.
+# The binary compiles both recipes with the compiler that built it:
 #
 #   default       both prebuilt; Mid's child build loads Leaf through the
 #                 injected provider; Mid's entry records Leaf's fingerprint in
@@ -11,6 +12,10 @@
 #   leaf-source   EPM_Leaf_MODE=source forces Mid into source
 #   leaf-checkout EPM_Leaf_SOURCE=<checkout>: Leaf's repository is hidden, so
 #                 the checkout is used without a fetch
+#
+# Each scenario also builds the consumer's epm_add_recipe module and checks
+# that Mid's epm_add_recipe built nothing; the default one runs its describe
+# test.
 #
 #   cmake -DEPM_BINARY=<epm> [-DWORK_DIR=<dir>] [-DTEST_GENERATOR=<generator>]
 #         [-DTEST_MAKE_PROGRAM=<path>] [-DTEST_CXX_COMPILER=<path>]
@@ -23,6 +28,11 @@ get_filename_component(repo_dir "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 
 if (NOT EXISTS "${EPM_BINARY}")
     message(FATAL_ERROR "EPM_BINARY '${EPM_BINARY}' does not exist")
+endif ()
+
+if (CMAKE_HOST_WIN32)
+    message(STATUS "epm-graph-nested: skipped: no epm.cpp recipes on Windows yet")
+    return()
 endif ()
 
 find_program(git_executable git NO_CACHE)
@@ -102,7 +112,7 @@ file_url("${repos}/Leaf" LEAF_URL)
 
 file(COPY "${fixtures}/Mid/" DESTINATION "${repos}/Mid" PATTERN "*.in" EXCLUDE)
 file(COPY "${repo_dir}/CMake/get_epm.cmake" DESTINATION "${repos}/Mid/cmake")
-configure_file("${fixtures}/Mid/epm.json.in" "${repos}/Mid/epm.json" @ONLY)
+configure_file("${fixtures}/Mid/epm.cpp.in" "${repos}/Mid/epm.cpp" @ONLY)
 make_repository(Mid)
 file_url("${repos}/Mid" MID_URL)
 
@@ -114,7 +124,7 @@ set(GET_EPM "${repo_dir}/CMake/get_epm.cmake")
 file(COPY "${fixtures}/Consumer/Main.cpp" DESTINATION "${consumer}")
 configure_file("${fixtures}/Consumer/CMakeLists.txt.in"
         "${consumer}/CMakeLists.txt" @ONLY)
-configure_file("${fixtures}/Consumer/epm.json.in" "${consumer}/epm.json" @ONLY)
+configure_file("${fixtures}/Consumer/epm.cpp.in" "${consumer}/epm.cpp" @ONLY)
 
 # Configures the consumer into ${WORK_DIR}/<name>; ARGN goes to cmake. Sets
 # `build` and `output`.
@@ -199,6 +209,49 @@ function(build_and_run expected)
     string(STRIP "${run_output}" run_output)
     expect_equal("app's output (exit ${result})" "${run_output}"
             "nested ok ${expected}")
+
+    expect_recipe_targets()
+endfunction()
+
+# The consumer's epm_add_recipe built its epm.cpp as a module, and Mid's, from
+# a child build or a subdirectory, built nothing.
+function(expect_recipe_targets)
+    file(GLOB_RECURSE consumer_modules "${build}/*ConsumerRecipe.epm-recipe.*")
+    file(GLOB_RECURSE mid_modules "${build}/*MidRecipe*" "${cache}/bin/*MidRecipe*")
+
+    if (NOT consumer_modules)
+        fail("epm_add_recipe(ConsumerRecipe) built no module in ${build}")
+    endif ()
+
+    if (mid_modules)
+        fail("Mid's epm_add_recipe built something: ${mid_modules}")
+    endif ()
+endfunction()
+
+# ConsumerRecipe's test, and the ConsumerRecipe-describe target, run
+# `epm describe --module` over the module the build made.
+function(expect_recipe_test)
+    execute_process(
+            COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${build}" -C Release
+            -R "^ConsumerRecipe$" --output-on-failure
+            RESULT_VARIABLE result
+            OUTPUT_VARIABLE test_output
+            ERROR_VARIABLE test_output)
+
+    if (NOT result EQUAL 0 OR NOT test_output MATCHES "100% tests passed out of 1")
+        fail("ctest of ConsumerRecipe failed (${result}):\n${test_output}")
+    endif ()
+
+    execute_process(
+            COMMAND "${CMAKE_COMMAND}" --build "${build}" --config Release
+            --target ConsumerRecipe-describe
+            RESULT_VARIABLE result
+            OUTPUT_VARIABLE describe_output
+            ERROR_VARIABLE describe_output)
+
+    if (NOT result EQUAL 0 OR NOT describe_output MATCHES "\"name\": \"Mid\"")
+        fail("ConsumerRecipe-describe failed (${result}):\n${describe_output}")
+    endif ()
 endfunction()
 
 # Every config marker in the cache, with its contents: unchanged when nothing
@@ -267,6 +320,7 @@ if (NOT mid_export MATCHES "INTERFACE_LINK_LIBRARIES \"[^\"]*Leaf")
 endif ()
 
 build_and_run("11 1")
+expect_recipe_test()
 cache_markers(markers_before)
 
 # 2. A fresh build directory: both entries are reused, nothing is built.

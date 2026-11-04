@@ -80,7 +80,6 @@ Overrides withEnvironment(Overrides fromCMake,
 {
     auto overrides = std::move(fromCMake);
 
-    fillString(overrides.profile, lookup, "EPM_PROFILE");
     fillString(overrides.mode, lookup, "EPM_MODE");
     fillList(overrides.configs, lookup, "EPM_CONFIGS");
     fillString(overrides.abiMatch, lookup, "EPM_ABI_MATCH");

@@ -1,7 +1,0 @@
-{
-  "schema": 1,
-  "packages": [
-    { "name": "Leaf", "git": "example/Leaf", "tag": "v1.0.0", "options": { "LEAF_FLAG": "ON" } },
-    { "name": "Fetched", "git": "example/Fetched", "tag": "main" }
-  ]
-}

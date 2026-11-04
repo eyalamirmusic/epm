@@ -19,6 +19,16 @@ std::string cmakeQuoted(std::string_view text)
     return quoted + "\"";
 }
 
+std::string cmakeQuotedList(const eacp::Vector<std::string>& items)
+{
+    auto escaped = eacp::Vector<std::string> {};
+
+    for (const auto& item: items)
+        escaped.add(replaceAll(item, ";", "\\;"));
+
+    return cmakeQuoted(eacp::Strings::join(escaped, ";"));
+}
+
 std::string prebuiltLoadText(const Response& response)
 {
     auto text = "epm_load_package(" + cmakeQuoted(response.name)

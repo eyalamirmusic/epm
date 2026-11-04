@@ -4,6 +4,8 @@ cmake_minimum_required(VERSION 3.25)
 # differently, then configures a root project over some of them. Expects
 # PROJECT_DIR, WORK_DIR, EPM_EXECUTABLE and EPM_MODULE.
 
+include("${CMAKE_CURRENT_LIST_DIR}/WriteRecipe.cmake")
+
 function(git)
     execute_process(COMMAND git -c user.name=epm -c user.email=epm@example.com ${ARGN}
             RESULT_VARIABLE exit_code OUTPUT_VARIABLE output ERROR_VARIABLE output
@@ -38,14 +40,14 @@ function(create_dependency name ref)
 endfunction()
 
 # Configures the root over `dependencies` in a fresh copy named `scenario`,
-# with `manifest` as its epm.json when not empty.
-function(configure scenario expect_success dependencies manifest)
+# with `recipe` as the describe() body of its epm.cpp when not empty.
+function(configure scenario expect_success dependencies recipe)
     set(source "${WORK_DIR}/${scenario}")
     file(REMOVE_RECURSE "${source}")
     file(COPY "${PROJECT_DIR}/" DESTINATION "${source}")
 
-    if (NOT manifest STREQUAL "")
-        file(WRITE "${source}/epm.json" "${manifest}")
+    if (NOT recipe STREQUAL "")
+        write_recipe("${source}/epm.cpp" "${recipe}")
     endif ()
 
     foreach (attempt 1 2)
@@ -120,8 +122,10 @@ create_dependency(firstCommit ${first_commit})
 create_dependency(secondCommit ${second_commit})
 create_dependency(shipsLock main epm-lock.json
         "{\"packages\":[{\"name\":\"shared\",\"kind\":\"git\",\"url\":\"${fixture_url}/shared.git\",\"requestedRef\":\"main\",\"commit\":\"${first_commit}\",\"hash\":\"\"}],\"root\":\"\",\"version\":1}\n")
-create_dependency(shipsManifest v1.0.0 epm.json
-        "{\"overrides\":{\"shared\":{\"commit\":\"${second_commit}\"}}}\n")
+create_dependency(shipsManifest v1.0.0)
+write_recipe("${WORK_DIR}/fixtures/shipsManifest.git/epm.cpp"
+        "project.overridePackage(\"shared\").commit = \"${second_commit}\";")
+commit_repository("${WORK_DIR}/fixtures/shipsManifest.git")
 
 # 1. Two compatible tags: one shared, at the higher.
 configure(tags TRUE "olderTag;newerTag" "")
@@ -132,13 +136,13 @@ endif ()
 
 # 2. Two commits: the configure stops and names both requesters.
 configure(commits FALSE "firstCommit;secondCommit" "")
-if (NOT configure_output MATCHES "disagree on shared: firstCommit asks for .* secondCommit asks for .*epm.json")
+if (NOT configure_output MATCHES "disagree on shared: firstCommit asks for .* secondCommit asks for .*epm.cpp")
     message(FATAL_ERROR "commits: the conflict did not name both requesters")
 endif ()
 
-# 3. The same two commits settled by the root's epm.json.
+# 3. The same two commits settled by the root's epm.cpp.
 configure(override TRUE "firstCommit;secondCommit"
-        "{\"overrides\":{\"shared\":{\"commit\":\"${second_commit}\"}}}\n")
+        "project.overridePackage(\"shared\").commit = \"${second_commit}\";")
 read_shared("${lock}")
 if (NOT shared_commit STREQUAL second_commit OR NOT shared_overridden)
     message(FATAL_ERROR "override: shared is at ${shared_commit}, overridden '${shared_overridden}'")
@@ -152,7 +156,7 @@ if (NOT shared_commit STREQUAL first_commit)
     message(FATAL_ERROR "shippedLock: shared is at ${shared_commit}, not the shipped ${first_commit}")
 endif ()
 
-# 5. A dependency's epm.json is ignored: shipsManifest overrides shared to the
+# 5. A dependency's epm.cpp overrides nothing: shipsManifest overrides shared to the
 # second commit, but only the root's overrides count.
 configure(dependencyManifest TRUE "shipsManifest" "")
 read_shared("${lock}")

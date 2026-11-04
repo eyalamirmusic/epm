@@ -30,7 +30,7 @@ struct CommandOptions
     bool isFindPackageRequest = false;
     eacp::FilePath lock;
 
-    // The root project's epm.json; a missing file overrides nothing.
+    // The root project's epm.cpp; a missing file overrides nothing.
     eacp::FilePath manifest;
 
     // Who the top-level project's requirements are recorded as: "root", or
@@ -51,7 +51,7 @@ struct CommandOptions
     std::string defaultMode = "auto";
     bool buildMissingBinaries = true;
 
-    // The epm.json graph's packages: a package call for one of them loads it
+    // The epm.cpp graph's packages: a package call for one of them loads it
     // from the graph, so each name has one definition.
     EA::Vector<std::string> graphPackages;
 

@@ -44,12 +44,12 @@ struct RequirementSelection
 // Go's minimal version selection, for refs: when every requirement is a
 // semantic version tag of one URL, the highest; when all name one commit of
 // one URL (an archive's commit is its hash, or empty), that commit; otherwise
-// a conflict only epm.json can settle.
+// a conflict only the root epm.cpp can settle.
 RequirementSelection selectRequirement(const EA::Vector<Requirement>& requirements);
 
 bool isSameRequirement(const Requirement& first, const Requirement& second);
 
-// Every requester and its ref, and the fix: an override in epm.json.
+// Every requester and its ref, and the fix: an override in the root epm.cpp.
 std::string describeRequirementConflict(const std::string& name,
                                         const EA::Vector<Requirement>& requirements);
 } // namespace epm

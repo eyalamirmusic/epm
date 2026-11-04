@@ -367,7 +367,7 @@ Backends, in order of implementation:
    fits the user's open-source libraries and GitHub Actions CI.
 4. Later: S3 API native, OCI registries (`oras`-style, as Spack does).
 
-Configuration merges `~/.config/epm/config.json` (user), `epm.json` next to the project
+Configuration merges `~/.config/epm/config.json` (user), the project's `epm.cpp`
 (project), and `epm_add_stores()` in CMake, each store with `read`/`write` flags and
 priority. Policies: `EPM_OFFLINE` (no network at all), `EPM_BLOCK_ORIGIN` (stores only, never
 upstream git/URL — vcpkg's `x-block-origin`), timeouts and retry counts.
@@ -516,7 +516,8 @@ AgentWorkspace reads `epm-lock.json`; OCI/S3 stores; optional `.git`-keeping che
 ## 12. Decisions (confirmed 2026-11-02)
 
 1. **No separate manifest file.** The CMakeLists is the manifest and `epm-lock.json` is the only
-   extra file (unlike pkgcpp's `pkgcpp.json`). May be revisited later.
+   extra file (unlike pkgcpp's `pkgcpp.json`). May be revisited later. *Revisited: the
+   graph stage declares dependencies in an `epm.cpp` recipe.*
 2. **Cached sources are clean snapshots without `.git`**, with `epm checkout` / workspace
    overrides for development (see 5.2).
 3. **Artifact format `tar.zst`** via `cmake -E tar`; zip stays for vendor archives.

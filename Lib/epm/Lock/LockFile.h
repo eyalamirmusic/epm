@@ -35,7 +35,7 @@ struct LockedPackage
     // the one minimal version selection chose from them.
     EA::Vector<Requirement> requirements;
 
-    // Chosen by the root's epm.json rather than by the requirements.
+    // Chosen by the root's epm.cpp rather than by the requirements.
     bool isOverridden = false;
 
     MIRO_REFLECT(name,

@@ -1,8 +1,10 @@
 cmake_minimum_required(VERSION 3.25)
 # find_package of a name outside the graph: added from a lock in the graph,
 # refused under EPM_CI and when nothing says where it comes from, and left to
-# CMake's search only when epm.json marks it "system". Expects PROJECT_DIR,
+# CMake's search only when the root epm.cpp adds it with addSystem. Expects PROJECT_DIR,
 # WORK_DIR, EPM_EXECUTABLE and EPM_MODULE.
+
+include("${CMAKE_CURRENT_LIST_DIR}/WriteRecipe.cmake")
 
 function(git)
     execute_process(COMMAND git -c user.name=epm -c user.email=epm@example.com ${ARGN}
@@ -20,15 +22,15 @@ function(create_repository work)
     git(-C "${work}" commit --quiet -m fixture)
 endfunction()
 
-# Configures a fresh copy named `scenario` with `manifest` as its epm.json when
-# not empty; the rest of ARGN are -D arguments.
-function(configure scenario expect_success manifest)
+# Configures a fresh copy named `scenario` with `recipe` as the describe() body
+# of its epm.cpp when not empty; the rest of ARGN are -D arguments.
+function(configure scenario expect_success recipe)
     set(source "${WORK_DIR}/${scenario}")
     file(REMOVE_RECURSE "${source}")
     file(COPY "${PROJECT_DIR}/" DESTINATION "${source}")
 
-    if (NOT manifest STREQUAL "")
-        file(WRITE "${source}/epm.json" "${manifest}")
+    if (NOT recipe STREQUAL "")
+        write_recipe("${source}/epm.cpp" "${recipe}")
     endif ()
 
     execute_process(COMMAND "${CMAKE_COMMAND}" -S "${source}" -B "${source}/build"
@@ -97,10 +99,10 @@ endif ()
 # 3. A name nothing in the graph knows: stopped, with the lines to paste.
 configure(unknown FALSE "" -DFIND_NAME=nowhere)
 if (NOT configure_output MATCHES "CMakeLists.txt:17: find_package\\(nowhere\\) names a package that is not in the graph"
-        OR NOT configure_output MATCHES "\"name\": \"nowhere\", \"system\": true")
+        OR NOT configure_output MATCHES "project.addSystem\\(\"nowhere\"\\)")
     message(FATAL_ERROR "unknown: the error does not name the call and the fix")
 endif ()
 
-# 4. Marked "system" in epm.json: CMake's own search finds it.
-configure(system TRUE "{\"packages\":[{\"name\":\"Git\",\"system\":true}]}"
+# 4. Added with addSystem in epm.cpp: CMake's own search finds it.
+configure(system TRUE "project.addSystem(\"Git\");"
         -DFIND_NAME=Git)

@@ -1,7 +1,10 @@
 #include <epm/Cache/CacheListing.h>
 #include <epm/Cache/CacheRoot.h>
 #include <epm/Emit/GraphResponse.h>
+#include <epm/Emit/RecipeSdkCMake.h>
 #include <epm/Lock/LockFile.h>
+#include <epm/Recipe/RecipeBuild.h>
+#include <epm/Recipe/RecipeLoader.h>
 #include <epm/Resolve/Commands.h>
 #include <epm/Spec/JsonFile.h>
 #include <epm/Spec/PackageArguments.h>
@@ -29,9 +32,11 @@ constexpr auto usage =
     "usage: epm <command>\n"
     "\n"
     "commands:\n"
-    "  configure    resolve an epm.json graph through the lock for\n"
+    "  configure    resolve an epm.cpp graph through the lock for\n"
     "               get_epm.cmake\n"
     "  graph-cmake  write graph.cmake from a graph.json\n"
+    "  describe     print the project an epm.cpp describes\n"
+    "  recipe-sdk   write how epm compiles an epm.cpp, for CMake\n"
     "  resolve      resolve one package for epm.cmake; its CMake arguments\n"
     "               follow --\n"
     "  provide      the same, for FetchContent_MakeAvailable\n"
@@ -127,7 +132,7 @@ int runPackageCommand(const std::string& command, int argumentsToSkip)
                   "the lock file [default: <source-dir>/epm-lock.json]");
     parser.option("--manifest",
                   options.manifest,
-                  "the root project's epm.json, whose overrides win");
+                  "the root project's epm.cpp, whose overrides win");
     parser.option("--overrides",
                   options.overridesFile,
                   "configure: the overrides.json epm.cmake wrote");
@@ -142,7 +147,7 @@ int runPackageCommand(const std::string& command, int argumentsToSkip)
                   "resolved them");
     parser.option("--graph-packages",
                   graphPackagesValue,
-                  "the epm.json graph's packages (;-separated), which a package "
+                  "the epm.cpp graph's packages (;-separated), which a package "
                   "call loads from the graph");
     parser.option("--abi-match",
                   options.abiMatch,
@@ -282,6 +287,133 @@ int graphCMake()
     return 0;
 }
 
+// The module epm_add_recipe built: the project's compiler and flags, which
+// need only be close enough to epm's for the Recipe ABI to match.
+epm::RecipeLoad loadProjectModule(const FilePath& module, const FilePath& recipe)
+{
+    epm::Log::step("loading " + module.str()
+                   + (recipe.empty() ? "" : " (built from " + recipe.str() + ")"));
+    auto load = epm::loadRecipe(module);
+
+    if (!load.recipe)
+        load.error += "\n(was " + module.str()
+                      + " built with another compiler than epm's, "
+                      + epm::recipeSdk().compiler + "?)";
+
+    return load;
+}
+
+std::optional<epm::RecipeLoad> loadCachedModule(const FilePath& recipe,
+                                                const FilePath& cache)
+{
+    const auto cacheRoot =
+        cache.empty() ? epm::CacheRoot::fromEnvironment() : epm::CacheRoot {cache};
+    const auto build = epm::buildRecipe(recipe, canonical(cacheRoot));
+
+    if (!build.ok)
+    {
+        if (!build.details.empty())
+            Console::printError(build.details);
+
+        fail(build.error);
+        return std::nullopt;
+    }
+
+    epm::Log::step((build.cached ? "cached " : "built ") + build.module.str());
+    return epm::loadRecipe(build.module);
+}
+
+int describe()
+{
+    auto recipe = FilePath {};
+    auto module = FilePath {};
+    auto env = FilePath {};
+    auto cache = FilePath {};
+    auto verbose = false;
+
+    auto cli = Args::Parser {"epm describe",
+                             "Compiles an epm.cpp (or takes a --module built from "
+                             "one), loads it and prints the project it "
+                             "describes."};
+    cli.positional(recipe,
+                   "epm.cpp",
+                   "the recipe to describe (only informational with --module)");
+    cli.option("--module",
+               module,
+               "load this module instead of compiling the epm.cpp, such as "
+               "epm_add_recipe's Debug build, to debug it");
+    cli.option("--env", env, "the env JSON (default: an empty env)");
+    cli.option("--cache", cache, "the cache root (default: $EPM_CACHE)");
+    cli.flag("--verbose", verbose, "log each step");
+
+    if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
+        return *code;
+
+    if (recipe.empty() && module.empty())
+        return cli.fail("give an epm.cpp, a --module, or both");
+
+    if (!module.empty() && !Files::isFile(module))
+        return fail("no recipe module at " + module.str()
+                    + ": build its epm_add_recipe target first");
+
+    epm::Log::setVerbose(verbose);
+
+    try
+    {
+        auto envSpec = epm::Env {};
+
+        if (!env.empty())
+        {
+            if (auto loaded = epm::loadJsonFile<epm::Env>(env))
+                envSpec = std::move(*loaded);
+            else
+                return fail("cannot read the env file " + env.str());
+        }
+
+        auto load = module.empty() ? loadCachedModule(recipe, cache)
+                                   : loadProjectModule(module, recipe);
+
+        if (!load)
+            return 1;
+
+        if (!load->recipe)
+            return fail(load->error);
+
+        Console::print(Miro::toJSONString(load->recipe->describe(envSpec), 2));
+    }
+    catch (const std::exception& error)
+    {
+        return fail(error.what());
+    }
+
+    return 0;
+}
+
+int recipeSdk()
+{
+    auto out = FilePath {};
+
+    auto cli = Args::Parser {"epm recipe-sdk",
+                             "Writes the compiler, standard, include directories, "
+                             "definitions and options epm compiles an epm.cpp "
+                             "with, as CMake variables (epm.cmake's epm::recipe)."};
+    cli.option("--out", out, "the CMake file to write").required();
+
+    if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
+        return *code;
+
+    try
+    {
+        epm::writeRecipeSdkCMake(out, epm::recipeSdk());
+    }
+    catch (const std::exception& error)
+    {
+        return fail("cannot write " + out.str() + ": " + error.what());
+    }
+
+    return 0;
+}
+
 int cache()
 {
     const auto rest = argumentsAfter(2);
@@ -345,6 +477,12 @@ int run()
 
     if (command == "graph-cmake")
         return graphCMake();
+
+    if (command == "describe")
+        return describe();
+
+    if (command == "recipe-sdk")
+        return recipeSdk();
 
     if (command == "cache")
         return cache();

@@ -45,6 +45,13 @@ if (NOT IS_ABSOLUTE "${EPM_EXPORT_FILE}")
             "got '${EPM_EXPORT_FILE}'")
 endif ()
 
+# A package's own epm_add_recipe (epm.cmake) is for its developers. A child
+# build includes no epm.cmake, and would export the module besides.
+if (NOT COMMAND epm_add_recipe)
+    function(epm_add_recipe)
+    endfunction()
+endif ()
+
 # Appends every buildsystem target defined in `dir` and, recursively, in all of
 # its subdirectories (which include the _deps/<pkg>-build directories CPM and
 # FetchContent create) to the list named by `out_var`.

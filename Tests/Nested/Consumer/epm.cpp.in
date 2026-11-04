@@ -1,0 +1,19 @@
+// The consumer's dependencies: only Mid, which brings Leaf.
+// Tests/GraphNested.cmake fills in @MID_URL@.
+
+#include <epm/Recipe/Recipe.h>
+
+using namespace epm;
+
+namespace
+{
+struct Consumer final : Recipe
+{
+    void describe(Project& project, const Env&) override
+    {
+        project.add("Mid", "@MID_URL@", "v1");
+    }
+};
+} // namespace
+
+EPM_RECIPE(Consumer)

@@ -44,6 +44,11 @@ struct Env
     // find_package calls find.
     std::string prefixPath;
 
+    // EPM_PROFILE (CMake variable, else environment): a name for epm.cpp
+    // recipes to branch on. epm itself gives it no meaning, and it is not
+    // part of any fingerprint.
+    std::string profile;
+
     MIRO_REFLECT(schema,
                  cmake,
                  cmakeVersion,
@@ -64,6 +69,7 @@ struct Env
                  androidAbi,
                  cxxStandard,
                  toolchainFile,
-                 prefixPath)
+                 prefixPath,
+                 profile)
 };
 } // namespace epm

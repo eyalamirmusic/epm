@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ManifestLoader.h"
 #include "Merge.h"
 #include "ResolvedGraph.h"
 
@@ -7,8 +8,8 @@
 #include <epm/Cache/CacheRoot.h>
 #include <epm/Source/SourceSnapshot.h>
 #include <epm/Lock/Requirements.h>
+#include <epm/Recipe/Project.h>
 #include <epm/Spec/Env.h>
-#include <epm/Spec/Manifest.h>
 #include <epm/Spec/Overrides.h>
 
 #include <functional>
@@ -34,10 +35,10 @@ using SourceFetcher = std::function<LockedSource(
 
 struct GraphInputs
 {
-    Manifest manifest;
+    // What the root epm.cpp described for `env`.
+    Project project;
 
-    // Where path-valued profiles are looked up.
-    eacp::FilePath manifestDirectory;
+    // Also what every dependency's epm.cpp is described for.
     Env env;
 
     // As read from overrides.json; the environment fills what it leaves
@@ -52,9 +53,9 @@ struct PlannedPackage
     EffectiveRequest effective;
     SourceSnapshot snapshot;
 
-    // Direct dependencies: the packages its own epm.json declares.
-    EA::Vector<std::string> deps;
-    EA::Vector<std::string> declaredBy;
+    // Direct dependencies: the packages its own epm.cpp declares.
+    eacp::Vector<std::string> deps;
+    eacp::Vector<std::string> declaredBy;
 };
 
 struct GraphPlan
@@ -73,16 +74,19 @@ struct GraphPlan
 // "host/path", lower case (local paths keep their case).
 std::string repositoryKey(std::string_view url);
 
-// Walks the root manifest depth first in
-// manifest order, fetching every package (or taking its EPM_<Name>_SOURCE)
-// and reading its epm.json, merges each package's effective request,
-// forces the dependents of source packages into source, and collects the
-// notes (strict makes them an error). Its git and tag are not merged but
-// selected from every declaration, the root's included, by minimal version
-// selection through `fetch`; a declaration the walk meets after the package
-// was fetched that changes the selection fails, asking for one more configure.
-// Fails on a root manifest that manifestError rejects. Nothing is built.
-GraphPlan planGraph(const GraphInputs& inputs, const SourceFetcher& fetch);
+// Walks the root project depth first in declaration order, fetching every
+// package (or taking its EPM_<Name>_SOURCE) and loading its epm.cpp through
+// `loader`, merges each package's effective request, forces the dependents of
+// source packages into source, and collects the notes (strict makes them an
+// error). Its git and tag are not merged but selected from every declaration,
+// the root's included, by minimal version selection through `fetch`; a
+// declaration the walk meets after the package was fetched that changes the
+// selection fails, asking for one more configure. Fails on a project that
+// projectError rejects and on a recipe the loader cannot load, naming the
+// package. Nothing is built.
+GraphPlan planGraph(const GraphInputs& inputs,
+                    const SourceFetcher& fetch,
+                    ManifestLoader& loader);
 
 // The packages of `graph` that `deps` reach, directly or through their own
 // deps, in the graph's order and without notes: what a nested child build
@@ -109,9 +113,10 @@ GraphResult resolvePlan(const GraphPlan& plan,
                         const CacheRoot& cache,
                         const LockForChildBuilds& childLock);
 
-// `epm configure`: planGraph through `fetch`, then resolvePlan.
+// `epm configure`: planGraph through `fetch` and `loader`, then resolvePlan.
 GraphResult configureGraph(const GraphInputs& inputs,
                            const CacheRoot& cache,
                            const SourceFetcher& fetch,
+                           ManifestLoader& loader,
                            const LockForChildBuilds& childLock);
 } // namespace epm

@@ -9,7 +9,7 @@
 
 namespace epm
 {
-// One package to resolve: what a package call or an epm.json graph asks for.
+// One package to resolve: what a package call or an epm.cpp graph asks for.
 struct Request
 {
     std::string name;

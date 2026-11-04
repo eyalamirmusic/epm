@@ -25,7 +25,7 @@ Generator chooseGenerator(const Env& env,
                           const std::optional<eacp::FilePath>& ninja);
 
 // The consumer's lock, which the child's own CPMAddPackage and FetchContent
-// calls resolve against, and the root epm.json whose overrides apply there.
+// calls resolve against, and the root epm.cpp whose overrides apply there.
 struct LockForChildBuilds
 {
     eacp::FilePath lock;

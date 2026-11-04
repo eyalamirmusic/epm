@@ -127,8 +127,8 @@ std::string describeRequirementConflict(const std::string& name,
 
     return formatUserError(
         problem,
-        "Settle it in epm.json beside the top-level CMakeLists.txt, for example\n"
-        "  { \"overrides\": { \""
-            + name + "\": { \"commit\": \"<commit>\" } } }");
+        "Settle it in describe() of the epm.cpp beside the top-level "
+        "CMakeLists.txt, for example\n  project.overridePackage(\""
+            + name + "\").commit = \"<commit>\";");
 }
 } // namespace epm

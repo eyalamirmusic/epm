@@ -25,8 +25,8 @@
 # FetchContent_SetPopulated(X). Version arguments are ignored. A name that is
 # not in epm_PACKAGES goes to epm.cmake: a FetchContent_MakeAvailable of one
 # through the lock (epm_provide_through_the_lock), a find_package of one as a
-# package added (epm_find_through_the_lock), unless a manifest marks it
-# "system" (epm_SYSTEM_PACKAGES), which alone leaves it to CMake's own search.
+# package added (epm_find_through_the_lock), unless an epm.cpp marks it
+# system (Project::addSystem, epm_SYSTEM_PACKAGES), which alone leaves it to CMake's own search.
 # Registering twice only replaces the graph.
 
 include_guard(GLOBAL)
@@ -168,7 +168,7 @@ function(epm_provider_register graph_file)
     cmake_parse_arguments(arg "" "PREPARE" "" ${ARGN})
 
     if (CMAKE_VERSION VERSION_LESS 3.24)
-        message(FATAL_ERROR "epm: epm.json needs CMake 3.24 or newer (dependency "
+        message(FATAL_ERROR "epm: epm.cpp needs CMake 3.24 or newer (dependency "
                 "providers); this is ${CMAKE_VERSION}")
     endif ()
 
@@ -294,7 +294,7 @@ function(epm_provide_dependency method name)
             set(_epm_find_is_system FALSE)
             epm_find_through_the_lock("${name}")
 
-            # The root's epm.json marks it "system": CMake's own search.
+            # The root's epm.cpp marks it system: CMake's own search.
             if (_epm_find_is_system)
                 return()
             endif ()

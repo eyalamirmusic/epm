@@ -17,8 +17,6 @@ using namespace eacp;
 
 namespace
 {
-constexpr auto manifestFileName = "epm.json";
-
 struct Node
 {
     std::optional<ManifestPackage> root;
@@ -252,9 +250,12 @@ EA::Vector<std::string>
 class GraphWalk
 {
 public:
-    GraphWalk(const GraphInputs& inputsToUse, const SourceFetcher& fetchToUse)
+    GraphWalk(const GraphInputs& inputsToUse,
+              const SourceFetcher& fetchToUse,
+              ManifestLoader& loaderToUse)
         : inputs(inputsToUse)
         , fetch(fetchToUse)
+        , loader(loaderToUse)
     {
     }
 
@@ -262,12 +263,12 @@ public:
     {
         auto plan = GraphPlan {};
 
-        if (auto problem = manifestError(inputs.manifest))
+        if (auto problem = projectError(inputs.project))
             return failed(plan, "the root manifest: " + *problem);
 
         auto rootNames = EA::Vector<std::string> {};
 
-        for (const auto& package: inputs.manifest.packages)
+        for (const auto& package: inputs.project.packages)
         {
             if (package.system)
             {
@@ -280,12 +281,6 @@ public:
         }
 
         overrides = withEnvironment(inputs.overrides, rootNames, inputs.environment);
-
-        const auto profile = selectProfile(
-            inputs.manifest, overrides.profile, inputs.manifestDirectory);
-
-        if (!profile.ok)
-            return failed(plan, profile.error);
 
         for (const auto& name: rootNames)
             if (startsAtRoot(name) && !visit(name))
@@ -304,7 +299,7 @@ public:
 
         for (const auto& name: order)
         {
-            auto planned = plannedPackage(name, profile.profile);
+            auto planned = plannedPackage(name);
 
             if (!planned)
                 return failed(plan, error);
@@ -451,29 +446,34 @@ private:
         return true;
     }
 
-    // Declaring and visiting one dependency at a time keeps the walk depth
-    // first: a declaration inside an earlier dependency's subtree comes
-    // before a later sibling's.
     void addSystemPackage(const std::string& name)
     {
         if (!systemPackages.contains(name))
             systemPackages.add(name);
     }
 
+    // Declaring and visiting one dependency at a time keeps the walk depth
+    // first: a declaration inside an earlier dependency's subtree comes
+    // before a later sibling's.
     bool visitDependencies(const std::string& name, Node& node)
     {
-        const auto path = node.snapshot.directory / manifestFileName;
+        const auto manifestOf = [&]
+        {
+            const auto path = node.snapshot.directory / manifestFileName;
+            return "the manifest of " + name + " (" + path.str() + "): ";
+        };
 
-        if (!Files::isFile(path))
-            return true;
+        auto loadError = std::string {};
+        const auto project =
+            loader.load(node.snapshot.directory, inputs.env, loadError);
 
-        const auto nested = loadManifest(path);
+        if (!project)
+            return fail(manifestOf() + loadError);
 
-        if (!nested.ok)
-            return fail("the manifest of " + name + " (" + path.str()
-                        + "): " + nested.error);
+        if (auto problem = projectError(*project))
+            return fail(manifestOf() + *problem);
 
-        for (const auto& package: nested.manifest.packages)
+        for (const auto& package: project->packages)
         {
             const auto& dep = package.name;
 
@@ -496,16 +496,13 @@ private:
         return true;
     }
 
-    std::optional<PlannedPackage> plannedPackage(const std::string& name,
-                                                 const Profile& profile)
+    std::optional<PlannedPackage> plannedPackage(const std::string& name)
     {
         const auto& node = nodes[name];
 
         auto layers = MergeLayers {};
         layers.packageOverride = packageOverride(name).value_or(PackageOverride {});
         layers.overrides = overrides;
-        layers.profileName = overrides.profile;
-        layers.profile = profile;
         layers.root = node.root;
         layers.dependency = firstDependency(node);
 
@@ -539,6 +536,7 @@ private:
 
     const GraphInputs& inputs;
     const SourceFetcher& fetch;
+    ManifestLoader& loader;
     Overrides overrides;
     std::map<std::string, Node> nodes;
     EA::Vector<std::string> order;
@@ -602,9 +600,11 @@ std::string repositoryKey(std::string_view url)
     return isLocal ? key : Strings::toLower(key);
 }
 
-GraphPlan planGraph(const GraphInputs& inputs, const SourceFetcher& fetch)
+GraphPlan planGraph(const GraphInputs& inputs,
+                    const SourceFetcher& fetch,
+                    ManifestLoader& loader)
 {
-    return GraphWalk {inputs, fetch}.run();
+    return GraphWalk {inputs, fetch, loader}.run();
 }
 
 ResolvedGraph dependencyClosure(const ResolvedGraph& graph,
@@ -697,9 +697,10 @@ GraphResult resolvePlan(const GraphPlan& plan,
 GraphResult configureGraph(const GraphInputs& inputs,
                            const CacheRoot& cache,
                            const SourceFetcher& fetch,
+                           ManifestLoader& loader,
                            const LockForChildBuilds& childLock)
 {
-    const auto plan = planGraph(inputs, fetch);
+    const auto plan = planGraph(inputs, fetch, loader);
 
     if (!plan.ok)
     {

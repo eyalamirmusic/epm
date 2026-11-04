@@ -33,6 +33,10 @@ struct Response
 // `text` as a double-quoted CMake argument.
 std::string cmakeQuoted(std::string_view text);
 
+// `items` as one double-quoted CMake list, a semicolon inside an item escaped
+// so that it stays one element.
+std::string cmakeQuotedList(const eacp::Vector<std::string>& items);
+
 // The epm_load_package call (epm-provider.cmake) that includes a prebuilt
 // entry's targets file, makes its imported targets global and prints the
 // package's status line.

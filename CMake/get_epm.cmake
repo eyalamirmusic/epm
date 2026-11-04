@@ -1,8 +1,8 @@
 # get_epm.cmake -- the one file a project vendors to use epm.
 #
 # With a manifest: list this file in
-# CMAKE_PROJECT_TOP_LEVEL_INCLUDES before project(), and keep epm.json beside
-# the top-level CMakeLists.txt:
+# CMAKE_PROJECT_TOP_LEVEL_INCLUDES before project(), and keep epm.cpp (the
+# recipe naming the dependencies) beside the top-level CMakeLists.txt:
 #
 #   cmake_minimum_required(VERSION 3.25)
 #   set(EPM_VERSION "0.2...<0.3")    # optional; default: the latest release
@@ -13,10 +13,11 @@
 # The first project() then includes this file, which bootstraps the binary (below)
 # and registers epm's dependency provider. At the first find_package() or
 # FetchContent_MakeAvailable(), the provider writes ${CMAKE_BINARY_DIR}/epm/
-# env.json and overrides.json, runs `epm configure` over epm.json and loads each
-# package the graph names, dependencies first; other names are left to CMake.
-# With EPM_NESTED set (a child build epm runs) this file does nothing at all;
-# without an epm.json, nothing is registered.
+# env.json and overrides.json, runs `epm configure` over epm.cpp (which the
+# binary compiles and runs itself) and loads each package the graph names,
+# dependencies first; other names are left to CMake. With EPM_NESTED set (a
+# child build epm runs) this file does nothing at all; without an epm.cpp,
+# nothing is registered.
 #
 # Without a manifest, the older form still works, for epm_add_package only:
 #
@@ -949,27 +950,27 @@ unset(EPM_UPDATE CACHE)
 
 include("${get_epm_module}")
 
-# The manifest flow. A project without epm.json may still
+# The manifest flow. A project without epm.cpp may still
 # call epm_add_package.
-if (NOT EXISTS "${CMAKE_SOURCE_DIR}/epm.json")
+if (NOT EXISTS "${CMAKE_SOURCE_DIR}/epm.cpp")
     return()
 endif ()
 
 get_epm_is_top_level_include(get_epm_top_level)
 
 if (NOT get_epm_top_level)
-    message(FATAL_ERROR "epm: ${CMAKE_SOURCE_DIR}/epm.json needs ${GET_EPM_FILE} "
+    message(FATAL_ERROR "epm: ${CMAKE_SOURCE_DIR}/epm.cpp needs ${GET_EPM_FILE} "
             "listed in CMAKE_PROJECT_TOP_LEVEL_INCLUDES before project(), not "
             "include()d:\n  list(APPEND CMAKE_PROJECT_TOP_LEVEL_INCLUDES "
             "path/to/get_epm.cmake)")
 endif ()
 
 if (NOT COMMAND epm_use_manifest)
-    message(FATAL_ERROR "epm: the epm at ${EPM_EXECUTABLE} predates epm.json "
+    message(FATAL_ERROR "epm: the epm at ${EPM_EXECUTABLE} predates "
             "manifests (its module ${get_epm_module} has no epm_use_manifest). Use "
             "a newer one: -DEPM_EXECUTABLE=/path/to/epm, -DEPM_SOURCE_DIR=/path/to/"
             "epm-checkout (built from source), or EPM_VERSION once a release with "
             "manifests exists.")
 endif ()
 
-epm_use_manifest("${CMAKE_SOURCE_DIR}/epm.json")
+epm_use_manifest("${CMAKE_SOURCE_DIR}/epm.cpp")

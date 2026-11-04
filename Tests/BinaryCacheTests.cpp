@@ -202,7 +202,7 @@ ChildBuild createLockedChildBuild()
     build.epmExecutable = eacp::FilePath {"/epm/bin/epm"};
     build.childLock = {eacp::FilePath {"/project/epm-lock.json"},
                        "offline",
-                       eacp::FilePath {"/project/epm.json"}};
+                       eacp::FilePath {"/project/epm.cpp"}};
     build.config = "Debug";
     return build;
 }
@@ -234,7 +234,7 @@ auto tChildLockArguments = test("BinaryCache/childBuild/injectsEpmAndTheLock") =
     check(arguments.contains("-DEPM_EXECUTABLE=/epm/bin/epm"));
     check(arguments.contains("-DEPM_LOCK_FILE=/project/epm-lock.json"));
     check(arguments.contains("-DEPM_LOCK_MODE=offline"));
-    check(arguments.contains("-DEPM_MANIFEST_FILE=/project/epm.json"));
+    check(arguments.contains("-DEPM_MANIFEST_FILE=/project/epm.cpp"));
     check(arguments.contains("-DEPM_ROOT_NAME=eacp"));
     check(arguments.contains("-DEPM_CACHE=/c"));
 };

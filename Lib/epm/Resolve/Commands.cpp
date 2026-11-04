@@ -23,6 +23,7 @@
 #include <epm/Lock/MerkleHash.h>
 #include <epm/Source/SourceSnapshot.h>
 #include <epm/Spec/JsonFile.h>
+#include <epm/Graph/ManifestLoader.h>
 #include <epm/Spec/Manifest.h>
 #include <eacp/Core/Utils/Sha256.h>
 #include <eacp/Core/Utils/Time.h>
@@ -664,17 +665,43 @@ std::string identifyRequester(const CommandOptions& options, const Session& sess
     return requester;
 }
 
-// epm.json's override, as Go's replace: its URL and its commit or tag stand
-// in for whatever the call asked for.
+// The project the root epm.cpp describes, compiled and run once per process;
+// empty when there is none.
+const Project& getRootProject(const CommandOptions& options)
+{
+    static auto described = std::optional<Project> {};
+
+    if (described)
+        return *described;
+
+    described = Project {};
+
+    if (options.manifest.empty() || !eacp::Files::isFile(options.manifest))
+        return *described;
+
+    auto loader = RecipeManifestLoader {CacheRoot {options.cache}};
+    auto error = std::string {};
+    auto project = loader.loadFile(options.manifest, options.env, error);
+
+    if (!project)
+        throw std::runtime_error("the manifest " + options.manifest.str() + ": "
+                                 + error);
+
+    described = std::move(*project);
+    return *described;
+}
+
+// The root epm.cpp's override, as Go's replace: its URL and its commit or tag
+// stand in for whatever the call asked for.
 std::optional<Requirement> findOverrideRequirement(const CommandOptions& options,
                                                    const PackageSpec& spec)
 {
-    auto override = readRootManifest(options.manifest).findOverride(spec.name);
+    auto override = getRootProject(options).findOverride(spec.name);
 
     if (!override)
         return std::nullopt;
 
-    auto requirement = Requirement {"epm.json", spec.url, spec.ref, {}};
+    auto requirement = Requirement {"epm.cpp", spec.url, spec.ref, {}};
 
     if (!override->url.empty())
         requirement.url = override->url;
@@ -841,7 +868,7 @@ std::string describeRaisedRequirement(const std::string& name,
             + "' from the start.");
 }
 
-// A package call for a name the epm.json graph holds: the graph's definition
+// A package call for a name the epm.cpp graph holds: the graph's definition
 // is loaded through the provider, as find_package would.
 std::string createGraphPackageBlock(const std::string& name)
 {
@@ -1002,8 +1029,8 @@ SessionOverride parseOverride(const std::string& definition)
                              "CPM_<Name>_SOURCE=<dir>, not "
                              + definition);
 }
-// One package of an epm.json graph through the lock: each declaration is a
-// requirement, the root's epm.json overrides replace them all, minimal version
+// One package of an epm.cpp graph through the lock: each declaration is a
+// requirement, the root's epm.cpp overrides replace them all, minimal version
 // selection chooses, and the choice is locked and fetched like any other.
 LockedSource lockGraphPackage(const CommandOptions& options,
                               Session& session,
@@ -1076,9 +1103,7 @@ bool isSystemPackage(const CommandOptions& options, const std::string& name)
     auto isNamed = [&](const ManifestPackage& package)
     { return package.system && package.name == name; };
 
-    auto manifest = readRootManifest(options.manifest);
-
-    if (EA::Vectors::findIf(manifest.packages, isNamed))
+    if (EA::Vectors::findIf(getRootProject(options).packages, isNamed))
         return true;
 
     return false;
@@ -1105,13 +1130,13 @@ std::string describeUnknownFindPackage(const CommandOptions& options,
     auto location = getRequestLocation(options, name);
     return formatUserError(
         formatRequestLocation(location) + ": find_package(" + name
-            + ") names a package that is not in the graph, and no epm.json or "
-              "epm-lock.json in it says where "
+            + ") names a package that is not in the graph, and no epm-lock.json "
+              "in it says where "
             + name + " comes from.",
-        "Add it to the packages in epm.json, as\n    { \"name\": \"" + name
-            + "\", \"git\": \"<owner/repo>\", \"tag\": \"<tag>\" }\n  or, for "
-              "one CMake's own search should find on this machine,\n    { \"name\": \""
-            + name + "\", \"system\": true }");
+        "Add it to describe() in the root epm.cpp, as\n    project.add(\"" + name
+            + "\", \"<owner/repo>\", \"<tag>\");\n  or, for one CMake's own "
+              "search should find on this machine,\n    project.addSystem(\""
+            + name + "\");");
 }
 
 PackageSpec parseArgumentsFrom(const CommandOptions& options)
@@ -1172,16 +1197,8 @@ int runConfigureCommand(const CommandOptions& options)
 {
     auto inputs = GraphInputs {};
     inputs.environment = eacp::getEnv;
-    inputs.manifestDirectory = options.manifest.parentDirectory();
     inputs.env = options.env;
-
-    auto loaded = loadManifest(options.manifest);
-
-    if (!loaded.ok)
-        throw std::runtime_error("the manifest " + options.manifest.str() + ": "
-                                 + loaded.error);
-
-    inputs.manifest = std::move(loaded.manifest);
+    inputs.project = getRootProject(options);
 
     if (auto overrides = loadJsonFile<Overrides>(options.overridesFile))
         inputs.overrides = std::move(*overrides);
@@ -1204,8 +1221,9 @@ int runConfigureCommand(const CommandOptions& options)
     };
     auto childLock = LockForChildBuilds {
         options.lock, getChildLockMode(options), options.manifest};
+    auto loader = RecipeManifestLoader {CacheRoot {options.cache}};
     auto result =
-        configureGraph(inputs, CacheRoot {options.cache}, fetch, childLock);
+        configureGraph(inputs, CacheRoot {options.cache}, fetch, loader, childLock);
 
     writeSession(options.buildDirectory, session);
 

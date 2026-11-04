@@ -7,7 +7,7 @@ project(Consumer NONE)
 get_filename_component(packages "${CMAKE_CURRENT_LIST_DIR}/../Packages" ABSOLUTE)
 
 if (EPM_TEST_INCLUDE_GET_EPM)
-    # The pre-manifest form, which epm.json does not allow.
+    # The pre-manifest form, which epm.cpp does not allow.
     include("${EPM_TEST_INCLUDE_GET_EPM}")
 endif ()
 

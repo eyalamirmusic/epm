@@ -24,10 +24,9 @@ interface may all change.
 
 ```cmake
 cmake_minimum_required(VERSION 3.31)
-project(HelloEacp CXX)
-
 set(EPM_CONFIGS Release) # only Release archives of eacp; Debug builds of hello link them on multi-config generators (missing configs map to Release)
-include(cmake/get_epm.cmake)        # vendored from this repository's CMake/
+list(APPEND CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${CMAKE_CURRENT_LIST_DIR}/cmake/get_epm.cmake")  # vendored from this repository's CMake/
+project(HelloEacp CXX)
 
 epm_add_package(
         NAME eacp
@@ -42,7 +41,8 @@ target_compile_features(hello PRIVATE cxx_std_20)
 target_link_libraries(hello PRIVATE eacp-core)
 ```
 
-This is `Examples/HelloEacp` in this repository. From the repository root:
+This is `Examples/HelloEacp` in this repository, with its `epm.cpp` beside it.
+From the repository root:
 
 ```bash
 cmake -S Examples/HelloEacp -B build-hello
@@ -55,6 +55,37 @@ Release configuration into the cache. Later configures, in any build directory
 and any build type, reuse it and take about a second. Without the
 `EPM_CONFIGS` line, epm builds the build type you configured instead, and a
 configure in another build type adds just that configuration.
+
+## Declaring dependencies in epm.cpp
+
+A project can instead list its dependencies in `epm.cpp` beside the top-level
+`CMakeLists.txt`. epm compiles the file with the compiler that built epm, loads
+it into its own process and calls `describe`, so the list is C++ (macOS and
+Linux only; Windows has no recipes yet):
+
+```cpp
+#include <epm/Recipe/Recipe.h>
+
+using namespace epm;
+
+struct App : Recipe
+{
+    void describe(Project& project, const Env& env) override
+    {
+        setMode(project.add("fmt", "fmtlib/fmt", "11.0.2"), "source");
+        project.addSystem("Threads");
+        project.overridePackage("shared").commit = "<commit>";
+    }
+};
+
+EPM_RECIPE(App)
+```
+
+`find_package(fmt)` then loads it. A dependency's own `epm.cpp` is compiled
+and run in the same way at configure time, from the checkout the lock pins,
+so its Merkle hash covers the recipe code that runs. `epm_add_recipe(<target>)`
+builds the recipe as a module of the project's own build, so an IDE indexes it
+and a debugger can step through `describe`.
 
 ## Configuring what gets built
 
@@ -110,17 +141,14 @@ CMake's own search. A name outside the graph is a package added: its source is
 the lock's entry, else the one a dependency's `epm-lock.json` records, and
 locked mode writes it into the lock (`EPM_CI=ON` stops instead, naming the
 `find_package` line). When nothing records it the configure stops with the
-line to add to `epm.json`. A package the machine provides is opted in by name,
-and only then searched for as CMake would; a `Find<Name>.cmake` on
-`CMAKE_MODULE_PATH` is the project's own code and still runs:
-
-```json
-{ "packages": [ { "name": "Threads", "system": true } ] }
-```
+line to add to the root `epm.cpp`. A package the machine provides is opted in
+by name with `project.addSystem("Threads")`, and only then searched for as
+CMake would; a `Find<Name>.cmake` on `CMAKE_MODULE_PATH` is the project's own
+code and still runs.
 
 The lock holds one version of each package for the whole tree. When projects
 ask for different versions, the highest semantic version tag wins and anything
-else stops the configure until the root's `epm.json` overrides it, as Go's
+else stops the configure until the root's `epm.cpp` overrides it, as Go's
 minimal version selection and `replace` do.
 
 A binary cache entry's key includes the package's Merkle hash, and the entry

@@ -60,6 +60,11 @@ FilePath CacheRoot::locks() const
     return subdirectory("locks");
 }
 
+FilePath CacheRoot::recipe() const
+{
+    return subdirectory("recipe");
+}
+
 FilePath CacheRoot::subdirectory(std::string_view name) const
 {
     auto directory = root / name;
