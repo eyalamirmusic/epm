@@ -11,14 +11,20 @@
 
 namespace epm
 {
-// What the root project calls itself as a declarer.
+// What the root project calls itself as a declarer, in notes and
+// provenance.
 constexpr auto rootDeclarer = "root";
 
 // One package entry of one project's epm.cpp: the root's, or a dependency's.
 struct Declaration
 {
+    // The declaring package's name; rootDeclarer for the root project.
     std::string declarer;
     ManifestPackage package;
+
+    // The root project's declaration, told apart by this rather than by
+    // name: a dependency may be called "root" too.
+    bool isRoot = false;
 };
 
 // Every source of a package's values, highest precedence first (§4).

@@ -10,10 +10,10 @@ namespace
 {
 struct Consumer final : Recipe
 {
-    void describe(Project& project, const Env&) override
+    void describe() override
     {
-        setOption(project.add("Leaf", "example/Leaf", "v1.0.0"), "LEAF_FLAG", "ON");
-        project.add("Fetched", "example/Fetched", "main");
+        add("Leaf", "example/Leaf", "v1.0.0").option("LEAF_FLAG", "ON");
+        add("Fetched", "example/Fetched", "main");
     }
 };
 } // namespace

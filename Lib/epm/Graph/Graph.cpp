@@ -2,6 +2,7 @@
 
 #include <epm/Build/Configs.h>
 #include <epm/Emit/GraphResponse.h>
+#include <epm/Recipe/CMakePackage.h>
 #include <epm/Resolve/Resolve.h>
 #include <epm/Util/Log.h>
 #include <epm/Util/Text.h>
@@ -26,6 +27,7 @@ struct Node
     bool visiting = false;
     bool done = false;
     SourceSnapshot snapshot;
+    bool hasManifest = false;
     Vector<std::string> deps;
 };
 
@@ -35,6 +37,74 @@ std::optional<Declaration> firstDependency(const Node& node)
         return std::nullopt;
 
     return node.declarations.front();
+}
+
+// Every declaration of the package in merge order: the root's first, then
+// the dependencies' in walk order. The first one wins the merge.
+Vector<Declaration> declarationsOf(const Node& node)
+{
+    auto declarations = Vector<Declaration> {};
+
+    if (node.root)
+        declarations.add({rootDeclarer, *node.root, true});
+
+    for (const auto& declaration: node.declarations)
+        declarations.add(declaration);
+
+    return declarations;
+}
+
+bool sameDeclarer(const Declaration& a, const Declaration& b)
+{
+    return a.isRoot == b.isRoot && a.declarer == b.declarer;
+}
+
+// The first declaration with custom steps (add<T>) for the package.
+std::optional<Declaration> firstCustomSteps(const Node& node)
+{
+    const auto declarations = declarationsOf(node);
+
+    if (const auto* custom =
+            declarations.findIf([](const Declaration& declaration)
+                                { return declaration.package.customBuild; }))
+        return *custom;
+
+    return std::nullopt;
+}
+
+// Whose recipe runs the build step of a package without an epm.cpp of its
+// own: the winning declaration's when it has custom steps, else the first
+// declaration's that has, else the winning one's (default steps). Options
+// reach the step through the merged request whoever owns it, so a root that
+// only tunes options keeps a dependency's custom steps.
+Declaration stepsDeclaration(const Node& node)
+{
+    if (auto custom = firstCustomSteps(node))
+        return std::move(*custom);
+
+    return declarationsOf(node).front();
+}
+
+// Custom steps that never run: declared beside another declaration's custom
+// steps, which own the step. (With an epm.cpp of its own, any custom steps
+// are an error.)
+Vector<std::string> unusedStepsNotes(const std::string& name, const Node& node)
+{
+    auto notes = Vector<std::string> {};
+
+    if (node.hasManifest)
+        return notes;
+
+    // A project declares a package once, so its declarer names a declaration.
+    const auto owner = stepsDeclaration(node);
+
+    for (const auto& declaration: declarationsOf(node))
+        if (declaration.package.customBuild && !sameDeclarer(declaration, owner))
+            notes.add(name + ": " + declaration.declarer
+                      + " declares custom build steps, which do not run: "
+                      + owner.declarer + "'s steps run");
+
+    return notes;
 }
 
 Vector<std::string> declarersOf(const Node& node)
@@ -275,8 +345,13 @@ public:
         forceSourceDependents(plan.packages);
 
         for (const auto& name: order)
+        {
             for (auto& note: declarationNotes(name, nodes[name]))
                 plan.notes.add(std::move(note));
+
+            for (auto& note: unusedStepsNotes(name, nodes[name]))
+                plan.notes.add(std::move(note));
+        }
 
         for (auto& note: sameRepositoryNotes(plan.packages))
             plan.notes.add(std::move(note));
@@ -395,6 +470,8 @@ private:
             return "the manifest of " + name + " (" + path.str() + "): ";
         };
 
+        node.hasManifest = loader.hasManifest(node.snapshot.directory);
+
         auto loadError = std::string {};
         const auto project =
             loader.load(node.snapshot.directory, inputs.env, loadError);
@@ -449,10 +526,44 @@ private:
             }
         }
 
+        const auto owner = stepOwner(name, node);
+
+        if (!owner)
+            return std::nullopt;
+
         return PlannedPackage {std::move(merged.effective),
                                node.snapshot,
                                node.deps,
-                               declarersOf(node)};
+                               declarersOf(node),
+                               *owner};
+    }
+
+    // Always a package's own epm.cpp when it has one, even without add<T>
+    // anywhere: an override of its Recipe's build() shows nowhere else.
+    std::optional<StepOwner> stepOwner(const std::string& name, const Node& node)
+    {
+        if (node.hasManifest)
+        {
+            if (const auto custom = firstCustomSteps(node))
+            {
+                fail(custom->declarer + " declares custom build steps for " + name
+                     + ", which has its own epm.cpp");
+                return std::nullopt;
+            }
+
+            return StepOwner {name, node.snapshot.directory / manifestFileName};
+        }
+
+        const auto owner = stepsDeclaration(node);
+        const auto customBuild = owner.package.customBuild;
+
+        if (owner.isRoot)
+            return StepOwner {{}, inputs.rootRecipe, customBuild};
+
+        const auto& declarer = nodes.at(owner.declarer);
+        return StepOwner {owner.declarer,
+                          declarer.snapshot.directory / manifestFileName,
+                          customBuild};
     }
 
     const GraphInputs& inputs;
@@ -482,6 +593,8 @@ ResolvedPackage resolvedPackage(const PlannedPackage& planned,
     package.deps = planned.deps;
     package.declaredBy = planned.declaredBy;
     package.provenance = std::move(provenance);
+    package.options =
+        resolved.options.empty() ? package.request.options : resolved.options;
 
     if (response.mode != "prebuilt")
         return package;
@@ -493,6 +606,85 @@ ResolvedPackage resolvedPackage(const PlannedPackage& planned,
     package.fingerprint = resolved.fingerprintHash;
     package.note = response.note;
     return package;
+}
+
+// The build step's view of `deps`, every one already in `graph`.
+Vector<PackageDependency> packageDependencies(const ResolvedGraph& graph,
+                                              const Vector<std::string>& deps)
+{
+    auto dependencies = Vector<PackageDependency> {};
+
+    for (const auto& dep: deps)
+        if (const auto* package = findPackage(graph.packages, dep))
+            dependencies.add({package->name,
+                              package->mode,
+                              package->fingerprint,
+                              package->prefix,
+                              package->targetsFile,
+                              package->configs});
+
+    return dependencies;
+}
+
+std::string ownerText(const StepOwner& owner)
+{
+    return owner.name.empty() ? std::string {rootDeclarer} : owner.name;
+}
+
+ResolveResult stepFailure(std::string error)
+{
+    auto result = ResolveResult {};
+    result.error = std::move(error);
+    return result;
+}
+
+// A step asked for source that recorded a prebuilt entry would hand the
+// consumer binaries built without its source dependencies.
+ResolveResult checkedMode(const BuildInput& input, ResolveResult result)
+{
+    if (result.ok && input.request.mode == "source"
+        && result.response.mode != "source")
+        return stepFailure("the build step of " + input.request.name + " recorded "
+                           + result.response.mode
+                           + ", but the package is in source mode: end build() "
+                             "with useSource() when spec().mode is source");
+
+    return result;
+}
+
+// Runs the package's build step in its owner's recipe executable, source
+// packages too (their hooks set the options the consumer's add_subdirectory
+// gets); the default steps in this process for an owner without a recipe,
+// and where there are no recipe executables.
+ResolveResult
+    runStep(const PlannedPackage& planned, BuildInput input, ManifestLoader& steps)
+{
+    const auto& owner = planned.owner;
+    const auto& name = input.request.name;
+
+    if (!steps.runsSteps() && owner.customBuild && input.request.mode != "source")
+        return stepFailure(ownerText(owner) + " declares custom build steps for "
+                           + name
+                           + ", which need a recipe executable: epm builds none "
+                             "on Windows yet (no MSVC support)");
+
+    if (owner.recipe.empty() || !steps.runsSteps())
+        return resolveResultFor(buildInProcess(input));
+
+    input.recipeName = owner.name;
+    input.customBuild = owner.customBuild;
+
+    // This process holds no PackageLock here, and must not: the step takes
+    // the package's lock itself (Package::cached), and eacp's IPC::Lock is
+    // not re-entrant, so it would wait out the timeout on one held here.
+    auto error = std::string {};
+    const auto output = steps.build(owner.recipe, input, error);
+
+    if (!output)
+        return stepFailure("the build step of " + name + " (in the recipe "
+                           + owner.recipe.str() + "): " + error);
+
+    return checkedMode(input, resolveResultFor(*output));
 }
 } // namespace
 
@@ -555,8 +747,10 @@ ResolvedGraph dependencyClosure(const ResolvedGraph& graph,
     return result;
 }
 
-GraphResult
-    resolvePlan(const GraphPlan& plan, const Env& env, const CacheRoot& cache)
+GraphResult resolvePlan(const GraphPlan& plan,
+                        const Env& env,
+                        const CacheRoot& cache,
+                        ManifestLoader& steps)
 {
     auto result = GraphResult {};
     auto fingerprints = std::map<std::string, std::string> {};
@@ -588,7 +782,14 @@ GraphResult
         }
 
         const auto resolved =
-            resolveSnapshot(request, env, cache, planned.snapshot, dependencyGraph);
+            runStep(planned,
+                    buildInputFor(request,
+                                  env,
+                                  cache,
+                                  planned.snapshot,
+                                  dependencyGraph,
+                                  packageDependencies(result.graph, planned.deps)),
+                    steps);
 
         if (!resolved.ok)
         {
@@ -629,6 +830,6 @@ GraphResult configureGraph(const GraphInputs& inputs,
         return result;
     }
 
-    return resolvePlan(plan, inputs.env, cache);
+    return resolvePlan(plan, inputs.env, cache, loader);
 }
 } // namespace epm

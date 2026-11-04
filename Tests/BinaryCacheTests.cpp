@@ -91,6 +91,31 @@ auto tPickExact = test("BinaryCache/pick/exactPreferred") = []
     check(chosen(partial, xcodeFingerprint(), compatible, {"Debug"}) == "xcode");
 };
 
+auto tPickBuiltFirst = test("BinaryCache/pick/anEmptyEntryComesLast") = []
+{
+    const auto both = Configs {"Debug", "Release"};
+
+    // An exact entry a failed build left without configs loses to a
+    // compatible one that holds them.
+    const auto entries = Entries {cacheEntry("ninja", cacheFingerprint(), both),
+                                  cacheEntry("xcode", xcodeFingerprint(), {})};
+
+    check(chosen(entries, xcodeFingerprint(), compatible, both) == "ninja");
+
+    // Alone, it is still picked, to build into.
+    check(chosen(Entries {cacheEntry("xcode", xcodeFingerprint(), {})},
+                 xcodeFingerprint(),
+                 compatible,
+                 both)
+          == "xcode");
+
+    // Among entries holding configs, exact still wins.
+    const auto partial =
+        Entries {cacheEntry("ninja", cacheFingerprint(), both),
+                 cacheEntry("xcode", xcodeFingerprint(), {"Debug"})};
+    check(chosen(partial, xcodeFingerprint(), compatible, both) == "xcode");
+};
+
 auto tPickComplete = test("BinaryCache/pick/thenCompleteThenNewest") = []
 {
     const auto entries = Entries {

@@ -29,7 +29,7 @@ std::string packageText(const ResolvedPackage& package)
     auto text =
         set("MODE", package.mode) + set("SOURCE_DIR", cmakeQuoted(package.sourceDir))
         + set("DEPS", cmakeQuotedList(package.deps))
-        + set("OPTIONS", cmakeQuotedList(optionList(package.request.options)));
+        + set("OPTIONS", cmakeQuotedList(optionList(package.effectiveOptions())));
 
     if (package.mode != "prebuilt")
         return text;

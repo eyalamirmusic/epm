@@ -8,24 +8,34 @@ using namespace epm;
 
 namespace
 {
+// How eacp is built into the cache: the default CMake flow, without its tests
+// and examples. epm runs it in this file's executable; to debug it, run
+// HelloGraphRecipe with
+// `build --package eacp --in <build dir>/epm/steps/eacp.in.json --out <file>`.
+struct Eacp final : CMakePackage
+{
+    void configure(CMakeBuild& build) override
+    {
+        build.option("EACP_ENABLE_TESTS", "OFF");
+        build.option("EACP_ENABLE_EXAMPLES", "OFF");
+    }
+};
+
 struct HelloGraph final : Recipe
 {
-    void describe(Project& project, const Env& env) override
+    void describe() override
     {
-        auto& eacp = project.add("eacp", "eyalamirmusic/eacp", "main");
+        auto eacp = add<Eacp>("eacp", "eyalamirmusic/eacp", "main");
 
-        for (auto option: {"EACP_BUILD_GRAPHICS",
-                           "EACP_BUILD_WEBVIEW",
-                           "EACP_ENABLE_TESTS",
-                           "EACP_ENABLE_EXAMPLES"})
-            setOption(eacp, option, "OFF");
+        for (auto option: {"EACP_BUILD_GRAPHICS", "EACP_BUILD_WEBVIEW"})
+            eacp.option(option, "OFF");
 
-        addConfig(eacp, "Release");
+        eacp.config("Release");
 
         // -DEPM_PROFILE=debug-deps also caches eacp's Debug build, to step
         // into it from a debugger.
-        if (env.profile == "debug-deps")
-            addConfig(eacp, "Debug");
+        if (env().profile == "debug-deps")
+            eacp.config("Debug");
     }
 };
 } // namespace

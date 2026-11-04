@@ -1,8 +1,8 @@
 # epm.cmake -- the module that drives the epm binary from CMake.
 #
 # Projects do not include this file directly: they list get_epm.cmake in
-# CMAKE_PROJECT_TOP_LEVEL_INCLUDES (or include it), and it finds (or downloads,
-# or builds) an epm binary, sets EPM_EXECUTABLE and then includes the epm.cmake
+# CMAKE_PROJECT_TOP_LEVEL_INCLUDES (or include it), and it finds (or builds) an
+# epm binary, sets EPM_EXECUTABLE and then includes the epm.cmake
 # installed with that binary, so the two always match. epm-provider.cmake must
 # sit beside this file.
 #
@@ -37,8 +37,10 @@
 # caller's scope (plus <name>_BINARY_DIR in source mode).
 #
 # epm_add_recipe(<target> [SOURCE <file>] [NO_TEST]) builds the project's
-# epm.cpp as a module of its own build, for IDEs and the build's diagnostics,
-# and adds a test running `epm describe` over it (see the function below).
+# epm.cpp as an executable of its own build, the same standalone program epm
+# builds and runs to read the recipe, linked against epm's recipe libraries
+# (epm::recipe, from `epm recipe-sdk`), for IDEs, the build's diagnostics and
+# debugging, and adds a test running it (see the function below).
 #
 # Variables read:
 #   EPM_EXECUTABLE              the epm binary (required; set by get_epm.cmake)
@@ -62,6 +64,10 @@
 #                               options, source, toolchain file), strict (every
 #                               recorded detail, compiler path and full version
 #                               included) or any (platform, options, source)
+#   EPM_RECIPE_ALLOW_COMPILER_MISMATCH
+#                               ON: epm_add_recipe goes on (with a warning) when
+#                               the project's C++ compiler id is not the one
+#                               epm and its recipe libraries were built with
 #
 # With a manifest, EPM_CONFIGS, EPM_ABI_MATCH and EPM_BUILD_MISSING_BINARIES are
 # overrides: unset or empty, the manifest (or the binary's default) decides.
@@ -136,6 +142,30 @@ function(epm_resolve_configs spec is_multi_config build_type out_var error_var)
 
     set(${out_var} "${configs}" PARENT_SCOPE)
     set(${error_var} "${error}" PARENT_SCOPE)
+endfunction()
+
+# The configurations of epm's recipe libraries (`available`, upper case) that a
+# build in configuration `config` may link, best first: the same one, then
+# Debug for Debug and Release for anything else (RelWithDebInfo, MinSizeRel, a
+# custom or empty configuration), then the other of the two, then the rest.
+function(epm_recipe_config_preference config available out_var)
+    string(TOUPPER "${config}" upper)
+
+    if (upper STREQUAL "DEBUG")
+        set(order DEBUG RELEASE)
+    else ()
+        set(order RELEASE DEBUG)
+    endif ()
+
+    set(preference "")
+
+    foreach (candidate IN ITEMS ${upper} ${order} ${available})
+        if (candidate IN_LIST available AND NOT candidate IN_LIST preference)
+            list(APPEND preference "${candidate}")
+        endif ()
+    endforeach ()
+
+    set(${out_var} "${preference}" PARENT_SCOPE)
 endfunction()
 
 # Quotes `value` as a JSON string literal, for string(JSON ... SET), which takes
@@ -466,10 +496,16 @@ function(epm_use_manifest manifest)
     epm_provider_register("${EPM_DIR}/graph.cmake" PREPARE epm_configure_graph)
 endfunction()
 
-# Defines epm::recipe, once per configure: an INTERFACE IMPORTED target with
-# what the epm binary compiles an epm.cpp against, read from `epm recipe-sdk`.
-# When that cannot be used here, sets the global EPM_RECIPE_SDK_PROBLEM
-# instead, for epm_add_recipe to report.
+# Defines epm::recipe, once per configure, from what `epm recipe-sdk` says the
+# epm binary builds a recipe executable with: an INTERFACE IMPORTED target with
+# the include directories, definitions, C++ standard and compile options, which
+# links, in order, one STATIC IMPORTED target per archive of epm's recipe
+# libraries (one location per configuration epm installed, picked as
+# epm_recipe_config_preference says), then EPM_RECIPE_LINK_OPTIONS. When the
+# SDK's files are not here, sets the global EPM_RECIPE_SDK_PROBLEM instead, for
+# epm_add_recipe to report. A malformed SDK, or a C++ compiler of another
+# family than epm's (whose static libraries the recipe links), stops the
+# configure; EPM_RECIPE_ALLOW_COMPILER_MISMATCH=ON makes the latter a warning.
 function(epm_recipe_sdk)
     get_property(done GLOBAL PROPERTY EPM_RECIPE_SDK_DONE)
 
@@ -480,6 +516,7 @@ function(epm_recipe_sdk)
     set_property(GLOBAL PROPERTY EPM_RECIPE_SDK_DONE TRUE)
     set(sdk_file "${EPM_DIR}/recipe-sdk.cmake")
     file(REMOVE "${sdk_file}")
+    file(MAKE_DIRECTORY "${EPM_DIR}")
 
     execute_process(COMMAND "${EPM_EXECUTABLE}" recipe-sdk --out "${sdk_file}"
             RESULT_VARIABLE result
@@ -491,22 +528,190 @@ function(epm_recipe_sdk)
     endif ()
 
     include("${sdk_file}")
+    set(origin "the epm at ${EPM_EXECUTABLE}")
+    set(configs "")
 
-    # An imported target naming a missing include directory fails the generate:
-    # a binary built elsewhere (a release) cannot compile recipes here anyway.
+    foreach (config IN LISTS EPM_RECIPE_CONFIGS)
+        string(TOUPPER "${config}" upper)
+        list(APPEND configs "${upper}")
+    endforeach ()
+
+    list(REMOVE_DUPLICATES configs)
+
+    if (configs STREQUAL "")
+        message(FATAL_ERROR "epm: ${origin} names no EPM_RECIPE_CONFIGS in "
+                "${sdk_file}: it predates recipe executables. Use an epm and "
+                "epm.cmake of the same version.")
+    endif ()
+
+    # Each configuration's archives, by upper-case name, however recipe-sdk
+    # spelled it.
+    set(listed "")
+    get_cmake_property(variables VARIABLES)
+
+    foreach (variable IN LISTS variables)
+        if (NOT variable MATCHES "^EPM_RECIPE_LINK_LIBRARIES_(.+)$")
+            continue()
+        endif ()
+
+        string(TOUPPER "${CMAKE_MATCH_1}" upper)
+
+        if (NOT upper IN_LIST configs)
+            message(FATAL_ERROR "epm: ${sdk_file} of ${origin} sets ${variable}, "
+                    "but ${CMAKE_MATCH_1} is not in EPM_RECIPE_CONFIGS "
+                    "(${EPM_RECIPE_CONFIGS})")
+        endif ()
+
+        set(archives_${upper} "${${variable}}")
+        list(APPEND listed "${upper}")
+    endforeach ()
+
+    set(count "")
+
+    foreach (config IN LISTS configs)
+        if (NOT config IN_LIST listed)
+            message(FATAL_ERROR "epm: ${sdk_file} of ${origin} lists ${config} in "
+                    "EPM_RECIPE_CONFIGS (${EPM_RECIPE_CONFIGS}) but sets no "
+                    "EPM_RECIPE_LINK_LIBRARIES_${config}")
+        endif ()
+
+        list(LENGTH archives_${config} length)
+
+        if (length EQUAL 0)
+            message(FATAL_ERROR "epm: ${sdk_file} of ${origin} lists no "
+                    "libraries for ${config}")
+        elseif (count STREQUAL "")
+            set(count ${length})
+            set(first_config ${config})
+        elseif (NOT length EQUAL count)
+            message(FATAL_ERROR "epm: ${sdk_file} of ${origin} lists ${count} "
+                    "libraries for ${first_config} but ${length} for ${config}; "
+                    "each configuration must list the same libraries, in the "
+                    "same order")
+        endif ()
+    endforeach ()
+
+    # An imported target naming a missing file fails the generate or the link:
+    # an epm whose build or install tree has moved cannot build recipes here.
     foreach (directory IN LISTS EPM_RECIPE_INCLUDE_DIRS)
         if (NOT IS_DIRECTORY "${directory}")
             set_property(GLOBAL PROPERTY EPM_RECIPE_SDK_PROBLEM
-                    "the epm at ${EPM_EXECUTABLE} was built against headers that "
-                    "are not here (${directory})")
+                    "${origin} was built against headers that are not here (${directory})")
             return()
         endif ()
     endforeach ()
+
+    foreach (config IN LISTS configs)
+        foreach (archive IN LISTS archives_${config})
+            if (NOT EXISTS "${archive}")
+                set_property(GLOBAL PROPERTY EPM_RECIPE_SDK_PROBLEM
+                        "${origin} names a ${config} library that is not here (${archive})")
+                return()
+            endif ()
+        endforeach ()
+    endforeach ()
+
+    # The archives hold epm's C++ types, compiled by epm's compiler: another
+    # compiler family need not share their ABI (standard library, mangling).
+    if (NOT CMAKE_CXX_COMPILER_ID STREQUAL EPM_RECIPE_COMPILER_ID)
+        get_filename_component(prefix "${EPM_EXECUTABLE}" DIRECTORY)
+        get_filename_component(prefix "${prefix}" DIRECTORY)
+        set(text "this build compiles C++ with ${CMAKE_CXX_COMPILER_ID} "
+                "(${CMAKE_CXX_COMPILER}), but ${origin} was built with "
+                "${EPM_RECIPE_COMPILER_ID} (${EPM_RECIPE_CXX_COMPILER}), and a "
+                "recipe executable links epm's static libraries")
+        string(JOIN "" text ${text})
+
+        if (EPM_RECIPE_ALLOW_COMPILER_MISMATCH)
+            message(WARNING "epm: ${text}. EPM_RECIPE_ALLOW_COMPILER_MISMATCH is "
+                    "set: trying anyway.")
+        else ()
+            message(FATAL_ERROR "epm: ${text}. Configure with "
+                    "-DCMAKE_CXX_COMPILER=${EPM_RECIPE_CXX_COMPILER}, or use an epm "
+                    "built with this compiler (get_epm.cmake builds epm with the "
+                    "compiler of the configure that first needs it: delete "
+                    "${prefix} to rebuild it), or set "
+                    "-DEPM_RECIPE_ALLOW_COMPILER_MISMATCH=ON to try anyway.")
+        endif ()
+    endif ()
+
+    # One imported archive per position in the lists. IMPORTED_CONFIGURATIONS
+    # and the configuration-less location put Release first, so an unmapped
+    # configuration (or none) gets Release.
+    epm_recipe_config_preference("" "${configs}" fallback)
+    list(GET fallback 0 fallback_config)
+    set(mapped_configs "")
+
+    foreach (config IN ITEMS DEBUG RELEASE RELWITHDEBINFO MINSIZEREL NOCONFIG
+            ${CMAKE_CONFIGURATION_TYPES} ${CMAKE_BUILD_TYPE})
+        string(TOUPPER "${config}" upper)
+        list(APPEND mapped_configs "${upper}")
+    endforeach ()
+
+    list(REMOVE_DUPLICATES mapped_configs)
+    set(link_items "")
+    math(EXPR last "${count} - 1")
+
+    foreach (index RANGE ${last})
+        list(GET archives_${fallback_config} ${index} archive)
+        get_filename_component(stem "${archive}" NAME_WE)
+        string(REGEX REPLACE "^lib" "" stem "${stem}")
+        string(REGEX REPLACE "[^A-Za-z0-9_.+-]" "_" stem "${stem}")
+        set(library "epm::recipe-${stem}")
+
+        if (TARGET "${library}")
+            string(APPEND library "-${index}")
+        endif ()
+
+        add_library(${library} STATIC IMPORTED GLOBAL)
+        set_target_properties(${library} PROPERTIES
+                IMPORTED_CONFIGURATIONS "${fallback}"
+                IMPORTED_LOCATION "${archive}"
+                IMPORTED_LINK_INTERFACE_LANGUAGES CXX)
+
+        foreach (config IN LISTS configs)
+            list(GET archives_${config} ${index} location)
+            set_property(TARGET ${library} PROPERTY
+                    IMPORTED_LOCATION_${config} "${location}")
+        endforeach ()
+
+        foreach (config IN LISTS mapped_configs)
+            epm_recipe_config_preference("${config}" "${configs}" preference)
+            set_property(TARGET ${library} PROPERTY
+                    MAP_IMPORTED_CONFIG_${config} "${preference}")
+        endforeach ()
+
+        list(APPEND link_items ${library})
+    endforeach ()
+
+    # After the archives, which need them. A framework is one item with its
+    # name, however recipe-sdk split it.
+    set(pending "")
+
+    foreach (item IN LISTS EPM_RECIPE_LINK_OPTIONS)
+        if (NOT pending STREQUAL "")
+            list(APPEND link_items "${pending} ${item}")
+            set(pending "")
+        elseif (item MATCHES "^-(weak_)?framework$")
+            set(pending "${item}")
+        else ()
+            list(APPEND link_items "${item}")
+        endif ()
+    endforeach ()
+
+    # recipe-sdk reports one set of definitions, the running (Release) epm's,
+    # yet they reach the Debug archives' recipes too. None exist today.
+    if (NOT "${EPM_RECIPE_COMPILE_DEFINITIONS}" STREQUAL "")
+        message(AUTHOR_WARNING "epm: EPM_RECIPE_COMPILE_DEFINITIONS "
+                "(${EPM_RECIPE_COMPILE_DEFINITIONS}) come from epm's own "
+                "configuration and apply to every configuration of the recipe")
+    endif ()
 
     add_library(epm::recipe INTERFACE IMPORTED GLOBAL)
     set_target_properties(epm::recipe PROPERTIES
             INTERFACE_INCLUDE_DIRECTORIES "${EPM_RECIPE_INCLUDE_DIRS}"
             INTERFACE_COMPILE_DEFINITIONS "${EPM_RECIPE_COMPILE_DEFINITIONS}"
+            INTERFACE_LINK_LIBRARIES "${link_items}"
             EPM_CXX_STANDARD "${EPM_RECIPE_CXX_STANDARD}"
             EPM_CXX_EXTENSIONS "${EPM_RECIPE_CXX_EXTENSIONS}")
 
@@ -515,15 +720,21 @@ function(epm_recipe_sdk)
                 INTERFACE_COMPILE_FEATURES cxx_std_${EPM_RECIPE_CXX_STANDARD})
     endif ()
 
-    # epm-core's warning flags, which the recipe header compiles clean under,
+    # epm-recipe's warning flags, which the recipe header compiles clean under,
     # are only meant for the compiler that built epm.
     foreach (option IN LISTS EPM_RECIPE_COMPILE_OPTIONS)
         set_property(TARGET epm::recipe APPEND PROPERTY INTERFACE_COMPILE_OPTIONS
                 "$<$<CXX_COMPILER_ID:${EPM_RECIPE_COMPILER_ID}>:${option}>")
     endforeach ()
 
-    file(REAL_PATH "${CMAKE_CXX_COMPILER}" ours)
-    file(REAL_PATH "${EPM_RECIPE_CXX_COMPILER}" epms)
+    set(ours "${CMAKE_CXX_COMPILER}")
+    set(epms "${EPM_RECIPE_CXX_COMPILER}")
+
+    foreach (path IN ITEMS ours epms)
+        if (EXISTS "${${path}}")
+            file(REAL_PATH "${${path}}" ${path})
+        endif ()
+    endforeach ()
 
     if (NOT ours STREQUAL epms)
         message(STATUS "epm: recipe targets build with ${CMAKE_CXX_COMPILER}, but "
@@ -534,16 +745,34 @@ endfunction()
 # epm_add_recipe(<target> [SOURCE <file>] [NO_TEST])
 #
 # Builds an epm.cpp (by default ${CMAKE_CURRENT_SOURCE_DIR}/epm.cpp) as the
-# MODULE library <target> (<target>.epm-recipe.<dylib|so>), compiled as epm
-# compiles it, so that IDEs index it and the build reports its errors. The
-# configure never loads this module: it compiles and runs the file itself. The
-# custom target <target>-describe runs `epm describe --module` over it with
-# this build's env.json, and unless NO_TEST (or BUILD_TESTING is OFF) the test
-# <target> runs the same, which an IDE can debug; the test is run only by a
-# project that calls enable_testing(). Does nothing on Windows, which has no
-# recipes yet,
-# and in a project that is not the top-level one (a package added from
-# source; a child build epm runs gets a stub from epm-export.cmake).
+# executable <target>, linked against epm::recipe: the same program epm builds
+# and runs at configure time to learn the dependencies, here built by this
+# build, so that IDEs index it and the build reports its errors. The configure
+# never runs this one; epm builds and runs its own.
+#
+# Its command line is `<target> --env <env.json> [--out <project.json>]`;
+# without --out it prints the Project as JSON. To debug the recipe, launch
+# <target> under a debugger with `--env <build dir>/epm/env.json` (this
+# configure's env.json; Xcode and Visual Studio get it as the target's debugger
+# arguments) and stop in describe(). The custom target <target>-describe runs
+# exactly that, and unless NO_TEST (or BUILD_TESTING is OFF) so does the test
+# <target>, run only by a project that calls enable_testing().
+#
+# epm configure also runs, in its own build of this recipe, the build steps
+# this recipe owns: those of the packages it declares with add<T> (unless the
+# package has an epm.cpp of its own), and the default steps of the packages
+# it declares that no other declaration gives custom steps. It keeps each
+# step's input as ${EPM_DIR}/steps/<name>.in.json. To debug one, launch
+# <target> with `build --package <name> --in <build dir>/epm/steps/<name>.in.json
+# --out <any file>` and stop in the steps' build() or hooks. A step another
+# recipe owns (a dependency's epm.cpp) runs in that recipe's executable:
+# ${EPM_DIR}/steps/<name>.command holds the command line that runs it.
+#
+# Does nothing on Windows yet (RecipeBuild does not compile recipes with MSVC's
+# command-line shape), when cross-compiling (a recipe runs on the host, against
+# epm's host libraries), and in a project that is not the top-level one (a
+# package added from source; a child build epm runs gets a stub from
+# epm-export.cmake).
 function(epm_add_recipe target)
     cmake_parse_arguments(EPM_ARGS "NO_TEST" "SOURCE" "" ${ARGN})
 
@@ -559,6 +788,12 @@ function(epm_add_recipe target)
     endif ()
 
     if (NOT PROJECT_IS_TOP_LEVEL)
+        return()
+    endif ()
+
+    if (CMAKE_CROSSCOMPILING)
+        message(STATUS "epm: epm_add_recipe(${target}) does nothing when "
+                "cross-compiling: a recipe runs on the host")
         return()
     endif ()
 
@@ -586,15 +821,13 @@ function(epm_add_recipe target)
         return()
     endif ()
 
-    # As RecipeBuild.cpp compiles it: hidden visibility, no IPO, undefined
-    # symbols left for the executable that loads it, and no STB_GNU_UNIQUE.
-    add_library(${target} MODULE "${source}")
+    # As RecipeBuild.cpp builds it: the SDK's standard and dialect, no IPO.
+    add_executable(${target} "${source}")
     target_link_libraries(${target} PRIVATE epm::recipe)
     get_target_property(standard epm::recipe EPM_CXX_STANDARD)
     get_target_property(extensions epm::recipe EPM_CXX_EXTENSIONS)
     set_target_properties(${target} PROPERTIES
             CXX_EXTENSIONS ${extensions}
-            CXX_VISIBILITY_PRESET hidden
             INTERPROCEDURAL_OPTIMIZATION OFF
             FOLDER epm)
 
@@ -604,20 +837,14 @@ function(epm_add_recipe target)
                 CXX_STANDARD_REQUIRED ON)
     endif ()
 
-    if (APPLE)
-        target_link_options(${target} PRIVATE "LINKER:-undefined,dynamic_lookup")
+    # A host program: a universal (or foreign-architecture) build of the
+    # project would need epm's libraries in architectures it may not have.
+    if (APPLE AND CMAKE_OSX_ARCHITECTURES)
+        set_target_properties(${target} PROPERTIES
+                OSX_ARCHITECTURES "${CMAKE_HOST_SYSTEM_PROCESSOR}")
     endif ()
 
-    target_compile_options(${target} PRIVATE
-            "$<$<CXX_COMPILER_ID:GNU>:-fno-gnu-unique>")
-
-    # A name that says what it is, the same on every generator: the module is
-    # what `epm describe --module` loads.
-    set_target_properties(${target} PROPERTIES
-            PREFIX ""
-            SUFFIX ".epm-recipe${CMAKE_SHARED_LIBRARY_SUFFIX}")
-
-    # The env.json `epm describe` reads is the configure's own, written by then
+    # The env.json the recipe reads is the configure's own, written by then
     # even when nothing asked epm for a package.
     get_property(env_deferred GLOBAL PROPERTY EPM_RECIPE_ENV_DEFERRED)
 
@@ -626,17 +853,21 @@ function(epm_add_recipe target)
         cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL epm_write_env)
     endif ()
 
-    # This build's module, not one epm compiles (so no cache is involved): in a
-    # Debug configuration it has debug info, and a debugger running the test or
-    # the target below stops at breakpoints in describe().
-    set(describe_command "${EPM_EXECUTABLE}" describe "${source}"
-            --module "$<TARGET_FILE:${target}>"
-            --env "${EPM_DIR}/env.json")
+    # This build's executable, not the one epm builds (so no cache is
+    # involved): in a Debug configuration it has debug info, and a debugger
+    # running it, the test or the target below stops in describe().
+    set(arguments --env "${EPM_DIR}/env.json")
+    string(JOIN " " debugger_arguments ${arguments})
+    set_target_properties(${target} PROPERTIES
+            VS_DEBUGGER_COMMAND_ARGUMENTS "${debugger_arguments}"
+            VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            XCODE_SCHEME_ARGUMENTS "${arguments}"
+            XCODE_SCHEME_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
     add_custom_target(${target}-describe
-            COMMAND ${describe_command}
+            COMMAND ${target} ${arguments}
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-            COMMENT "epm describe ${source}"
+            COMMENT "Running the recipe ${source}"
             USES_TERMINAL
             VERBATIM)
     add_dependencies(${target}-describe ${target})
@@ -647,7 +878,7 @@ function(epm_add_recipe target)
     endif ()
 
     add_test(NAME ${target}
-            COMMAND ${describe_command}
+            COMMAND ${target} ${arguments}
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 endfunction()
 

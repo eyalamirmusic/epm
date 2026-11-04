@@ -46,7 +46,8 @@ if (NOT IS_ABSOLUTE "${EPM_EXPORT_FILE}")
 endif ()
 
 # A package's own epm_add_recipe (epm.cmake) is for its developers. A child
-# build includes no epm.cmake, and would export the module besides.
+# build includes no epm.cmake, and has no use for the recipe executable: a
+# no-op.
 if (NOT COMMAND epm_add_recipe)
     function(epm_add_recipe)
     endfunction()

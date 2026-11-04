@@ -2,7 +2,6 @@
 
 #include "CacheRoot.h"
 #include "Fingerprint.h"
-#include "SourceCache.h"
 
 #include <epm/Spec/Env.h>
 #include <epm/Spec/Request.h>
@@ -64,33 +63,45 @@ eacp::Vector<BinaryEntry> findEntries(const CacheRoot& cache,
 // Every entry in the cache, by name then platform.
 eacp::Vector<BinaryEntry> allEntries(const CacheRoot& cache);
 
-// The entry to use for `wanted` among those `policy` accepts, preferring an
-// exact (strict) match, then one holding every config in `configs`, then the
-// one holding most of them, then the newest.
+// The entry to use for `wanted` among those `policy` accepts, preferring one
+// that holds any config at all (an empty one is a failed build's leftover),
+// then an exact (strict) match, then one holding every config in `configs`,
+// then the one holding most of them, then the newest.
 std::optional<BinaryEntry> pickEntry(const eacp::Vector<BinaryEntry>& entries,
                                      const AbiFingerprint& wanted,
                                      AbiMatch policy,
                                      const eacp::Vector<std::string>& configs);
 
-struct BinaryResult
-{
-    bool ok = false;
-    BinaryEntry entry;
+// The entry at `prefix`: its manifest and the configs whose markers exist;
+// nullopt without a manifest of this schema.
+std::optional<BinaryEntry> readEntry(const eacp::FilePath& prefix);
 
-    // What this call built and added to the entry.
-    eacp::Vector<std::string> builtConfigs;
-    std::string error;
-    std::string details;
-};
+// A fresh entry for `fingerprint`, its manifest written first. Whatever is at
+// its path has no usable manifest (an exact match would have been picked), so
+// it is a leftover of an interrupted creation and goes. Call it under the
+// package lock.
+std::optional<BinaryEntry> createEntry(const CacheRoot& cache,
+                                       const std::string& name,
+                                       const AbiFingerprint& fingerprint,
+                                       const std::string& sourceId);
 
-// Under the package lock: picks the entry for the request again (another
-// process may have built it meanwhile) or creates the one for the current
-// fingerprint, then builds and harvests only the configs it lacks, adding
-// each to the entry as it completes. `dependencyGraph` goes to each child
-// build (ChildBuild::dependencyGraph).
-BinaryResult buildBinary(const CacheRoot& cache,
-                         const Request& request,
-                         const Env& env,
-                         const SourceSnapshot& snapshot,
-                         const std::string& dependencyGraph = {});
+// Removes what an unmarked `config` may have left in the entry: its marker,
+// lib/<config>, gen/<config> and its export files. gen/shared stays: its
+// files are content-addressed and other configs point at them.
+bool clearConfig(const eacp::FilePath& prefix, const std::string& config);
+
+// <prefix>/export-<config>.cmake, which a harvested build of `config` leaves.
+eacp::FilePath exportFileFor(const eacp::FilePath& prefix,
+                             const std::string& config);
+
+// True once the export file of `config` and its .names are in the entry.
+bool hasExport(const eacp::FilePath& prefix, const std::string& config);
+
+// Adds a harvested `config` to the entry: writes its marker (built with
+// `env`'s compiler), then regenerates epm-targets.cmake for every config
+// marked. The marker comes first, so the facade never names a config whose
+// files may still be cleared. Returns the error.
+std::optional<std::string> addConfigToEntry(const eacp::FilePath& prefix,
+                                            const std::string& config,
+                                            const Env& env);
 } // namespace epm

@@ -2,8 +2,11 @@ name: Release
 
 # The refs that publish binaries -- edit here and nowhere else. A push to one of
 # these branches replaces the rolling `nightly` prerelease; a v* tag gets (or
-# refreshes) a GitHub Release of its own, which becomes releases/latest and so
-# what get_epm.cmake downloads by default. Nothing here commits to the repo.
+# refreshes) a GitHub Release of its own, which becomes releases/latest. Each
+# archive is an installed epm (bin/, lib/<Debug|Release>/, include/, share/) to
+# unpack into a prefix and put on PATH. get_epm.cmake downloads none of it: with
+# no installed epm, it builds the newest v* tag from source. Nothing here
+# commits to the repo.
 on:
   push:
     branches:
@@ -55,24 +58,10 @@ jobs:
           cat SHA256SUMS
           ls -l
 
-      # manifest.json is what get_epm.cmake reads, through
-      # releases/latest/download/manifest.json: version, tag and, per platform,
-      # the archive name and its SHA-256 (from SHA256SUMS). releases/latest
-      # never points at a prerelease, so the nightly manifest is published for
-      # completeness but is never "latest". get_epm.cmake itself rides along
-      # verbatim, for projects that want to vendor it from a release.
-      - name: Manifest and get_epm.cmake
-        run: |
-          version="$(sed -n 's/^project(epm VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            tag="$GITHUB_REF_NAME"
-          else
-            tag="nightly"
-          fi
-          cmake -DSUMS=dist/SHA256SUMS "-DVERSION=$version" "-DTAG=$tag" \
-            -DOUTPUT=dist/manifest.json -P .github/scripts/make-manifest.cmake
-          cat dist/manifest.json
-          cp CMake/get_epm.cmake dist/get_epm.cmake
+      # get_epm.cmake rides along verbatim, for projects that vendor it from a
+      # release.
+      - name: get_epm.cmake
+        run: cp CMake/get_epm.cmake dist/get_epm.cmake
 
       - name: Publish the tag release
         if: startsWith(github.ref, 'refs/tags/v')

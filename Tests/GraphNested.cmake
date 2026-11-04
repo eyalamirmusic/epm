@@ -6,16 +6,18 @@
 #
 #   default       both prebuilt; Mid's child build loads Leaf through the
 #                 injected provider; Mid's entry records Leaf's fingerprint in
-#                 deps and does not re-export Leaf
+#                 deps and does not re-export Leaf; Leaf's build step, which
+#                 Mid declares with add<LeafSteps>, runs in Mid's recipe
+#                 executable, and again by hand from <build>/epm/steps/
 #   cached        a fresh build directory reuses both entries
 #   source        EPM_MODE=source: both added as subdirectories
 #   leaf-source   EPM_Leaf_MODE=source forces Mid into source (§5 rule 6)
 #   leaf-checkout EPM_Leaf_SOURCE=<checkout>: Leaf's repository is hidden, so
 #                 the checkout is used without a fetch
 #
-# Each scenario also builds the consumer's epm_add_recipe module and checks
-# that Mid's epm_add_recipe built nothing; the default one runs its describe
-# test.
+# Each scenario also builds the consumer's epm_add_recipe executable and checks
+# that Mid's epm_add_recipe built nothing; the default one runs its test, its
+# -describe target and the executable itself, standalone.
 #
 #   cmake -DEPM_BINARY=<epm> [-DWORK_DIR=<dir>] [-DTEST_GENERATOR=<generator>]
 #         [-DTEST_MAKE_PROGRAM=<path>] [-DTEST_CXX_COMPILER=<path>]
@@ -213,23 +215,41 @@ function(build_and_run expected)
     expect_recipe_targets()
 endfunction()
 
-# The consumer's epm_add_recipe built its epm.cpp as a module, and Mid's, from
-# a child build or a subdirectory, built nothing.
-function(expect_recipe_targets)
-    file(GLOB_RECURSE consumer_modules "${build}/*ConsumerRecipe.epm-recipe.*")
-    file(GLOB_RECURSE mid_modules "${build}/*MidRecipe*" "${cache}/bin/*MidRecipe*")
+# The executable epm_add_recipe(ConsumerRecipe) built, empty for none.
+function(consumer_recipe out_var)
+    set(found "")
 
-    if (NOT consumer_modules)
-        fail("epm_add_recipe(ConsumerRecipe) built no module in ${build}")
+    foreach (candidate IN ITEMS "${build}/ConsumerRecipe" "${build}/ConsumerRecipe.exe"
+            "${build}/Release/ConsumerRecipe" "${build}/Release/ConsumerRecipe.exe")
+        if (NOT found AND EXISTS "${candidate}" AND NOT IS_DIRECTORY "${candidate}")
+            set(found "${candidate}")
+        endif ()
+    endforeach ()
+
+    set(${out_var} "${found}" PARENT_SCOPE)
+endfunction()
+
+# The consumer's epm_add_recipe built its epm.cpp as an executable, and Mid's,
+# from a child build or a subdirectory, built nothing.
+function(expect_recipe_targets)
+    consumer_recipe(recipe)
+    file(GLOB_RECURSE mid_recipes "${build}/*MidRecipe*" "${cache}/bin/*MidRecipe*")
+
+    if (NOT recipe)
+        fail("epm_add_recipe(ConsumerRecipe) built no executable in ${build}")
     endif ()
 
-    if (mid_modules)
-        fail("Mid's epm_add_recipe built something: ${mid_modules}")
+    if (mid_recipes)
+        fail("Mid's epm_add_recipe built something: ${mid_recipes}")
     endif ()
 endfunction()
 
-# ConsumerRecipe's test, and the ConsumerRecipe-describe target, run
-# `epm describe --module` over the module the build made.
+# The Project JSON a recipe prints names Mid.
+set(names_mid "\"name\": *\"Mid\"")
+
+# ConsumerRecipe's test and the ConsumerRecipe-describe target run the
+# executable the build made with this build's env.json; so can anyone, and
+# `epm describe --exe` runs it in place of one epm builds.
 function(expect_recipe_test)
     execute_process(
             COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${build}" -C Release
@@ -249,8 +269,56 @@ function(expect_recipe_test)
             OUTPUT_VARIABLE describe_output
             ERROR_VARIABLE describe_output)
 
-    if (NOT result EQUAL 0 OR NOT describe_output MATCHES "\"name\": \"Mid\"")
+    if (NOT result EQUAL 0 OR NOT describe_output MATCHES "${names_mid}")
         fail("ConsumerRecipe-describe failed (${result}):\n${describe_output}")
+    endif ()
+
+    consumer_recipe(recipe)
+    set(env "${build}/epm/env.json")
+    execute_process(COMMAND "${recipe}" --env "${env}"
+            RESULT_VARIABLE result
+            OUTPUT_VARIABLE run_output
+            ERROR_VARIABLE run_error)
+
+    if (NOT result EQUAL 0 OR NOT run_output MATCHES "${names_mid}")
+        fail("${recipe} --env ${env} failed (${result}):\n${run_output}${run_error}")
+    endif ()
+
+    set(project_file "${build}/recipe-project.json")
+    file(REMOVE "${project_file}")
+    execute_process(COMMAND "${recipe}" --env "${env}" --out "${project_file}"
+            RESULT_VARIABLE result
+            OUTPUT_VARIABLE run_output
+            ERROR_VARIABLE run_output)
+
+    if (EXISTS "${project_file}")
+        file(READ "${project_file}" project_json)
+    else ()
+        set(project_json "")
+    endif ()
+
+    if (NOT result EQUAL 0 OR NOT project_json MATCHES "${names_mid}")
+        fail("${recipe} --out ${project_file} failed (${result}):\n${run_output}\n${project_file}: ${project_json}")
+    endif ()
+
+    execute_process(COMMAND "${recipe}" --env "${WORK_DIR}/no-such-env.json"
+            RESULT_VARIABLE result
+            OUTPUT_VARIABLE run_output
+            ERROR_VARIABLE run_error)
+
+    if (NOT result EQUAL 1 OR run_error STREQUAL "")
+        fail("${recipe} with a missing env.json exited ${result} (expected 1, with a message), stderr '${run_error}'")
+    endif ()
+
+    execute_process(
+            COMMAND "${EPM_BINARY}" describe "${consumer}/epm.cpp" --exe "${recipe}"
+            --env "${env}"
+            RESULT_VARIABLE result
+            OUTPUT_VARIABLE run_output
+            ERROR_VARIABLE run_error)
+
+    if (NOT result EQUAL 0 OR NOT run_output MATCHES "${names_mid}")
+        fail("epm describe --exe ${recipe} failed (${result}):\n${run_output}${run_error}")
     endif ()
 endfunction()
 
@@ -319,6 +387,84 @@ if (NOT mid_export MATCHES "INTERFACE_LINK_LIBRARIES \"[^\"]*Leaf")
     fail("Mid's export-Release.cmake does not link Leaf:\n${mid_export}")
 endif ()
 
+# Leaf's build step ran in Mid's recipe executable: the option its add<LeafSteps>
+# configure hook sets is in Leaf's fingerprint. The steps report progress
+# while the configure runs.
+file(READ "${Leaf_prefix}/manifest.json" leaf_manifest)
+string(JSON leaf_extra ERROR_VARIABLE leaf_extra_error
+        GET "${leaf_manifest}" fingerprint options LEAF_EXTRA)
+expect_equal("Leaf's fingerprint option LEAF_EXTRA" "${leaf_extra}" "ON")
+
+foreach (name IN ITEMS Leaf Mid)
+    if (NOT output MATCHES "-- epm: building ${name} from source into the cache")
+        fail("no progress line for ${name}'s build in the configure output:\n${output}")
+    endif ()
+endforeach ()
+
+# Each step's input, output and command stay in <build>/epm/steps/.
+set(steps "${build}/epm/steps")
+
+foreach (name IN ITEMS Leaf Mid)
+    foreach (file IN ITEMS "${name}.in.json" "${name}.out.json" "${name}.command")
+        if (NOT EXISTS "${steps}/${file}")
+            fail("no ${steps}/${file}")
+        endif ()
+    endforeach ()
+endforeach ()
+
+file(READ "${steps}/Leaf.in.json" leaf_input)
+string(JSON leaf_owner GET "${leaf_input}" recipeName)
+expect_equal("Leaf's step recipeName" "${leaf_owner}" "Mid")
+
+# Leaf.command: "# run from: <directory>", then the command, shell-quoted.
+file(STRINGS "${steps}/Leaf.command" command_lines)
+list(LENGTH command_lines command_line_count)
+expect_equal("Leaf.command's line count" "${command_line_count}" "2")
+list(GET command_lines 0 run_from)
+list(GET command_lines 1 leaf_command)
+
+if (NOT run_from MATCHES "^# run from: (.+)$")
+    fail("Leaf.command's first line is not '# run from: <directory>': ${run_from}")
+endif ()
+
+set(run_from "${CMAKE_MATCH_1}")
+
+if (NOT IS_DIRECTORY "${run_from}")
+    fail("Leaf.command runs from ${run_from}, which is not a directory")
+endif ()
+
+separate_arguments(leaf_command UNIX_COMMAND "${leaf_command}")
+list(GET leaf_command 0 mid_recipe)
+
+if (NOT IS_ABSOLUTE "${mid_recipe}" OR NOT mid_recipe MATCHES "/epm-recipe$"
+        OR NOT EXISTS "${mid_recipe}")
+    fail("Leaf.command does not run a recipe executable: ${leaf_command}")
+endif ()
+
+# Leaf's step again, by hand, as Leaf.command has it: the entry is found, not
+# rebuilt.
+set(by_hand "${steps}/Leaf.out.json")
+file(REMOVE "${by_hand}")
+execute_process(
+        COMMAND ${leaf_command}
+        WORKING_DIRECTORY "${run_from}"
+        RESULT_VARIABLE result
+        OUTPUT_VARIABLE step_output
+        ERROR_VARIABLE step_output)
+
+if (NOT result EQUAL 0 OR NOT EXISTS "${by_hand}")
+    fail("Leaf.command (${leaf_command}) failed (${result}):\n${step_output}")
+endif ()
+
+file(READ "${by_hand}" leaf_output)
+string(JSON by_hand_prefix GET "${leaf_output}" prefix)
+expect_equal("Leaf's prefix from the step run by hand" "${by_hand_prefix}"
+        "${Leaf_prefix}")
+
+if (step_output MATCHES "building Leaf")
+    fail("Leaf's step run by hand built it again:\n${step_output}")
+endif ()
+
 build_and_run("11 1")
 expect_recipe_test()
 cache_markers(markers_before)
@@ -356,6 +502,17 @@ configure_consumer(leaf-source -DEPM_Leaf_MODE=source)
 expect_loaded(source)
 graph_value(Mid why provenance mode)
 expect_equal("Mid's mode provenance" "${why}" "source dependency Leaf")
+
+# Leaf's step ran in Mid's recipe executable in source mode too: the option
+# its configure hook sets reaches Leaf's add_subdirectory through graph.cmake.
+graph_value(Leaf leaf_extra options LEAF_EXTRA)
+expect_equal("Leaf's graph.json option LEAF_EXTRA" "${leaf_extra}" "ON")
+file(READ "${build}/epm/graph.cmake" graph_cmake)
+
+if (NOT graph_cmake MATCHES "set\\(epm_Leaf_OPTIONS \"[^\"]*LEAF_EXTRA=ON")
+    fail("Leaf's OPTIONS in graph.cmake lack LEAF_EXTRA=ON:\n${graph_cmake}")
+endif ()
+
 build_and_run("11 1")
 
 # 5. A local Leaf checkout. Leaf's repository is moved away meanwhile, so any

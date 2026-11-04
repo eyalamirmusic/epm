@@ -9,10 +9,7 @@ namespace
 {
 struct Consumer final : Recipe
 {
-    void describe(Project& project, const Env&) override
-    {
-        project.add("Mid", "@MID_URL@", "v1");
-    }
+    void describe() override { add("Mid", "@MID_URL@", "v1"); }
 };
 } // namespace
 

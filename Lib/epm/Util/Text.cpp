@@ -8,7 +8,10 @@ using namespace eacp;
 
 bool writeTextFile(const FilePath& path, std::string_view text)
 {
-    if (!Files::createDirectories(path.parentDirectory()))
+    const auto directory = path.parentDirectory();
+
+    // A bare file name has no parent, and createDirectories("") fails.
+    if (!directory.empty() && !Files::createDirectories(directory))
         return false;
 
     try

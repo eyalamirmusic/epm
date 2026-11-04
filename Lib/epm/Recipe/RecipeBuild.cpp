@@ -3,14 +3,12 @@
 #include <epm/Cache/PackageLock.h>
 #include <epm/Util/Command.h>
 #include <epm/Util/Log.h>
+#include <epm/Util/Paths.h>
 #include <epm/Util/Sha256.h>
 #include <epm/Util/Text.h>
 
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Utils/Files.h>
-#include <eacp/Core/Utils/StdPath.h>
-
-#include <filesystem>
 
 namespace epm
 {
@@ -18,17 +16,44 @@ using namespace eacp;
 
 namespace
 {
-constexpr auto moduleFileName =
-    Platform::isApple() ? "epm-recipe.dylib" : "epm-recipe.so";
+constexpr auto executableFileName =
+    Platform::isWindows() ? "epm-recipe.exe" : "epm-recipe";
 constexpr auto failureLines = 30;
 
-// The module resolves its symbols against this very binary, so a rebuilt epm
-// gets fresh modules. Hashed once per process.
+// The binary is rebuilt with whatever a recipe compiles against, so its hash
+// covers what recipeInputsHash leaves out: eacp's and Miro's headers. Hashed
+// once per process.
 const std::string& executableHash()
 {
     static const auto hash =
         sha256HexOfFile(Files::executablePath()).value_or(std::string {});
     return hash;
+}
+
+const std::optional<std::string>& inputsHash()
+{
+    static const auto hash = recipeInputsHash(recipeSdk());
+    return hash;
+}
+
+// epm's own headers: those under the include directory holding
+// <epm/Recipe/Recipe.h>, the build tree's sources or the install's include/.
+Vector<FilePath> epmHeaders(const RecipeSdk& sdk)
+{
+    for (const auto& directory: sdk.includeDirectories)
+    {
+        const auto headers = FilePath {directory} / "epm";
+
+        if (!Files::isFile(headers / "Recipe" / "Recipe.h"))
+            continue;
+
+        auto options = Files::DirectoryOptions {};
+        options.recursive = true;
+        options.pattern = "*.h";
+        return Files::listFiles(headers, options);
+    }
+
+    return {};
 }
 
 std::string commandLine(const std::string& executable,
@@ -54,12 +79,26 @@ RecipeBuild failure(std::string error, std::string details = {})
     return build;
 }
 
+// A link item as CMake's target_link_libraries takes it, as compiler driver
+// arguments: "-framework Foundation" is two, a bare name is a system library.
+void addLinkOption(Vector<std::string>& arguments, const std::string& option)
+{
+    constexpr auto framework = std::string_view {"-framework "};
+
+    if (option.starts_with(framework))
+        arguments.add({"-framework", option.substr(framework.size())});
+    else if (option.starts_with('-') || option.find('/') != std::string::npos)
+        arguments.add(option);
+    else
+        arguments.add("-l" + option);
+}
+
 RecipeBuild
-    compile(const FilePath& source, const FilePath& module, const FilePath& log)
+    compile(const FilePath& source, const FilePath& executable, const FilePath& log)
 {
     const auto& sdk = recipeSdk();
     const auto temporary =
-        module.sibling(module.stem() + ".tmp" + module.extension());
+        executable.sibling(executable.stem() + ".tmp" + executable.extension());
     const auto arguments = recipeCompileArguments(sdk, source, temporary);
     const auto command = commandLine(sdk.compiler, arguments);
 
@@ -70,7 +109,7 @@ RecipeBuild
     writeTextFile(log, command + "\n\n" + result.output);
 
     auto build = RecipeBuild {};
-    build.module = module;
+    build.executable = executable;
     build.log = log;
 
     if (!result.ok)
@@ -83,9 +122,10 @@ RecipeBuild
         return build;
     }
 
-    if (!Files::moveFile(temporary, module))
+    if (!Files::moveFile(temporary, executable))
     {
-        build.error = "cannot move the recipe module into " + module.str();
+        Files::removeFile(temporary);
+        build.error = "cannot move the recipe executable into " + executable.str();
         return build;
     }
 
@@ -94,21 +134,46 @@ RecipeBuild
 }
 } // namespace
 
+std::optional<std::string> recipeInputsHash(const RecipeSdk& sdk)
+{
+    auto files = Vector<FilePath> {};
+
+    for (const auto& library: recipeLibraries(sdk))
+        files.add(FilePath {library});
+
+    for (const auto& header: epmHeaders(sdk))
+        files.add(header);
+
+    auto lines = std::string {};
+
+    for (const auto& file: files)
+    {
+        const auto hash = sha256HexOfFile(file);
+
+        if (!hash)
+            return std::nullopt;
+
+        lines += *hash + " " + file.str() + "\n";
+    }
+
+    return sha256Hex(lines);
+}
+
 std::string recipeKey(const RecipeSdk& sdk,
                       std::string_view executableHash,
+                      std::string_view inputsHash,
                       std::string_view source)
 {
     return sha256Hex(sdk.identity + "\n" + std::string {executableHash} + "\n"
-                     + sha256Hex(source));
+                     + std::string {inputsHash} + "\n" + sha256Hex(source));
 }
 
 Vector<std::string> recipeCompileArguments(const RecipeSdk& sdk,
                                            const FilePath& source,
-                                           const FilePath& module)
+                                           const FilePath& output)
 {
     auto arguments = Vector<std::string> {};
     arguments.add((sdk.cxxExtensions ? "-std=gnu++" : "-std=c++") + sdk.cxxStandard);
-    arguments.add({"-shared", "-fPIC", "-fvisibility=hidden"});
 
     for (const auto& flag: sdk.flags)
         arguments.add(flag);
@@ -135,28 +200,29 @@ Vector<std::string> recipeCompileArguments(const RecipeSdk& sdk,
     for (const auto& option: sdk.compileOptions)
         arguments.add(option);
 
-    // The module's undefined symbols are epm's, bound when it is loaded.
-    if (Platform::isApple())
-        arguments.add("-Wl,-undefined,dynamic_lookup");
+    arguments.add({"-o", output.str(), source.str()});
 
-    // So the last dlclose really unmaps it (eacp's EacpPlugin.cmake).
-    if (sdk.compilerId == "GNU")
-        arguments.add("-fno-gnu-unique");
+    // After the source, each archive before those it depends on: a
+    // single-pass linker (GNU ld) only takes from an archive what is already
+    // undefined.
+    for (const auto& library: recipeLibraries(sdk))
+        arguments.add(library);
 
-    arguments.add({"-o", module.str(), source.str()});
+    for (const auto& option: sdk.linkOptions)
+        addLinkOption(arguments, option);
+
     return arguments;
 }
 
 RecipeBuild buildRecipe(const FilePath& sourceToBuild, const CacheRoot& cache)
 {
+    // MSVC needs its own argument shape (/std:, /Fe, .lib names), not a
+    // different design: a recipe is an executable on every platform.
     if (Platform::isWindows())
         return failure("epm.cpp recipes are not supported on Windows yet");
 
     // Absolute, so the compiler's diagnostics in compile.log name it fully.
-    auto failed = std::error_code {};
-    const auto absolute =
-        std::filesystem::absolute(toStdPath(sourceToBuild), failed);
-    const auto source = failed ? sourceToBuild : FilePath {absolute};
+    const auto source = resolvedPath(sourceToBuild);
 
     if (!Files::isFile(source))
         return failure("no recipe at " + source.str());
@@ -165,20 +231,28 @@ RecipeBuild buildRecipe(const FilePath& sourceToBuild, const CacheRoot& cache)
         return failure("cannot hash the epm executable "
                        + Files::executablePath().str());
 
+    if (recipeLibraries(recipeSdk()).empty())
+        return failure("this epm has no recipe libraries for its configuration '"
+                       + recipeSdk().config + "'");
+
+    if (!inputsHash())
+        return failure("cannot read this epm's recipe libraries and headers");
+
     const auto key =
-        recipeKey(recipeSdk(), executableHash(), Files::readFile(source))
+        recipeKey(
+            recipeSdk(), executableHash(), *inputsHash(), Files::readFile(source))
             .substr(0, 12);
     const auto directory = cache.recipe() / key;
-    const auto module = directory / moduleFileName;
+    const auto executable = directory / executableFileName;
     const auto log = directory / "compile.log";
 
     auto cached = RecipeBuild {};
     cached.ok = true;
     cached.cached = true;
-    cached.module = module;
+    cached.executable = executable;
     cached.log = log;
 
-    if (Files::isFile(module))
+    if (Files::isFile(executable))
         return cached;
 
     if (!Files::isFile(recipeSdk().compiler))
@@ -191,10 +265,10 @@ RecipeBuild buildRecipe(const FilePath& sourceToBuild, const CacheRoot& cache)
         return failure("timed out waiting for another epm to compile "
                        + source.str());
 
-    if (Files::isFile(module))
+    if (Files::isFile(executable))
         return cached;
 
     Files::createDirectories(directory);
-    return compile(source, module, log);
+    return compile(source, executable, log);
 }
 } // namespace epm

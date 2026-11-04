@@ -120,6 +120,9 @@ Vector<std::string> configureArguments(const ChildBuild& build)
     for (const auto& [key, value]: build.request.options)
         arguments.add("-D" + key + "=" + value);
 
+    for (const auto& [name, value]: build.definitions)
+        arguments.add("-D" + name + "=" + value);
+
     return arguments;
 }
 
@@ -128,7 +131,7 @@ Vector<std::string> buildArguments(const ChildBuild& build)
     return {"--build", build.buildDirectory.str(), "--parallel"};
 }
 
-ChildBuildResult runChildBuild(const ChildBuild& build)
+ChildBuildResult configureChildBuild(const ChildBuild& build)
 {
     auto files = Vector<std::pair<FilePath, std::string_view>> {
         {build.buildDirectory / exportScriptName, embeddedExportScript()}};
@@ -143,11 +146,11 @@ ChildBuildResult runChildBuild(const ChildBuild& build)
         if (!writeTextFile(path, text))
             return {false, "cannot write " + path.str(), {}};
 
-    auto configured = runStep(build, "configure", configureArguments(build));
+    return runStep(build, "configure", configureArguments(build));
+}
 
-    if (!configured.ok)
-        return configured;
-
+ChildBuildResult buildChildBuild(const ChildBuild& build)
+{
     return runStep(build, "build", buildArguments(build));
 }
 } // namespace epm

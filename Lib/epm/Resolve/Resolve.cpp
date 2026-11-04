@@ -1,9 +1,9 @@
 #include "Resolve.h"
 
-#include <epm/Build/Configs.h>
-#include <epm/Cache/BinaryCache.h>
+#include <epm/Recipe/CMakePackage.h>
 #include <epm/Util/Log.h>
-#include <epm/Util/Text.h>
+
+#include <eacp/Core/Utils/Files.h>
 
 namespace epm
 {
@@ -16,147 +16,59 @@ ResolveResult failure(std::string error, std::string details = {})
     result.details = std::move(details);
     return result;
 }
-
-ResolveResult sourceResult(const Request& request, const SourceSnapshot& snapshot)
-{
-    auto result = ResolveResult {};
-    result.ok = true;
-    result.response.name = request.name;
-    result.response.mode = "source";
-    result.response.sourceDirectory = snapshot.directory;
-    return result;
-}
-
-ResolveResult binaryResult(const Request& request,
-                           const SourceSnapshot& snapshot,
-                           const BinaryEntry& entry,
-                           const AbiFingerprint& wanted)
-{
-    auto result = ResolveResult {};
-    result.ok = true;
-    result.response = {request.name,
-                       "prebuilt",
-                       snapshot.directory,
-                       entry.prefix,
-                       entry.fingerprint.platform,
-                       entry.configs,
-                       abiNote(entry.fingerprint, wanted).value_or("")};
-    result.fingerprintHash = fingerprintId(entry.fingerprint);
-    return result;
-}
-
-bool isKnownMode(const std::string& mode)
-{
-    return mode == "auto" || mode == "prebuilt" || mode == "binary-only"
-           || mode == "source";
-}
 } // namespace
 
-Decision decide(const Request& request, bool binaryExists)
+ResolveResult resolveResultFor(const BuildOutput& output)
 {
-    if (request.mode == "source")
-        return Decision::useSource;
+    if (!output.ok())
+        return failure(output.error, output.details);
 
-    if (binaryExists)
-        return Decision::useBinary;
+    auto result = ResolveResult {};
+    result.ok = true;
+    result.response.name = output.name;
+    result.response.mode = output.mode;
+    result.response.sourceDirectory = eacp::FilePath {output.sourceDirectory};
+    result.options = output.options;
 
-    if (request.mode == "binary-only")
-        return Decision::missingBinary;
+    if (output.mode != "prebuilt")
+        return result;
 
-    if (request.mode == "prebuilt" || request.buildMissingBinaries)
-        return Decision::buildBinary;
-
-    return Decision::useSource;
+    result.response.prefix = eacp::FilePath {output.prefix};
+    result.response.platform = output.platform;
+    result.response.configs = output.configs;
+    result.response.note = output.note;
+    result.fingerprintHash = output.fingerprintHash;
+    return result;
 }
 
-std::optional<std::string> requestError(const Request& request)
+BuildInput buildInputFor(const Request& request,
+                         const Env& env,
+                         const CacheRoot& cache,
+                         const SourceSnapshot& snapshot,
+                         const std::string& dependencyGraph,
+                         const eacp::Vector<PackageDependency>& dependencies)
 {
-    if (request.schema != requestSchema)
-        return "the request" + (request.name.empty() ? "" : " for " + request.name)
-               + " has schema " + std::to_string(request.schema)
-               + ", but this epm reads schema " + std::to_string(requestSchema)
-               + ": epm.cmake and the epm binary come from different versions "
-                 "(include get_epm.cmake, which takes both from one install)";
-
-    if (request.name.empty())
-        return "the request has no name";
-
-    if (request.gitUrl.empty())
-        return "the request for " + request.name + " has no gitUrl";
-
-    if (request.gitRef.empty())
-        return "the request for " + request.name + " has no gitRef";
-
-    if (!isKnownMode(request.mode))
-        return "the request for " + request.name + " has an unknown mode '"
-               + request.mode + "' (auto, prebuilt, binary-only or source)";
-
-    if (request.configs.empty())
-        return "the request for " + request.name + " lists no configs";
-
-    for (const auto& config: request.configs)
-        if (!buildConfigFor(config))
-            return "the request for " + request.name + " has an unknown config '"
-                   + config + "' (Debug, Release, RelWithDebInfo or MinSizeRel)";
-
-    if (!parseAbiMatch(request.abiMatch))
-        return "the request for " + request.name + " has an unknown abiMatch '"
-               + request.abiMatch + "' (compatible, strict or any)";
-
-    return std::nullopt;
+    auto input = BuildInput {};
+    input.env = env;
+    input.cacheRoot = cache.path().str();
+    input.request = request;
+    input.source = buildSourceFor(snapshot);
+    input.dependencies = dependencies;
+    input.dependencyGraph = dependencyGraph;
+    input.epmExecutable = eacp::Files::executablePath().str();
+    input.verbose = Log::isVerbose();
+    return input;
 }
 
 ResolveResult resolveSnapshot(const Request& request,
                               const Env& env,
                               const CacheRoot& cache,
                               const SourceSnapshot& snapshot,
-                              const std::string& dependencyGraph)
+                              const std::string& dependencyGraph,
+                              const eacp::Vector<PackageDependency>& dependencies)
 {
-    if (request.mode == "source")
-        return sourceResult(request, snapshot);
-
-    const auto wanted = makeFingerprint(request, env, snapshot.sourceId);
-    const auto configs = buildConfigsFor(request.configs);
-    const auto existing =
-        pickEntry(findEntries(cache, request.name, wanted.platform),
-                  wanted,
-                  parseAbiMatch(request.abiMatch).value_or(AbiMatch::compatible),
-                  configs);
-    const auto missing =
-        existing ? missingConfigs(existing->configs, configs) : configs;
-
-    Log::step("epm: " + request.name + " " + wanted.platform + " "
-              + fingerprintId(wanted).substr(0, 12) + ": "
-              + (existing ? "entry " + existing->prefix.fileName() : "no entry")
-              + (missing.empty() ? "" : ", missing " + joinList(missing, ", ")));
-
-    switch (decide(request, existing && missing.empty()))
-    {
-        case Decision::useSource:
-            return sourceResult(request, snapshot);
-
-        case Decision::useBinary:
-            return binaryResult(request, snapshot, *existing, wanted);
-
-        case Decision::missingBinary:
-            return failure(
-                request.name + " is binary-only, but the cache has no "
-                + wanted.platform + " entry holding " + joinList(configs, ", ")
-                + " for " + fingerprintId(wanted).substr(0, 12)
-                + (existing ? " (entry " + existing->prefix.fileName() + " lacks "
-                                  + joinList(missing, ", ") + ")"
-                            : ""));
-
-        case Decision::buildBinary:
-            break;
-    }
-
-    const auto built = buildBinary(cache, request, env, snapshot, dependencyGraph);
-
-    if (!built.ok)
-        return failure(built.error, built.details);
-
-    return binaryResult(request, snapshot, built.entry, wanted);
+    return resolveResultFor(buildInProcess(buildInputFor(
+        request, env, cache, snapshot, dependencyGraph, dependencies)));
 }
 
 ResolveResult

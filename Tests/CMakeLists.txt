@@ -10,6 +10,7 @@ nano_add_executable(epmTests
             GraphTests.cpp
             HarvestTests.cpp
             ManifestTests.cpp
+            PackageTests.cpp
             PlatformTests.cpp
             RecipeTests.cpp
             ResolveTests.cpp
@@ -19,10 +20,9 @@ nano_add_executable(epmTests
             TimestampTests.cpp
         TARGETS epm-core)
 
-# RecipeTests loads recipe modules into the test executable itself.
-epm_export_recipe_api(epmTests)
 target_compile_definitions(epmTests PRIVATE
-        EPM_TEST_RECIPE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Recipe")
+        EPM_TEST_RECIPE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Recipe"
+        EPM_TEST_CMAKE="${CMAKE_COMMAND}")
 
 add_test(NAME get_epm_ranges
         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/GetEpmRanges.cmake)
@@ -31,6 +31,11 @@ add_test(NAME get_epm_source_dir
         COMMAND ${CMAKE_COMMAND}
             "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/get-epm-source-dir"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/GetEpmSourceDir.cmake)
+
+add_test(NAME get_epm_latest
+        COMMAND ${CMAKE_COMMAND}
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/get-epm-latest"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/GetEpmLatest.cmake)
 
 add_test(NAME epm_configs_auto
         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/EpmConfigsAuto.cmake)
@@ -55,3 +60,12 @@ add_test(NAME epm_graph_nested
             -P ${CMAKE_CURRENT_SOURCE_DIR}/GraphNested.cmake)
 set_tests_properties(epm_graph_nested PROPERTIES
         SKIP_REGULAR_EXPRESSION "epm-graph-nested: skipped")
+
+if (NOT WIN32)
+    add_test(NAME epm_install_round_trip
+            COMMAND ${CMAKE_COMMAND}
+                "-DBUILD_DIR=${CMAKE_BINARY_DIR}"
+                "-DCONFIG=$<CONFIG>"
+                "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/epm-install-round-trip"
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/InstallRoundTrip.cmake)
+endif ()

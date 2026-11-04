@@ -8,6 +8,14 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
+# The configuration names the install's lib/<config>/ and the libraries epm's
+# own recipes link, so a single-configuration build of epm always has one.
+get_property(EPM_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+
+if (PROJECT_IS_TOP_LEVEL AND NOT EPM_MULTI_CONFIG AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "The build configuration" FORCE)
+endif ()
+
 if (MSVC)
     add_compile_options(/EHsc)
 endif ()
@@ -37,10 +45,12 @@ list(APPEND CMAKE_MODULE_PATH "${eacp_SOURCE_DIR}/CMake")
 add_subdirectory(Lib)
 add_subdirectory(Apps)
 
-# The whole install: the binary and the consumer module, with the provider it
-# includes from its own directory. eacp and Miro are static and linked in. A
-# tool entry of get_epm.cmake is exactly this install, whether unpacked from a
-# release archive or built from source.
+# The whole install: the binary (Apps/epm), the recipe SDK's headers and
+# per-configuration libraries (Lib/epm), and the consumer module, with the
+# provider it includes from its own directory. An installed prefix is what
+# get_epm.cmake uses: an epm on PATH (a release archive unpacked into a prefix
+# is one), else a tool entry of its own, built from source and installed there
+# (Debug and Release).
 install(FILES CMake/epm.cmake CMake/epm-provider.cmake DESTINATION share/epm/cmake)
 
 option(EPM_ENABLE_TESTS "Enable Tests for epm" ${PROJECT_IS_TOP_LEVEL})

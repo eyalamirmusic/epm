@@ -195,7 +195,9 @@ if (other_entry STREQUAL entry OR NOT other_entry MATCHES "^/cache/tool/local-[0
 endif ()
 
 # The consumer's generator reaches the build, with a build directory of its own;
-# its compilers too, unless they may be a cross toolchain's.
+# its compilers too, unless they may be a cross toolchain's. Without a native
+# consumer, get_epm_run_step also drops CC, CXX and the flags from the
+# environment.
 macro(expect_toolchain expected_name)
     get_epm_consumer_toolchain()
     set(expected_args ${ARGN})
@@ -224,7 +226,20 @@ expect_toolchain(build-ninja ${native})
 unset(CMAKE_TOOLCHAIN_FILE)
 set(CMAKE_CROSSCOMPILING TRUE)
 expect_toolchain(build-ninja ${native})
+
+# The linker type follows the compilers; a launcher (ccache) always reaches
+# the build, unless it is a list.
+set(CMAKE_LINKER_TYPE LLD)
+set(CMAKE_CXX_COMPILER_LAUNCHER ccache)
+expect_toolchain(build-ninja ${native} -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
 unset(CMAKE_CROSSCOMPILING)
+expect_toolchain(build-ninja ${native} -DCMAKE_CXX_COMPILER=/usr/bin/c++
+        -DCMAKE_LINKER_TYPE=LLD -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+set(CMAKE_CXX_COMPILER_LAUNCHER "ccache;--some-option")
+expect_toolchain(build-ninja ${native} -DCMAKE_CXX_COMPILER=/usr/bin/c++
+        -DCMAKE_LINKER_TYPE=LLD)
+unset(CMAKE_LINKER_TYPE)
+unset(CMAKE_CXX_COMPILER_LAUNCHER)
 unset(CMAKE_MAKE_PROGRAM)
 set(CMAKE_GENERATOR "Ninja Multi-Config")
 expect_toolchain(build-ninja-multi-config -G "Ninja Multi-Config"
@@ -233,6 +248,26 @@ set(CMAKE_GENERATOR "Visual Studio 17 2022")
 set(CMAKE_GENERATOR_TOOLSET ClangCL)
 expect_toolchain(build-visual-studio-17-2022 -G "Visual Studio 17 2022" -T ClangCL
         -DCMAKE_CXX_COMPILER=/usr/bin/c++)
+
+# A cross consumer's compiler environment (a Yocto-style SDK) stays out of the
+# build; a native consumer's reaches it.
+macro(expect_build_env expected_cc)
+    set(env_log "${WORK_DIR}/env.log")
+    file(WRITE "${env_log}" "")
+    get_epm_run_step(probe "${env_log}" "${CMAKE_COMMAND}" -E environment)
+    file(STRINGS "${env_log}" cc_lines REGEX "^CC=")
+
+    if (NOT "${cc_lines}" STREQUAL "${expected_cc}")
+        fail("build environment has '${cc_lines}', expected '${expected_cc}'")
+    endif ()
+endmacro()
+
+set(ENV{CC} /cross/bin/cc)
+set(CMAKE_TOOLCHAIN_FILE /some/toolchain.cmake)
+expect_build_env("")
+unset(CMAKE_TOOLCHAIN_FILE)
+expect_build_env("CC=/cross/bin/cc")
+unset(ENV{CC})
 
 file(REMOVE_RECURSE "${WORK_DIR}")
 

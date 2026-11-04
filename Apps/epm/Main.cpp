@@ -5,10 +5,11 @@
 #include <epm/Emit/Response.h>
 #include <epm/Graph/Graph.h>
 #include <epm/Recipe/RecipeBuild.h>
-#include <epm/Recipe/RecipeLoader.h>
+#include <epm/Recipe/RecipeRun.h>
 #include <epm/Resolve/Resolve.h>
 #include <epm/Spec/JsonFile.h>
 #include <epm/Util/Log.h>
+#include <epm/Util/Paths.h>
 
 #include <eacp/Core/Utils/Environment.h>
 
@@ -18,9 +19,7 @@
 #include <eacp/Core/App/Args.h>
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
-#include <eacp/Core/Utils/StdPath.h>
 
-#include <filesystem>
 #include <optional>
 
 using namespace eacp;
@@ -62,11 +61,7 @@ int fail(const std::string& message)
 epm::CacheRoot canonical(const epm::CacheRoot& cache)
 {
     Files::createDirectories(cache.path());
-    auto failure = std::error_code {};
-    const auto resolved =
-        std::filesystem::weakly_canonical(toStdPath(cache.path()), failure);
-
-    return failure ? cache : epm::CacheRoot {FilePath {resolved}};
+    return epm::CacheRoot {epm::resolvedPath(cache.path())};
 }
 
 int resolve()
@@ -171,13 +166,17 @@ int configure()
         const auto cacheRoot =
             canonical(cache.empty() ? epm::CacheRoot::fromEnvironment()
                                     : epm::CacheRoot {cache});
-        auto loader = epm::RecipeManifestLoader {cacheRoot};
+        // Absolute: a step runs in its recipe's directory.
+        auto loader =
+            epm::RecipeManifestLoader {cacheRoot, epm::resolvedPath(out) / "steps"};
         auto loadError = std::string {};
 
         if (auto project = loader.loadFile(manifest, inputs.env, loadError))
             inputs.project = std::move(*project);
         else
             return fail("the manifest " + manifest.str() + ": " + loadError);
+
+        inputs.rootRecipe = manifest;
 
         const auto result = epm::configureGraph(inputs, cacheRoot, loader);
 
@@ -234,24 +233,9 @@ int graphCMake()
     return 0;
 }
 
-// The module epm_add_recipe built: the project's compiler and flags, which
-// need only be close enough to epm's for the Recipe ABI to match.
-epm::RecipeLoad loadProjectModule(const FilePath& module, const FilePath& recipe)
-{
-    epm::Log::step("loading " + module.str()
-                   + (recipe.empty() ? "" : " (built from " + recipe.str() + ")"));
-    auto load = epm::loadRecipe(module);
-
-    if (!load.recipe)
-        load.error += "\n(was " + module.str()
-                      + " built with another compiler than epm's, "
-                      + epm::recipeSdk().compiler + "?)";
-
-    return load;
-}
-
-std::optional<epm::RecipeLoad> loadCachedModule(const FilePath& recipe,
-                                                const FilePath& cache)
+// The recipe executable for `recipe`, compiled into the cache unless it is
+// there already; nullopt once the failure is reported.
+std::optional<FilePath> builtRecipe(const FilePath& recipe, const FilePath& cache)
 {
     const auto cacheRoot =
         cache.empty() ? epm::CacheRoot::fromEnvironment() : epm::CacheRoot {cache};
@@ -266,29 +250,29 @@ std::optional<epm::RecipeLoad> loadCachedModule(const FilePath& recipe,
         return std::nullopt;
     }
 
-    epm::Log::step((build.cached ? "cached " : "built ") + build.module.str());
-    return epm::loadRecipe(build.module);
+    epm::Log::step((build.cached ? "cached " : "built ") + build.executable.str());
+    return build.executable;
 }
 
 int describe()
 {
     auto recipe = FilePath {};
-    auto module = FilePath {};
+    auto executable = FilePath {};
     auto env = FilePath {};
     auto cache = FilePath {};
     auto verbose = false;
 
     auto cli = Args::Parser {"epm describe",
-                             "Compiles an epm.cpp (or takes a --module built from "
-                             "one), loads it and prints the project it "
-                             "describes."};
-    cli.positional(recipe,
-                   "epm.cpp",
-                   "the recipe to describe (only informational with --module)");
-    cli.option("--module",
-               module,
-               "load this module instead of compiling the epm.cpp, such as "
-               "epm_add_recipe's Debug build, to debug it");
+                             "Compiles an epm.cpp (or takes an --exe built from "
+                             "one), runs it and prints the project it describes."};
+    cli.positional(
+        recipe,
+        "epm.cpp",
+        "the recipe to describe (with --exe, only the directory to run it in)");
+    cli.option("--exe",
+               executable,
+               "run this recipe executable instead of compiling the epm.cpp, "
+               "such as epm_add_recipe's Debug build, to debug it");
     cli.option("--env", env, "the env JSON (default: an empty env)");
     cli.option("--cache", cache, "the cache root (default: $EPM_CACHE)");
     cli.flag("--verbose", verbose, "log each step");
@@ -296,11 +280,11 @@ int describe()
     if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
         return *code;
 
-    if (recipe.empty() && module.empty())
-        return cli.fail("give an epm.cpp, a --module, or both");
+    if (recipe.empty() && executable.empty())
+        return cli.fail("give an epm.cpp, an --exe, or both");
 
-    if (!module.empty() && !Files::isFile(module))
-        return fail("no recipe module at " + module.str()
+    if (!executable.empty() && !Files::isFile(executable))
+        return fail("no recipe executable at " + executable.str()
                     + ": build its epm_add_recipe target first");
 
     epm::Log::setVerbose(verbose);
@@ -317,16 +301,25 @@ int describe()
                 return fail("cannot read the env file " + env.str());
         }
 
-        auto load = module.empty() ? loadCachedModule(recipe, cache)
-                                   : loadProjectModule(module, recipe);
+        if (executable.empty())
+        {
+            if (auto built = builtRecipe(recipe, cache))
+                executable = std::move(*built);
+            else
+                return 1;
+        }
 
-        if (!load)
-            return 1;
+        // In the epm.cpp's directory, as configure runs it; an --exe alone runs
+        // where epm was started.
+        const auto workingDirectory =
+            recipe.empty() ? FilePath {}
+                           : epm::resolvedPath(recipe).parentDirectory();
+        const auto run = epm::runRecipe(executable, envSpec, workingDirectory);
 
-        if (!load->recipe)
-            return fail(load->error);
+        if (!run.project)
+            return fail(run.error);
 
-        Console::print(Miro::toJSONString(load->recipe->describe(envSpec), 2));
+        Console::print(Miro::toJSONString(*run.project, 2));
     }
     catch (const std::exception& error)
     {
@@ -342,7 +335,8 @@ int recipeSdk()
 
     auto cli = Args::Parser {"epm recipe-sdk",
                              "Writes the compiler, standard, include directories, "
-                             "definitions and options epm compiles an epm.cpp "
+                             "definitions, options and per-configuration "
+                             "libraries epm compiles and links an epm.cpp "
                              "with, as CMake variables (epm.cmake's epm::recipe)."};
     cli.option("--out", out, "the CMake file to write").required();
 

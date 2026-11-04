@@ -29,7 +29,11 @@ struct ManifestPackage
     // "strict", "compatible" or "any".
     std::string abiMatch;
 
-    MIRO_REFLECT(name, git, tag, options, configs, mode, abiMatch)
+    // Declared with Recipe::add<T>: the recipe has build steps of its own for
+    // the package (`epm-recipe build --package <name>`).
+    bool customBuild = false;
+
+    MIRO_REFLECT(name, git, tag, options, configs, mode, abiMatch, customBuild)
 };
 
 // https://github.com/<owner>/<repo>.git for an owner/repo shorthand: anything

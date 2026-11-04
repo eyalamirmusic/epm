@@ -18,7 +18,7 @@ Everything here is PoC-level and may be replaced; the shape follows `PLAN.md`.
 cmake_minimum_required(VERSION 3.31)
 project(HelloEacp CXX)
 set(EPM_CONFIGS Release) # only Release archives of eacp; Debug builds of hello link them on multi-config generators (missing configs map to Release)
-include(cmake/get_epm.cmake)                 # finds or fetches epm, includes its module (§8)
+include(cmake/get_epm.cmake)                 # finds or builds epm, includes its module (§8)
 
 epm_add_package(
   NAME eacp
@@ -146,16 +146,31 @@ $EPM_CACHE  (default: <platform cache dir>/epm, e.g. ~/Library/Caches/epm or ~/.
       epm-targets.cmake             facade targets (§5), regenerated when a config is added
   build/<name>/<platform>/<fp12>/<Config>/   child build trees; deleted after the harvest
   cpm/                              CPM_SOURCE_CACHE for child builds (nested CPM deps)
-  tool/<ref>/bin/epm                a bootstrapped binary (§8), an epm install prefix
-  tool/<ref>/share/epm/cmake/epm.cmake   the module that goes with it
-  tool/<ref>.json                   its completeness marker: {ref, origin, url, version, builtAt}
-  tool/<ref>.lock                   CMake file(LOCK) held while bootstrapping
-  tool/latest.json                  the latest release's manifest.json, plus checkedAt
+  recipe/<key12>/epm-recipe         a compiled epm.cpp, with compile.log (Graph.md §2)
+  tool/<key>/                       a bootstrapped epm (§8), an epm install prefix:
+      bin/epm                       the binary
+      lib/<Config>/*.a              its recipe libraries, Debug and Release
+      include/                      their headers
+      share/epm/cmake/epm.cmake     the module that goes with it (+ epm-provider.cmake)
+      share/epm/epm-config          one line: the configuration of bin/epm (Release wins)
+      epm-bootstrap.log             the log of its fetch and builds
+      src/                          the fetched source (tag entries v<x.y.z>, <ref>)
+      build-<generator>[-debug]/, cpm/   build trees and CPM downloads; deleted once a
+                                    tag entry is built, kept by a local-<hash> entry
+  tool/<key>.json                   its completeness marker: {ref, origin, url, version, builtAt}
+  tool/<key>.lock                   CMake file(LOCK) held while bootstrapping
+  tool/latest.json                  the epm repository's release tags, plus checkedAt
   tmp/                              staging; final locations are reached by rename
 ```
 
+The build steps' files of `epm configure` (`<name>.in.json`, `<name>.out.json`,
+`<name>.command`) are not in the cache: they live in the consumer's build directory, under
+`<build>/epm/steps/` (`Docs/Graph.md` §6).
+
 Locks: one eacp `IPC::Lock` per package name, held while fetching a snapshot and while
-building an entry (waits up to an hour for another process). `IPC::Lock` keeps its lock
+building an entry (waits up to an hour for another process); the build step that builds
+the entry takes it itself (`Package::cached`, §5), and epm, which runs the step, holds
+none meanwhile. A recipe's compile holds `recipe-<key12>` the same way. `IPC::Lock` keeps its lock
 files in its own per-user directory (`<appData>/eacp/Locks`) and takes no path, so the lock
 is named `epm-<sha256(cache root)[:12]>-<name>` to keep separate caches independent; there
 is no `locks/` directory. The cache root is resolved (`weakly_canonical`) before use so
@@ -200,11 +215,19 @@ the tools; `epm cache path` prints the cache root.
 
 ## 5. Binary build and harvest
 
-Under the package lock the entry is picked again (another process may have finished it) or
-created (`manifest.json` first). Then, for each `Config` the request needs that the entry
-lacks a marker for, and only those (child build dir
-`build/<name>/<platform>/<fp12>/<Config>`; whatever an unmarked config left in `lib/`,
-`gen/` or its export files is removed first):
+A package's entry is built by its build step (`Docs/Graph.md` §2): `Package::cached` and
+`CMakeBuild` (`Recipe/`), which run in the recipe executable that owns the step under
+`epm configure`, and in the epm process for `epm resolve` (`epm_add_package`), for an owner
+without a recipe file, and wherever there are no recipe executables. The default steps do what follows; custom steps may change
+the options, definitions, configs and generator, or add files after the build, through the
+same two.
+
+`cached` decides from the request's mode whether anything is built (`Spec/Request.h`,
+`decide`; §9 for picking). If so, under the package lock it picks the entry again (another
+process may have finished it) or creates it (`manifest.json` first), and clears whatever
+each missing config, one the entry lacks a marker for, left in `lib/`, `gen/` or its export
+files. Then `CMakeBuild::run` configures, builds and harvests each of those configs, and
+only those, in turn (child build dir `build/<name>/<platform>/<fp12>/<Config>`, made fresh):
 
 ```
 cmake -S <src> -B <builddir> -G <generator>
@@ -216,14 +239,20 @@ cmake -S <src> -B <builddir> -G <generator>
       -DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=<builddir>/epm-export.cmake
       -DEPM_EXPORT_FILE=<prefix>/export-<Config>.cmake
       -DEPM_EXPORT_NAMESPACE=epm_<config>::          # epm_debug:: / epm_release::
-      -D<OPTION>=<VALUE> …                           # from the request
+      -D<OPTION>=<VALUE> …                           # the request's, as CMakeBuild::option left them
+      -D<NAME>=<VALUE> …                             # CMakeBuild::define, last
 cmake --build <builddir> --parallel
 ```
 
+A package with dependencies also gets the nested flags of `Docs/Graph.md` §10. The options
+and definitions are part of the fingerprint (`Package::fingerprint(source, build)`), so
+the entry is keyed by what was actually passed.
+
 - Generator: the consumer's generator (and `CMAKE_MAKE_PROGRAM`) if it is single-config;
   otherwise `Ninja` if found on PATH (passed as `CMAKE_MAKE_PROGRAM`), else
-  `Unix Makefiles` (or the platform default on Windows). `-D` flags whose env value is empty
-  are left out; `-DCMAKE_TOOLCHAIN_FILE` is passed when the consumer has one.
+  `Unix Makefiles` (or the platform default on Windows); `CMakeBuild::generator` overrides
+  it. `-D` flags whose env value is empty are left out; `-DCMAKE_TOOLCHAIN_FILE` is passed
+  when the consumer has one.
 - `epm-export.cmake` (source of truth: `CMake/epm-export.cmake` in this repo, embedded into
   the binary at build time and written into `<builddir>` before configure) does:
   `cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR} CALL epm_export_all_targets)`.
@@ -260,9 +289,15 @@ cmake --build <builddir> --parallel
   For eacp this shares the two `*_Register.cpp` files; the `.o` files and the generated
   include dirs (whose `.d` files embed the build path) stay per config. `gen/shared` is
   never cleared.
-- Write `<Config>.json` (the config is now in the entry), then regenerate
-  `epm-targets.cmake` for the configs whose markers exist. If any export file mentions
-  `Threads::Threads`, it adds `find_package(Threads REQUIRED)` before the includes:
+- `CMakeBuild::harvest` marks nothing. Once `cached`'s callback has returned (`run()`,
+  then the `afterBuild` hook), `cached` adds each config the callback left harvested (an
+  export file with its `.names`) to the entry: it writes `<Config>.json` (the config is
+  now in the entry) and regenerates `epm-targets.cmake` for the configs whose markers
+  exist (`addConfigToEntry`); a config left without an export file fails the step. A
+  callback that throws adds none, so a first build that fails leaves an entry holding
+  only `manifest.json`, which the next run picks (§9) and builds into. If any export file
+  mentions `Threads::Threads`, the facade adds `find_package(Threads REQUIRED)` before the
+  includes:
 
 ```cmake
 include("${CMAKE_CURRENT_LIST_DIR}/export-Debug.cmake")      # one per config present
@@ -290,14 +325,18 @@ endif()
   of those itself the guard keeps the consumer's target and the program may end up with
   two copies. To be addressed after the PoC.
 - The marker is written before the facade, so the facade never names a config whose
-  files may still be cleared; a failure in a later config leaves the earlier ones usable.
+  files may still be cleared. A failure in any config of a run (or in `afterBuild`)
+  marks none of that run's configs, the ones harvested before it included: the next run
+  clears and builds them all again.
 
 ## 6. Repository layout (mirrors eacp / AgentWorkspace)
 
 ```
 epm/
   CMakeLists.txt            CMake 3.31; options EPM_ENABLE_TESTS (default ON when top-level);
-                            install: bin/epm, share/epm/cmake/epm.cmake
+                            install: bin/epm, lib/<Config>/, include/,
+                            share/epm/cmake/{epm,epm-provider}.cmake,
+                            share/epm/epm-config (§8)
   README.md
   .clang-format .gitignore  copied from /Users/eyalamir/Code/eacp
   CLAUDE.md                 conventions pointer (eacp style, NanoTest, Miro for JSON)
@@ -306,19 +345,22 @@ epm/
   CMake/get_epm.cmake       the file users vendor and include: finds the binary (§8)
   CMake/epm.cmake           consumer module (epm_add_package), installed with the binary
   CMake/epm-export.cmake    injected into child builds (see §5)
-  Lib/epm/                  static library `epm-core`, namespace `epm::`
+  Lib/epm/                  static libraries `epm-recipe` (what a recipe executable links,
+                            build steps included) and `epm-core` (the driver), namespace
+                            `epm::`; CLAUDE.md has the current layout
     Util/Sha256.{h,cpp}     lifted from /Users/eyalamir/Code/PackagesCPP/Lib/pkgcpp/Sha256.*
     Util/Git.{h,cpp}        lifted from AgentWorkspace
     Util/Command, Log, Text, Timestamp   child processes, findExecutable, --verbose, text
     Cache/CacheRoot, SourceCache, BinaryCache, PackageLock
     Cache/Fingerprint       AbiFingerprint, EPM_ABI_MATCH policies, the configure note
     Cache/CacheListing      `epm cache ls`
-    Spec/Request, Env       Miro-reflected structs for the JSON files
+    Spec/Request, Env       Miro-reflected structs for the JSON files; Request's
+                            `decide` is the mode decision
     Spec/Platform           the platform name (§9)
     Build/ChildBuild, Harvest   (+ EmbeddedScripts.cpp.in: epm-export.cmake compiled in)
     Build/Configs           config validation, mapping and the facade's selector
     Emit/Response
-    Resolve/Resolve         the pipeline and the mode decision
+    Resolve/Resolve         the `epm resolve` pipeline (the default build steps, in-process)
   Apps/epm/Version.h.in     generated Version.h: epm::version from project(VERSION)
   Apps/epm/Main.cpp         Apps::runConsole + manual subcommand dispatch (resolve,
                             cache path, cache ls, --version)
@@ -354,25 +396,12 @@ There is one version: `project(epm VERSION …)`. `epm --version` prints it (thr
 `v*` tag. Releasing is: bump `project(VERSION)`, merge to main, tag `vX.Y.Z`. Nothing is
 edited after the release.
 
-### Release manifest
-
-The publish job of release.yml writes `manifest.json` next to the archives and
-`SHA256SUMS` (`.github/scripts/make-manifest.cmake`):
-
-```json
-{ "schema": 1, "version": "0.1.2", "tag": "v0.1.2",
-  "assets": { "macos-universal": { "file": "epm-0.1.2-macos-universal.tar.gz",
-                                   "sha256": "<hex>" },
-              "linux-x64": { … }, "linux-arm64": { … },
-              "windows-x64": { "file": "epm-0.1.2-windows-x64.zip", … },
-              "windows-arm64": { … } } }
-```
-
-get_epm reads it from `https://github.com/eyalamirmusic/epm/releases/latest/download/manifest.json`,
-a plain download that follows GitHub's redirect to the newest non-prerelease release; the
-GitHub API is not used (unauthenticated it is rate-limited). The rolling `nightly`
-prerelease carries a manifest too (tag `nightly`), but `releases/latest` never points at a
-prerelease, so get_epm never picks it up.
+get_epm never downloads an epm binary. A recipe (`Docs/Graph.md` §2) links epm's static
+libraries, which must come from the compiler on the machine that uses them, so an epm
+that is not installed already is built from source there: Debug and Release, once per
+version (a tag), or incrementally at every configure for a local checkout. Measured on
+an M-series Mac: a cold configure of `Examples/HelloGraph` (Debug and Release of epm
+and eacp) takes 36 s of wall time, a reconfigure under 1 s.
 
 ### Version range
 
@@ -391,21 +420,17 @@ First in-range match wins:
    get_epm.cmake (true inside this repository, where `build/Apps/epm/epm` has no installed
    module). Otherwise a warning, and the search goes on.
    - Then `EPM_SOURCE_DIR` (CMake variable, else environment; relative to the top-level
-     source directory), when set, skipping 2–5: an epm checkout (a directory whose
-     `CMakeLists.txt` has `project(epm`, else configure stops), built and installed with
-     `--prefix <cache>/tool/local-<sha256(real path)[:12]>` on every configure, under
-     that entry's lock. The build directory stays in the entry, one per generator
-     (`build-ninja/`, …), so after the first build it is an incremental `cmake --build`
-     plus `cmake --install`. Release build, `EPM_ENABLE_TESTS=OFF`, through the same
-     clean environment as step 5 but with the consumer's generator and make program, and
-     its C/C++ compilers when known and not possibly a cross toolchain's (no toolchain
-     file, `CMAKE_SYSTEM_NAME` the host's); as a top-level include get_epm runs before
-     languages are enabled, so usually none. Only the first configure of a build
-     directory passes them; delete the entry to change compilers. The entry's `bin/epm` and `share/epm/cmake/epm.cmake` are used and
-     the marker rewritten; the version is printed (`-- epm: using epm 0.1.3 built from
-     …`), never checked against `EPM_VERSION`. For testing an unreleased epm from a
-     consumer. `EPM_BOOTSTRAP_SOURCE_DIR`, the old name, is read as `EPM_SOURCE_DIR`
-     when neither the variable nor the environment variable is set, with
+     source directory), when set, skipping 2–4: an epm checkout (a directory whose
+     `CMakeLists.txt` has `project(epm`, else configure stops), built and installed into
+     `<cache>/tool/local-<sha256(real path)[:12]>` on every configure, under that
+     entry's lock, as *Building an entry* below describes. Its build directories stay
+     in the entry, so after the first build each configure is an incremental
+     `cmake --build` plus `cmake --install` of Debug and Release. The entry's `bin/epm`
+     and `share/epm/cmake/epm.cmake` are used and the marker rewritten; the version is
+     printed (`-- epm: using epm 0.1.3 built from …`), never checked against
+     `EPM_VERSION`. For testing an unreleased epm from a consumer.
+     `EPM_BOOTSTRAP_SOURCE_DIR`, the old name, is read as `EPM_SOURCE_DIR` when neither
+     the variable nor the environment variable is set, with
      `-- epm: EPM_BOOTSTRAP_SOURCE_DIR is deprecated; using it as EPM_SOURCE_DIR`.
    - Else, when get_epm.cmake is itself `<dir>/CMake/get_epm.cmake` of an epm checkout
      (`<dir>/CMakeLists.txt` has `project(epm`, the same check) and no user
@@ -419,66 +444,154 @@ First in-range match wins:
 2. `epm` on `PATH` (`find_program(… NO_CACHE)`, PATH only, never re-rooted by a cross
    toolchain), when in range and `<dir of binary, symlinks resolved>/../share/epm/cmake/epm.cmake`
    exists; otherwise skipped with a verbose note. `-- epm: using epm 0.1.2 from /usr/local/bin/epm`.
-3. The newest in-range entry `<cache>/tool/v*/` with its marker, *unless* the latest
-   release (step 4's manifest) is newer and also in range: without that exception a
-   machine would stay on the first version it ever downloaded. Reading the manifest here
-   costs no network within the 24 hours below.
-4. A release. The latest manifest is cached as `<cache>/tool/latest.json`
-   (`{schema, checkedAt: <unix seconds>, manifest}`) and re-fetched only when older than
-   24 hours or when `EPM_UPDATE` is ON (a one-off: get_epm removes it from the cache
-   after the configure); if the fetch fails (offline) the stale copy is
-   used, and with no copy the step is skipped. If the latest version is in range it is
-   used; otherwise, if `EPM_VERSION` has an exact lower bound `x.y.z`,
-   `releases/download/vx.y.z/manifest.json` is tried the same way. Those are the only two
-   releases ever looked at. `assets[<platform>].file` is downloaded from
-   `releases/download/<tag>/` (`TLS_VERIFY ON`) into `<cache>/tmp/`, its `file(SHA256)`
-   compared with the manifest (by hand, not `EXPECTED_HASH`, whose mismatch would end the
-   configure), and it is extracted into `<cache>/tool/<tag>/`. `bin/epm --version` must
-   print the manifest's version, which catches a binary the host cannot run (too old a
-   glibc, no libcurl, no Visual C++ runtime). The marker is written last, with
-   `"origin": "release"`. `-- epm: downloaded epm 0.1.2 (macos-universal) into …/tool/v0.1.2`.
-   Any failure removes the partial files, prints `-- epm: release download failed
-   (<reason>), building from source` and goes on. `EPM_BOOTSTRAP_NO_DOWNLOAD=ON` skips
-   the download (the manifest still chooses the version to build).
-5. A source build of the chosen version: the release from step 4, else `v<exact lower
-   bound>`, else `main`. GitHub's tarball of that ref is downloaded into `<cache>/tmp/`,
-   configured, built and `cmake --install`ed with `CMAKE_INSTALL_PREFIX=<cache>/tool/<ref>`.
-   The build is a host Release build: it runs through `cmake -E env --unset=…` so no
-   toolchain file, generator, build type or `CMAKE_OSX_ARCHITECTURES` of the consumer
-   (variable or environment) reaches it; a consumer targeting iOS or Android still gets a
-   macOS/Linux/Windows `epm`. A failed build is fatal, with the end of its output and the
-   log path (`<cache>/tool/<ref>/build/epm-bootstrap.log`, kept). `-- epm: building epm
-   v0.1.2 from source into … (first time only)`; `EPM_VERBOSE` streams the build. The
-   marker carries `"origin": "source"`. If the source cannot be downloaded either, an
-   in-range cached entry is used if there is one, else configure stops.
+3. The newest in-range entry `<cache>/tool/v*/` with its marker, `bin/epm` and
+   `share/epm/cmake/epm.cmake`, *unless* the newest release tag in range (step 4's
+   listing) is newer: without that exception a machine would stay on the first version
+   it ever built. Reading the listing here costs no network within the 24 hours below.
+4. A source build of a release tag. The release versions are the `refs/tags/v<x.y.z>`
+   of `git ls-remote --tags --refs <repository>` (numeric versions only: no `nightly`,
+   no prerelease spellings), where the repository is `EPM_REPOSITORY`, by default
+   `https://github.com/eyalamirmusic/epm`. The listing is kept in
+   `<cache>/tool/latest.json` (`{schema: 2, checkedAt: <unix seconds>, repository,
+   versions}`) and redone only when it is older than 24 hours, lists another
+   repository, or `EPM_UPDATE` is ON (a one-off: get_epm removes it from the cache after
+   the configure); if listing fails (offline, no git) a stale copy is used. A copy that
+   is not in that form (another schema, a `checkedAt` that is not unix seconds,
+   `versions` not a list) counts as none; `Tests/GetEpmLatest.cmake`
+   (`ctest -R get_epm_latest`) tests the reading, offline. The tag
+   built is `v<newest listed version in range>`. With versions listed but none in range
+   of a set `EPM_VERSION`, configure stops, naming the releases. With no listing at all,
+   it is `v<exact lower bound x.y.z>` of `EPM_VERSION`, else `main`.
+   The source is fetched into `<cache>/tool/<tag>/src`: with git, `git init`,
+   `git fetch --depth 1 <repository> <tag>` and `git checkout --detach FETCH_HEAD`
+   (`GIT_TERMINAL_PROMPT=0`; `-- epm: fetching epm v0.1.3 from <repository>`); without
+   git, and only for a `https://github.com/` repository, GitHub's tarball
+   `<repository>/archive/<tag>.tar.gz`, downloaded and extracted through
+   `<cache>/tmp/`. It is then built and installed into `<cache>/tool/<tag>/` (*Building an
+   entry*), `bin/epm --version` must run, the build directories are pruned, and the
+   marker is written last. `-- epm: built epm 0.1.3 into …/tool/v0.1.3`. If the source
+   cannot be had, an in-range cached entry is used if there is one (`-- epm: <reason>;
+   using epm 0.1.2 from the cache`), else configure stops.
 
-Steps 4 and 5 run under `file(LOCK <cache>/tool/<key>.lock)`; a configure that waited on
-the lock finds the marker the first one wrote. A release download and a source build of
-the same version share the entry `tool/vX.Y.Z`.
+Step 4 runs under `file(LOCK <cache>/tool/<key>.lock)` (up to an hour); a configure
+that waited on the lock finds the marker the first one wrote. An entry without its
+marker (with a readable `version`), `bin/epm` and `epm.cmake` is deleted and built anew,
+its marker removed first: step 3 reads markers without the lock, and a half-built entry
+has `bin/epm` and `epm.cmake` as soon as Debug is installed. The `EPM_SOURCE_DIR` step
+holds its entry's lock the same way, at every configure.
 
-Every tool entry, whether unpacked from a release archive, built from source, or an epm
-installed on PATH, is the layout `cmake --install` produces: `bin/epm[.exe]` and
-`share/epm/cmake/epm.cmake`. get_epm finally sets `EPM_EXECUTABLE` (cache `INTERNAL`) and
+### Building an entry
+
+The source is configured, built and `cmake --install`ed with
+`--prefix <entry>`, Debug and then Release, so the Release `bin/epm` is the one that
+stays (*Install*, below):
+
+- A single-config generator gets two build directories, `<entry>/build-<generator>-debug`
+  and `<entry>/build-<generator>` (`build-ninja`, …; `build` when the consumer's
+  generator is not known), each with its `CMAKE_BUILD_TYPE`; a multi-config generator
+  gets one, `<entry>/build-<generator>`, built and installed with `--config Debug` and
+  `--config Release`.
+- Every configure gets `-DEPM_ENABLE_TESTS=OFF` and, unless the environment sets
+  `CPM_SOURCE_CACHE`, `-DCPM_SOURCE_CACHE=<entry>/cpm`, so both builds share one
+  download of epm's dependencies.
+- It is a host build. Each step runs through `cmake -E env --unset=…`
+  (`CMAKE_TOOLCHAIN_FILE`, `CMAKE_GENERATOR`, `CMAKE_GENERATOR_PLATFORM`,
+  `CMAKE_GENERATOR_TOOLSET`, `CMAKE_BUILD_TYPE`, `CMAKE_CONFIGURATION_TYPES`,
+  `CMAKE_OSX_ARCHITECTURES`, `CMAKE_INSTALL_PREFIX`, `DESTDIR`), so nothing of the
+  consumer's toolchain file, build type or target architectures reaches it, as variable
+  or environment; a consumer targeting iOS or Android still gets a macOS or Linux epm.
+  A consumer that is not native (below) also has `CC`, `CXX`, `CFLAGS`, `CXXFLAGS` and
+  `LDFLAGS` unset, so a cross SDK's environment (Yocto-style) does not leak in.
+  It gets the consumer's generator (with its toolset and make program), its
+  `CMAKE_<C|CXX>_COMPILER_LAUNCHER` (ccache; a single program, not a list), and its C and
+  C++ compilers and `CMAKE_LINKER_TYPE` when they are known and native (no toolchain
+  file, not cross-compiling, `CMAKE_SYSTEM_NAME` the host's): eacp's Release IPO needs
+  a linker that reads the compiler's LTO objects, such as lld for clang on Linux. As a
+  top-level include get_epm runs before languages
+  are enabled, so usually none are known, and the build finds the same default (`CC`,
+  `CXX`, the system's) the consumer will. That way epm's recipe libraries come from the
+  compiler that builds the consumer's `epm_add_recipe` target (`Docs/Graph.md` §2).
+- A build directory is configured once (`epm-configured` is written in it after the
+  configure succeeds); later builds are incremental, and the compilers of that first
+  configure stay: delete the entry to change them.
+- A cold build prints `-- epm: building epm v0.1.3 into <entry> (Debug and Release;
+  first time only)`, then one status line per phase (`-- epm: epm v0.1.3: configuring
+  Debug`, `building Debug`, `installing Debug`, the same for Release; one `configuring`
+  with a multi-config generator). Incremental steps are verbose notes only;
+  `EPM_VERBOSE` streams the build. Every command and its output is appended to
+  `<entry>/epm-bootstrap.log`, which is kept. A failed step is fatal, with the end of its
+  output and the log path.
+- Once a tag entry is built, its build directories and `cpm/` are deleted, unless the
+  installed epm's recipe SDK names a path inside them (an epm that fell back to its
+  build tree, `Docs/Graph.md` §2); `src/` and the log stay. A `local-<hash>` entry keeps
+  its build directories for the next incremental build.
+
+### The entry
+
+Every tool entry, whether built from a tag, built from a checkout, or an epm installed
+on PATH, is the layout `cmake --install` produces (*Install*, below). get_epm finally
+sets `EPM_EXECUTABLE` (cache `INTERNAL`) and
 includes `<entry>/share/epm/cmake/epm.cmake`. The pick is also remembered as
 `EPM_SELECTED_EXECUTABLE`, so the next configure picks afresh (a newer release, a changed
 range, a new PATH install) instead of mistaking it for a user-given `EPM_EXECUTABLE`.
 The same goes for a path the pre-get_epm `epm.cmake` bootstrapped
 (`EPM_BOOTSTRAPPED_EXECUTABLE`, removed from the cache on the first get_epm configure).
 
-The marker `<cache>/tool/<key>.json` holds `schema`, `ref`, `origin` (`release` or
-`source`), `url` (the asset, tarball or checkout it came from), `version` and `builtAt`.
+The marker `<cache>/tool/<key>.json` holds `schema` (1), `ref` (the tag or ref, or the
+`local-<hash>` key), `origin` (always `source`), `url` (`<repository>@<ref>`, the
+tarball, or the checkout's path), `version` and `builtAt`.
 
-Source overrides (each skips steps 2–4): `EPM_SOURCE_REF` (tag, branch or commit; entry
-`tool/<ref>`) and `EPM_SOURCE_URL` (a tarball; entry `<ref or "url">-<sha256(url)[:12]>`);
-a local checkout is `EPM_SOURCE_DIR` (step 1). Entries for branches (`main`) are not
-refreshed. Refs are sanitised to `[A-Za-z0-9._-]` for the directory name.
+Source overrides (each skips steps 2–3 and step 4's choice of tag, and is built as
+step 4 builds): `EPM_SOURCE_REF` (tag, branch or commit; entry `tool/<ref>`) and
+`EPM_SOURCE_URL` (a source tarball, downloaded instead of fetched with git; entry
+`<ref or "url">-<sha256(url)[:12]>`); a local checkout is `EPM_SOURCE_DIR` (step 1).
+Entries for branches (`main`) are not refreshed. Refs are sanitised to `[A-Za-z0-9._-]`
+for the directory name.
+
+A tag entry is keyed by its tag only, not by compiler: the first configure that builds
+`tool/v0.1.3` fixes the compiler of its recipe libraries for every project on the
+machine. A project built with another compiler family then stops at `epm_add_recipe`'s
+compiler check (`Docs/Graph.md` §2) until that entry is deleted. A known limitation.
 
 The cache root is the one the binary uses: the `EPM_CACHE` CMake variable (passed as
 `--cache`), else the `EPM_CACHE` environment variable, else eacp's
 `FilePath::cacheDirectory()` + `/epm` mirrored in CMake: `$HOME/Library/Caches` on macOS,
 `$XDG_CACHE_HOME` or `$HOME/.cache` on Linux, `%LOCALAPPDATA%` on Windows.
 
-`cmake --install` of epm installs exactly `bin/epm` and `share/epm/cmake/epm.cmake`;
+### Install
+
+`cmake --install <build> --config <Config>` of epm installs exactly:
+
+```
+bin/epm                     the Release binary: another configuration installs it
+                            only into a prefix whose bin/epm is not a Release one
+lib/<Config>/               libepm-recipe.a, libeacp-network.a, libeacp-core.a,
+                            libfmt.a, libminiz.a, libMiro.a, libResEmbed.a: the
+                            recipe libraries, in link order
+include/                    epm/ (the recipe headers: the recipe API, Spec, Cache,
+                            Build, Util), eacp/Core, eacp/Network (PackageLock.h
+                            includes its IPC/Lock.h), Miro (and MiroResources.h),
+                            ResEmbed, ea_data_structures: the headers of their
+                            public interface
+share/epm/cmake/            epm.cmake and epm-provider.cmake
+share/epm/epm-config        one line: the configuration of the installed bin/epm, so
+                            Release always wins bin/epm and a reinstall of the same
+                            configuration refreshes it
+```
+
+Installs of several configurations share one prefix. The archives have the same file
+names in every configuration (`libfmt.a`, never `libfmtd.a`), and are built without LTO
+(plain object code, not the bitcode of eacp's Release LTO, which only an LTO link by the
+very same compiler reads). On Linux, `eacp-network` links libcurl: building epm needs its
+development package (`find_package(CURL REQUIRED)`), and recipes link it as one of the
+SDK's link options, by name rather than by the build machine's path to it: `-lcurl` (or
+`-l:<file>` for a versioned soname such as `libcurl.so.4`), after `-L<dir>` only when the
+compiler does not search that directory already (`epm_shared_library_options` in
+`Lib/epm/CMakeLists.txt`, for every imported shared library); frameworks and static
+archives keep their paths. The binary finds its install at run time: `<prefix>` is two
+levels above the real executable, and every `lib/*/` holding all the archives is a
+configuration (`Docs/Graph.md` §2). A top-level single-config build of epm defaults
+`CMAKE_BUILD_TYPE` to Release, so it always has a configuration to install.
 `epm --version` prints `project(epm VERSION …)` through the generated `Version.h`.
 
 ## 9. Configs and ABI matching
@@ -512,8 +625,9 @@ the current one:
 `compatible` ignores the compiler path, its minor and patch version and
 `systemProcessor` (the platform already encodes the architecture), so Xcode's clang and
 the command-line tools' clang share entries. When several entries qualify the one picked
-is: an exact (strict) match first, then one holding every needed config, then the one
-holding most of them, then the newest. With none, a new entry is created for the current
+(`pickEntry`) is: one holding any config at all before an empty one (what a failed build
+leaves, §5), then an exact (strict) match, then one holding every needed config, then the
+one holding most of them, then the newest. With none, a new entry is created for the current
 fingerprint. Missing configs are built into whichever entry was picked, with the current
 toolchain (its `<Config>.json` records which). Using an entry that is not an exact match
 adds a note to the response and the status line:
@@ -525,5 +639,5 @@ adds a note to the response and the status line:
 `macos-x64`; `ios-arm64`, and `ios-simulator-arm64` / `ios-simulator-x64` when
 `CMAKE_OSX_SYSROOT` contains "simulator" (any case); `windows-x64`, `windows-arm64`,
 `linux-x64`, `linux-arm64` (x86_64/AMD64 → x64, aarch64 → arm64); `android-<abi>`;
-anything else `<system name>-<processor>` in lower case. The five desktop names are the
-release asset keys `get_epm.cmake` uses.
+anything else `<system name>-<processor>` in lower case. release.yml names its archives
+after the five desktop names.

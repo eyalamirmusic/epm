@@ -41,7 +41,10 @@ manifest and dependency-graph stage that supersedes its per-call flow (`Docs/Gra
   source directory or an install prefix.
 - Reproducing Conan/vcpkg recipes. A package that already has a good `CMakeLists.txt` and
   `install(EXPORT)` needs no recipe. A small recipe is needed only for external prebuilts and
-  for libraries without install rules.
+  for libraries without install rules. *Revisited: the graph stage's `epm.cpp` is a C++
+  recipe that also carries build steps. A package still needs none (the default steps
+  build any CMake project); `add<T>` gives one custom steps, run in the declaring
+  recipe's executable (`Docs/Graph.md` §2).*
 
 ---
 
@@ -197,6 +200,10 @@ in `epm.cmake`, store in the cache → fall back to building epm from source int
 (pkgcpp approach; one-time cost per machine; the tool's own dependencies never enter the
 consumer's build). The module pins an epm version the same way CPM.cmake pins itself.
 `get_epm.cmake` mirrors `get_cpm.cmake` for projects that do not want to vendor the module.
+*Revisited: `get_epm.cmake` is the bootstrap, with an `EPM_VERSION` range instead of a
+pin, and it never downloads a binary: recipes (`Docs/Graph.md` §2) link epm's static
+libraries, so epm is always built from source, Debug and Release, with the local
+compiler (`Docs/PoC.md` §8).*
 
 ### 4.5 Build configuration handed to the tool
 
@@ -320,6 +327,12 @@ recorded fingerprint is the env-derived subset of 6.1 (`Docs/PoC.md` §3, §9).
    contain the stage path (check and warn); strip build dir from installed `.pc`/cmake files.
 5. Pack the stage as `tar.zst` (decision to confirm vs zip; tar keeps symlinks and modes for
    macOS frameworks) into the CAS, write index entry + manifest, rename into `bin/`.
+
+*Revisited: there is no generic `epm build`. Each package's build is a step of user code
+(`Package::build()`, by default the CMake flow of `CMakePackage`) that `epm configure` runs
+in the owning recipe's executable, in dependency order; the step takes the package lock
+itself and builds into the entry directly, without staging, install or packing
+(`Docs/Graph.md` §2 and §6, `Docs/PoC.md` §5).*
 
 ### 6.4 Consuming a prebuilt
 
@@ -532,5 +545,7 @@ AgentWorkspace reads `epm.lock`; OCI/S3 stores; optional `.git`-keeping checkout
 
 Still open, with defaults chosen (no action needed unless you object):
 
-- **Bootstrap order**: download release binary first, build-from-source fallback.
+- **Bootstrap order**: build from source on the consumer's machine, never download a
+  binary: an `epm.cpp` recipe links epm's static libraries, which must come from the
+  local compiler (`Docs/PoC.md` §8).
 - **Full-mode dependency keys for static libraries** (strict; opt-in relaxation later).

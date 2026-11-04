@@ -6,12 +6,16 @@ using namespace epm;
 
 namespace
 {
+// Leaf's build steps, run in this recipe's executable: the default ones plus
+// an option, which the test finds in Leaf's entry.
+struct LeafSteps final : CMakePackage
+{
+    void configure(CMakeBuild& build) override { build.option("LEAF_EXTRA", "ON"); }
+};
+
 struct Mid final : Recipe
 {
-    void describe(Project& project, const Env&) override
-    {
-        project.add("Leaf", "@LEAF_URL@", "v1");
-    }
+    void describe() override { add<LeafSteps>("Leaf", "@LEAF_URL@", "v1"); }
 };
 } // namespace
 

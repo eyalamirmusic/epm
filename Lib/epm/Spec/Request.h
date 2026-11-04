@@ -5,6 +5,7 @@
 #include <Miro/Reflect.h>
 
 #include <map>
+#include <optional>
 #include <string>
 
 namespace epm
@@ -51,4 +52,20 @@ struct Request
                  abiMatch,
                  deps)
 };
+
+// Why the request cannot be resolved, or nullopt when it is well formed.
+std::optional<std::string> requestError(const Request& request);
+
+enum class Decision
+{
+    useSource,
+    useBinary,
+    buildBinary,
+    missingBinary
+};
+
+// MODE source: always source. A cached binary is used whenever one exists.
+// Otherwise prebuilt builds it, binary-only fails, and auto builds it only
+// when buildMissingBinaries allows, else falls back to source.
+Decision decide(const Request& request, bool binaryExists);
 } // namespace epm

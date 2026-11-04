@@ -4,6 +4,7 @@
 #include <epm/Spec/Env.h>
 #include <epm/Spec/Request.h>
 
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -27,7 +28,14 @@ Generator chooseGenerator(const Env& env,
 // One configuration of a dependency, built straight into a binary cache prefix.
 struct ChildBuild
 {
+    // The package's name, and its options as -D<KEY>=<VALUE>.
     Request request;
+
+    // Raw -D<NAME>=<VALUE> definitions passed after the options, so one may
+    // override what epm itself passes (CMAKE_CXX_STANDARD, ...). NAME may
+    // carry a :TYPE.
+    std::map<std::string, std::string> definitions;
+
     Env env;
     Generator generator;
     eacp::FilePath sourceDirectory;
@@ -42,7 +50,9 @@ struct ChildBuild
     std::string dependencyGraph;
 
     // Handed to a child with dependencies as EPM_EXECUTABLE, so a get_epm.cmake
-    // of its own finds this epm.
+    // of its own finds the epm that runs the graph. It comes from the build
+    // step's input (BuildInput::epmExecutable): inside a recipe executable,
+    // this process is the recipe, not epm.
     eacp::FilePath epmExecutable;
 };
 
@@ -72,6 +82,10 @@ struct ChildBuildResult
 };
 
 // Writes epm-export.cmake into the build directory (with dependencies also
-// epm-nested.cmake and epm-graph.cmake), then configures and builds.
-ChildBuildResult runChildBuild(const ChildBuild& build);
+// epm-nested.cmake and epm-graph.cmake), then runs the configure step. The
+// output goes to epm-configure.log in the build directory.
+ChildBuildResult configureChildBuild(const ChildBuild& build);
+
+// `cmake --build` of a configured build directory, logged to epm-build.log.
+ChildBuildResult buildChildBuild(const ChildBuild& build);
 } // namespace epm

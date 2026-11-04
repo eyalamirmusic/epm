@@ -42,8 +42,11 @@ template <typename T>
 bool saveJsonFile(const eacp::FilePath& path, const T& value)
 {
     const auto text = Miro::toJSONString(value, 2) + "\n";
+    const auto directory = path.parentDirectory();
 
-    if (!eacp::Files::createDirectories(path.parentDirectory()))
+    // A bare file name has no parent, and createDirectories("") fails.
+    // (Upstream candidate: eacp's createDirectories should accept it.)
+    if (!directory.empty() && !eacp::Files::createDirectories(directory))
         return false;
 
     try

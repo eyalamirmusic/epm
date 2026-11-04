@@ -49,8 +49,20 @@ struct ResolvedPackage
     // Which source set each effective value (Graph/Merge.h).
     std::map<std::string, std::string> provenance;
 
+    // The options the build step built or configured the package with
+    // (BuildOutput::options, a hook's included), else request.options: what
+    // graph.cmake's OPTIONS hands a source package.
+    std::map<std::string, std::string> options;
+
+    // options, or request.options for a graph.json written without them.
+    const std::map<std::string, std::string>& effectiveOptions() const
+    {
+        return options.empty() ? request.options : options;
+    }
+
     MIRO_REFLECT(name,
                  request,
+                 options,
                  mode,
                  sourceDir,
                  source,
