@@ -8,7 +8,7 @@ file(REMOVE_RECURSE "${WORK_DIR}")
 execute_process(COMMAND "${CMAKE_COMMAND}" -S "${PROJECT_DIR}" -B "${WORK_DIR}/build"
         "-DEPM_MODULE=${EPM_MODULE}"
         "-DEPM_EXECUTABLE=${EPM_EXECUTABLE}"
-        "-DEPM_CACHE=${WORK_DIR}/cache" "-DEPM_LOCK_FILE=${WORK_DIR}/epm.lock"
+        "-DEPM_CACHE=${WORK_DIR}/cache" "-DEPM_LOCK_FILE=${WORK_DIR}/epm-lock.json"
         -DEPM_LOCK_MODE=update
         RESULT_VARIABLE exit_code OUTPUT_VARIABLE output ERROR_VARIABLE output)
 message("${output}")

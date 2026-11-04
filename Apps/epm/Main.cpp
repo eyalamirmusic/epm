@@ -84,7 +84,7 @@ FilePath getCacheDirectory(const FilePath& requested)
     return canonical(cache).path();
 }
 
-// epm.lock in the top-level source directory, else the current directory.
+// epm-lock.json in the top-level source directory, else the current directory.
 FilePath getDefaultLockFile(const FilePath& sourceDirectory)
 {
     if (!sourceDirectory.empty())
@@ -121,8 +121,9 @@ int runPackageCommand(const std::string& command, int argumentsToSkip)
         "--mode", options.mode, "locked, update or offline [default: locked]");
     parser.option(
         "--ci", ciValue, "ON refuses <Name>_SOURCE overrides in locked mode");
-    parser.option(
-        "--lock", options.lock, "the lock file [default: <source-dir>/epm.lock]");
+    parser.option("--lock",
+                  options.lock,
+                  "the lock file [default: <source-dir>/epm-lock.json]");
     parser.option("--manifest",
                   options.manifest,
                   "the root project's epm.json, whose overrides win");

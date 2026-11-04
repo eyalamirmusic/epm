@@ -83,7 +83,7 @@ delete the cache's `bin/` directory once to reclaim the space.
 
 ## Locking the dependency tree
 
-Every package is pinned in `epm.lock`, beside the top-level `CMakeLists.txt`
+Every package is pinned in `epm-lock.json`, beside the top-level `CMakeLists.txt`
 (`EPM_LOCK_FILE` moves it), to a commit and a Merkle hash of its files (path,
 type and SHA-256 of each entry, `.git` and execute bits left out), with one
 root hash over all of them. epm never builds unless the lock is satisfied. To
@@ -177,7 +177,7 @@ copy never does. Details are in Docs/PoC.md §8.
 
 epm needs CMake 3.31 and a C++20 compiler. It builds itself with epm: its
 `CMakeLists.txt` loads `CMake/get_epm.cmake` during `project()`, so eacp,
-Miro and the rest come in locked from the committed `epm.lock`. The epm that resolves them is a first host build of the same
+Miro and the rest come in locked from the committed `epm-lock.json`. The epm that resolves them is a first host build of the same
 checkout, which fetches its own dependencies with CPM (`EPM_SELF_HOST=OFF`);
 `-DEPM_EXECUTABLE=<an epm>` skips that build. Everything is linked statically.
 

@@ -31,7 +31,7 @@ endfunction()
 function(configure expect_success)
     execute_process(COMMAND "${CMAKE_COMMAND}" -S "${PROJECT_DIR}" -B "${WORK_DIR}/build-${ARGV1}"
             "-DEPM_MODULE=${EPM_MODULE}" "-DEPM_EXECUTABLE=${EPM_EXECUTABLE}"
-            "-DEPM_CACHE=${WORK_DIR}/cache" "-DEPM_LOCK_FILE=${WORK_DIR}/epm.lock"
+            "-DEPM_CACHE=${WORK_DIR}/cache" "-DEPM_LOCK_FILE=${WORK_DIR}/epm-lock.json"
             "-DFIXTURE_URL=${fixture_url}" "-DLFS_PAYLOAD=${lfs_payload}" ${ARGN}
             RESULT_VARIABLE exit_code OUTPUT_VARIABLE output ERROR_VARIABLE output)
     message("${output}")
@@ -68,7 +68,7 @@ endif ()
 
 configure(TRUE update -DEPM_LOCK_MODE=update)
 
-file(READ "${WORK_DIR}/epm.lock" lock)
+file(READ "${WORK_DIR}/epm-lock.json" lock)
 string(JSON package_count LENGTH "${lock}" packages)
 math(EXPR last_package "${package_count} - 1")
 foreach (index RANGE ${last_package})

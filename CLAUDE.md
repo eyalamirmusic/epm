@@ -38,7 +38,7 @@ and background.
   - `Source/` — `PackageCache` (bare mirrors under `git/`, archives under
     `downloads/`, trees under `src/<merkle hash>`), `Mirror` (git plumbing,
     git-lfs), `Submodules`, `Download`. Ported from lockstep.
-  - `Lock/` — `LockFile` (`epm.lock`), `MerkleHash`, `Requirements`
+  - `Lock/` — `LockFile` (`epm-lock.json`), `MerkleHash`, `Requirements`
     (minimal version selection, `Docs/Resolution.md`), `Session`
     (`<build>/epm/session.json`), `Messages`. Ported from lockstep.
   - `Build/` — `ChildBuild`, `Harvest`, `Configs` (config mapping and the

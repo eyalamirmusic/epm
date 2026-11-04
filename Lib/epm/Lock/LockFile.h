@@ -16,7 +16,7 @@
 namespace epm
 {
 constexpr auto lockFileFormatVersion = 1;
-constexpr auto lockFileName = "epm.lock";
+constexpr auto lockFileName = "epm-lock.json";
 
 struct LockedPackage
 {

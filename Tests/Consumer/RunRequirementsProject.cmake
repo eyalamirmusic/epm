@@ -72,7 +72,7 @@ function(configure scenario expect_success dependencies manifest)
     set(configure_output "${flattened}" PARENT_SCOPE)
 
     if (exit_code EQUAL 0)
-        file(READ "${source}/epm.lock" lock)
+        file(READ "${source}/epm-lock.json" lock)
         set(lock "${lock}" PARENT_SCOPE)
     endif ()
 endfunction()
@@ -118,7 +118,7 @@ create_dependency(olderTag v1.0.0)
 create_dependency(newerTag v1.1.0)
 create_dependency(firstCommit ${first_commit})
 create_dependency(secondCommit ${second_commit})
-create_dependency(shipsLock main epm.lock
+create_dependency(shipsLock main epm-lock.json
         "{\"packages\":[{\"name\":\"shared\",\"kind\":\"git\",\"url\":\"${fixture_url}/shared.git\",\"requestedRef\":\"main\",\"commit\":\"${first_commit}\",\"hash\":\"\"}],\"root\":\"\",\"version\":1}\n")
 create_dependency(shipsManifest v1.0.0 epm.json
         "{\"overrides\":{\"shared\":{\"commit\":\"${second_commit}\"}}}\n")

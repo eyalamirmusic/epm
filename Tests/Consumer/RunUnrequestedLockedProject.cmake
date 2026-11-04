@@ -19,7 +19,7 @@ function(run expect_success)
 endfunction()
 
 file(REMOVE_RECURSE "${WORK_DIR}")
-set(lock "${WORK_DIR}/epm.lock")
+set(lock "${WORK_DIR}/epm-lock.json")
 set(common -S "${PROJECT_DIR}" "-DEPM_EXECUTABLE=${EPM_EXECUTABLE}"
         "-DEPM_MODULE=${EPM_MODULE}" "-DEPM_LOCK_FILE=${lock}")
 

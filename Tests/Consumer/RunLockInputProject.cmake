@@ -20,7 +20,7 @@ function(run expect_success)
 endfunction()
 
 file(REMOVE_RECURSE "${WORK_DIR}")
-set(lock "${WORK_DIR}/epm.lock")
+set(lock "${WORK_DIR}/epm-lock.json")
 set(build "${WORK_DIR}/build")
 set(generator_arguments)
 

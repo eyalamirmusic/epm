@@ -26,7 +26,7 @@ epm::LockedPackage createPackage(const std::string& name, const std::string& has
 auto tRoundTrip = test("LockFile/writeThenReadRoundTrips") = []
 {
     auto directory = createEmptyTestDirectory("lock-roundtrip");
-    auto path = directory / "epm.lock";
+    auto path = directory / "epm-lock.json";
 
     auto lock = epm::LockFile {};
     lock.storePackage(LockFileTests::createPackage("zeta", "11"));
@@ -43,7 +43,7 @@ auto tRoundTrip = test("LockFile/writeThenReadRoundTrips") = []
 auto tMissingIsEmpty = test("LockFile/missingFileReadsEmpty") = []
 {
     auto directory = createEmptyTestDirectory("lock-missing");
-    check(epm::readLockFile(directory / "epm.lock").packages.empty());
+    check(epm::readLockFile(directory / "epm-lock.json").packages.empty());
 };
 
 auto tStoreReplaces = test("LockFile/storeReplacesSameName") = []
@@ -74,7 +74,7 @@ auto tRootDependsOnOrderFreeContent = test("LockFile/rootIgnoresInsertionOrder")
 auto tOlderLockIsNotCurrent = test("LockFile/lockMissingNewFieldsIsNotCurrent") = []
 {
     auto directory = createEmptyTestDirectory("lock-current");
-    auto path = directory / "epm.lock";
+    auto path = directory / "epm-lock.json";
 
     auto lock = epm::LockFile {};
     lock.storePackage(LockFileTests::createPackage("a", "1"));

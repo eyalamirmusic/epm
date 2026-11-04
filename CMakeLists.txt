@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.31)
 
-# epm builds itself with epm, its dependencies locked in epm.lock. The epm that
+# epm builds itself with epm, its dependencies locked in epm-lock.json. The epm that
 # resolves them is a first host build of this same checkout (get_epm.cmake,
 # inside an epm checkout, builds that checkout), which fetches its own
 # dependencies with CPM: get_epm builds it with EPM_SELF_HOST OFF.
 # -DEPM_EXECUTABLE=<an epm> skips that build.
-option(EPM_SELF_HOST "Fetch epm's own dependencies through epm and epm.lock" ON)
+option(EPM_SELF_HOST "Fetch epm's own dependencies through epm and epm-lock.json" ON)
 
 if (EPM_SELF_HOST)
     set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${CMAKE_CURRENT_LIST_DIR}/CMake/get_epm.cmake")

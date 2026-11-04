@@ -17,14 +17,14 @@ for the same name loads rather than fetching another. Child builds of
 prebuilt packages resolve their own calls against the root's lock, recorded
 under the package's name.
 
-A dependency that ships a lock (`epm.lock`, or a `lockstep.lock`, which has the
+A dependency that ships a lock (`epm-lock.json`, or a `lockstep.lock`, which has the
 same form) lists the commits it was built with. Each entry is that dependency's
 requirement on the package, as a go.mod is, and replaces what its CMake asks
 for; it is never a second lock.
 
 ## Selection
 
-The root `epm.lock` has exactly one entry per package name, so the whole tree
+The root `epm-lock.json` has exactly one entry per package name, so the whole tree
 builds against one eacp. When the requirements on a package disagree:
 
 - If every one is a semantic version tag (`v1.2.3`, `1.2`, `2`) of the same

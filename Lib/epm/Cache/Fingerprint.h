@@ -36,7 +36,7 @@ struct AbiFingerprint
     std::string toolchainFileHash;
     std::map<std::string, std::string> options;
 
-    // The Merkle hash of the sources, as epm.lock records it.
+    // The Merkle hash of the sources, as epm-lock.json records it.
     std::string sourceHash;
 
     // Direct dependency name -> that dependency's fingerprint hash (the

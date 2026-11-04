@@ -39,7 +39,7 @@ endif ()
 
 execute_process(COMMAND "${CMAKE_COMMAND}" -S "${PROJECT_DIR}" -B "${WORK_DIR}/build"
         "-DEPM_EXECUTABLE=${EPM_EXECUTABLE}" "-DEPM_MODULE=${EPM_MODULE}"
-        "-DEPM_CACHE=${WORK_DIR}/cache" "-DEPM_LOCK_FILE=${WORK_DIR}/epm.lock"
+        "-DEPM_CACHE=${WORK_DIR}/cache" "-DEPM_LOCK_FILE=${WORK_DIR}/epm-lock.json"
         "-DFIXTURE_URL=${fixture_url}"
         RESULT_VARIABLE exit_code OUTPUT_VARIABLE output ERROR_VARIABLE output)
 message("${output}")
@@ -47,7 +47,7 @@ if (NOT exit_code EQUAL 0)
     message(FATAL_ERROR "the configure failed")
 endif ()
 
-file(READ "${WORK_DIR}/epm.lock" lock)
+file(READ "${WORK_DIR}/epm-lock.json" lock)
 foreach (index 0 1)
     string(JSON name GET "${lock}" packages ${index} name)
     string(JSON hash GET "${lock}" packages ${index} hash)
@@ -57,7 +57,7 @@ foreach (index 0 1)
 endforeach ()
 
 # A full rehash of the cached trees agrees too.
-execute_process(COMMAND "${EPM_EXECUTABLE}" lock verify --full "--lock=${WORK_DIR}/epm.lock"
+execute_process(COMMAND "${EPM_EXECUTABLE}" lock verify --full "--lock=${WORK_DIR}/epm-lock.json"
         "--cache=${WORK_DIR}/cache" RESULT_VARIABLE exit_code
         OUTPUT_VARIABLE output ERROR_VARIABLE output)
 message("${output}")

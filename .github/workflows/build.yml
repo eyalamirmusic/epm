@@ -132,16 +132,16 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
-      # epm built itself in locked mode from epm.lock: every package must still
+      # epm built itself in locked mode from epm-lock.json: every package must still
       # hash to its lock entry (glslang, which eacp asks for on Linux only, is
       # fetched by verify elsewhere), the configure must not have changed one byte of
       # the lock, and the root is printed so the lanes can be compared.
       - name: Verify epm's own lock
         run: |
-          git diff --exit-code epm.lock
-          "build/Apps/epm/epm$EXE_SUFFIX" lock verify --full --lock epm.lock \
+          git diff --exit-code epm-lock.json
+          "build/Apps/epm/epm$EXE_SUFFIX" lock verify --full --lock epm-lock.json \
             "--cache=$ROOT/.epm-self-cache"
-          echo "root: $("build/Apps/epm/epm$EXE_SUFFIX" lock root --lock epm.lock)"
+          echo "root: $("build/Apps/epm/epm$EXE_SUFFIX" lock root --lock epm-lock.json)"
 
       # (a) The full consumer path with this epm: get_epm.cmake takes
       # EPM_EXECUTABLE and, finding no module installed beside it, the
@@ -158,7 +158,7 @@ jobs:
             -DEPM_VERBOSE=ON ${{ matrix.cmake-flags }}
           cmake --build build-hello
           "./build-hello/hello$EXE_SUFFIX"
-          # A fresh configure against Examples/HelloEacp/epm.lock must take eacp
+          # A fresh configure against Examples/HelloEacp/epm-lock.json must take eacp
           # from the binary cache rather than build it again.
           cmake -S Examples/HelloEacp -B build-hello-hit -G Ninja -DCMAKE_BUILD_TYPE=Release \
             "-DEPM_EXECUTABLE=$ROOT/build/Apps/epm/epm$EXE_SUFFIX" \

@@ -38,19 +38,19 @@ set(common_arguments
         "-DEPM_CACHE=${WORK_DIR}/cache"
         -DCMAKE_BUILD_TYPE=Release)
 
-expect_failure("[^ ]+\\.(txt|cmake):[0-9]+ asks for .*, and there is no epm.lock yet; offline"
+expect_failure("[^ ]+\\.(txt|cmake):[0-9]+ asks for .*, and there is no epm-lock.json yet; offline"
         "${CMAKE_COMMAND}" ${common_arguments} -B "${WORK_DIR}/build-offline-no-lock"
         -DEPM_LOCK_MODE=offline)
 
 # Locked mode with no lock writes one, as npm install writes package-lock.json;
 # a second locked configure then reads it and changes no byte.
 run_step("${CMAKE_COMMAND}" ${common_arguments} -B "${WORK_DIR}/build-first")
-if (NOT step_output MATCHES "epm: no epm.lock, so wrote one with ${EXPECTED_PACKAGES} packages; commit it.")
+if (NOT step_output MATCHES "epm: no epm-lock.json, so wrote one with ${EXPECTED_PACKAGES} packages; commit it.")
     message(FATAL_ERROR "the first configure did not report writing the lock")
 endif ()
-file(READ "${source}/epm.lock" first_lock)
+file(READ "${source}/epm-lock.json" first_lock)
 run_step("${CMAKE_COMMAND}" ${common_arguments} -B "${WORK_DIR}/build-second")
-file(READ "${source}/epm.lock" second_lock)
+file(READ "${source}/epm-lock.json" second_lock)
 if (NOT first_lock STREQUAL second_lock OR step_output MATCHES "wrote one")
     message(FATAL_ERROR "the second locked configure rewrote the lock")
 endif ()
@@ -62,7 +62,7 @@ if (step_output MATCHES "locked [^ ]+ at  ")
     message(FATAL_ERROR "a 'locked' line names an empty version")
 endif ()
 
-file(READ "${source}/epm.lock" lock)
+file(READ "${source}/epm-lock.json" lock)
 string(JSON package_count LENGTH "${lock}" packages)
 if (NOT package_count EQUAL EXPECTED_PACKAGES)
     message(FATAL_ERROR "the lock holds ${package_count} packages, not ${EXPECTED_PACKAGES}:\n${lock}")
@@ -81,7 +81,7 @@ find_program(sample NAMES sample PATHS "${WORK_DIR}/build-locked"
         "${WORK_DIR}/build-locked/Release" NO_DEFAULT_PATH REQUIRED)
 run_step("${sample}")
 
-run_step("${EPM_EXECUTABLE}" lock verify --full --lock "${source}/epm.lock"
+run_step("${EPM_EXECUTABLE}" lock verify --full --lock "${source}/epm-lock.json"
         --cache "${WORK_DIR}/cache")
 
 run_step("${CMAKE_COMMAND}" ${common_arguments} -B "${WORK_DIR}/build-offline"
@@ -111,7 +111,7 @@ foreach (checkout first second-checkout)
             "-DEPM_MODULE=${copy}/cmake/epm.cmake"
             "-DEPM_EXECUTABLE=${EPM_EXECUTABLE}"
             "-DEPM_CACHE=${WORK_DIR}/cache")
-    file(READ "${copy}/epm.lock" lock_${checkout})
+    file(READ "${copy}/epm-lock.json" lock_${checkout})
 endforeach ()
 
 if (NOT lock_first STREQUAL lock_second-checkout)

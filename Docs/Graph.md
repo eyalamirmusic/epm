@@ -164,7 +164,7 @@ The binary records, for every effective value, which source set it (`override`,
    configure continues, by reading manifests, not by executing CMake.
 2. Git and tag are not merged: every declaration, the root's included, is a
    requirement, and minimal version selection over them (`Docs/Resolution.md`)
-   chooses one version, which `epm.lock` records with its commit and Merkle hash.
+   chooses one version, which `epm-lock.json` records with its commit and Merkle hash.
    Disagreeing semantic version tags take the highest; any other disagreement stops
    the configure, naming each declarer, until the root's `epm.json` `overrides`
    settles it. A declaration the walk meets after the package was fetched that

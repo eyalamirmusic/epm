@@ -204,7 +204,7 @@ ChildBuild createLockedChildBuild()
     build.prefix = eacp::FilePath {"/c/bin/eacp/macos-arm64/f685faf3d9f4"};
     build.cacheRoot = eacp::FilePath {"/c"};
     build.epmExecutable = eacp::FilePath {"/epm/bin/epm"};
-    build.childLock = {eacp::FilePath {"/project/epm.lock"},
+    build.childLock = {eacp::FilePath {"/project/epm-lock.json"},
                        "offline",
                        eacp::FilePath {"/project/epm.json"}};
     build.config = "Debug";
@@ -236,7 +236,7 @@ auto tChildLockArguments = test("BinaryCache/childBuild/injectsEpmAndTheLock") =
                            "epm-export.cmake;/c/build/eacp/Debug/epm.cmake"));
     check(arguments.contains("-DEPM_NESTED=ON"));
     check(arguments.contains("-DEPM_EXECUTABLE=/epm/bin/epm"));
-    check(arguments.contains("-DEPM_LOCK_FILE=/project/epm.lock"));
+    check(arguments.contains("-DEPM_LOCK_FILE=/project/epm-lock.json"));
     check(arguments.contains("-DEPM_LOCK_MODE=offline"));
     check(arguments.contains("-DEPM_MANIFEST_FILE=/project/epm.json"));
     check(arguments.contains("-DEPM_ROOT_NAME=eacp"));

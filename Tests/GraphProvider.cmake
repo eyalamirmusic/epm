@@ -151,7 +151,7 @@ set(EPM_Leaf_OPTIONS "LEAF_X=1;LEAF_Y=a \"b\"" CACHE STRING "")
     string(REPLACE "\n" ";" args "${args}")
     set(expected_args configure
             "--manifest=${graph_dir}/Consumer/epm.json"
-            "--lock=${graph_dir}/Consumer/epm.lock"
+            "--lock=${graph_dir}/Consumer/epm-lock.json"
             "--env=${epm_dir}/env.json"
             "--overrides=${epm_dir}/overrides.json"
             "--out=${epm_dir}")

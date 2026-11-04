@@ -45,7 +45,7 @@ struct SessionOverride
 };
 
 // A requirement on `name` known before or after it is added: one a project
-// made, or one a dependency's own epm.lock lists.
+// made, or one a dependency's own epm-lock.json lists.
 struct SessionRequirement
 {
     std::string name;

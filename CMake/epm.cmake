@@ -8,7 +8,7 @@
 # (EPM_NESTED), so a dependency's own package calls go through the same lock.
 #
 # Every package is pinned in the lock (EPM_LOCK_FILE, default
-# ${CMAKE_SOURCE_DIR}/epm.lock) to a commit and a Merkle hash of its files,
+# ${CMAKE_SOURCE_DIR}/epm-lock.json) to a commit and a Merkle hash of its files,
 # whichever way it is declared, and epm never builds what the lock cannot
 # satisfy (Docs/Resolution.md):
 #
@@ -28,7 +28,7 @@
 #
 # Variables read:
 #   EPM_EXECUTABLE              the epm binary (required; set by get_epm.cmake)
-#   EPM_LOCK_FILE               the lock (default ${CMAKE_SOURCE_DIR}/epm.lock)
+#   EPM_LOCK_FILE               the lock (default ${CMAKE_SOURCE_DIR}/epm-lock.json)
 #   EPM_LOCK_MODE               locked (default; writes a missing lock), update
 #                               (re-resolve every ref and rewrite the lock) or
 #                               offline (the cache only, never the network)
@@ -227,6 +227,8 @@ function(epm_write_overrides file)
                     set(home "$ENV{USERPROFILE}")
                 endif ()
 
+                # A Windows home's backslashes would be escapes in the replacement.
+                file(TO_CMAKE_PATH "${home}" home)
                 string(REGEX REPLACE "^~" "${home}" value "${value}")
             endif ()
 
@@ -429,7 +431,7 @@ set(EPM_LOCK_MODE locked CACHE STRING "locked, update or offline")
 option(EPM_CI "Refuse <Name>_SOURCE overrides and a missing lock in locked mode" OFF)
 
 if (NOT EPM_LOCK_FILE)
-    set(EPM_LOCK_FILE "${CMAKE_SOURCE_DIR}/epm.lock")
+    set(EPM_LOCK_FILE "${CMAKE_SOURCE_DIR}/epm-lock.json")
 endif ()
 
 if (NOT EPM_MANIFEST_FILE)

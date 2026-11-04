@@ -27,7 +27,7 @@ endfunction()
 function(configure expect_success)
     execute_process(COMMAND "${CMAKE_COMMAND}" -S "${PROJECT_DIR}" -B "${WORK_DIR}/build-${ARGV1}"
             "-DEPM_MODULE=${EPM_MODULE}" "-DEPM_EXECUTABLE=${EPM_EXECUTABLE}"
-            "-DEPM_CACHE=${WORK_DIR}/cache" "-DEPM_LOCK_FILE=${WORK_DIR}/epm.lock"
+            "-DEPM_CACHE=${WORK_DIR}/cache" "-DEPM_LOCK_FILE=${WORK_DIR}/epm-lock.json"
             "-DFIXTURE_URL=${fixture_url}" ${ARGN}
             WORKING_DIRECTORY "${configure_working_directory}"
             RESULT_VARIABLE exit_code OUTPUT_VARIABLE output ERROR_VARIABLE output)
@@ -53,7 +53,7 @@ endif ()
 
 configure(TRUE update -DEPM_LOCK_MODE=update)
 
-file(READ "${WORK_DIR}/epm.lock" lock)
+file(READ "${WORK_DIR}/epm-lock.json" lock)
 string(JSON submodule_count LENGTH "${lock}" packages 0 submodules)
 string(JSON nested_path GET "${lock}" packages 0 submodules 1 path)
 if (NOT submodule_count EQUAL 2 OR NOT nested_path STREQUAL "middle/leaf")
@@ -75,7 +75,7 @@ set(configure_working_directory "${WORK_DIR}")
 
 string(JSON locked_commit GET "${lock}" packages 0 submodules 1 commit)
 string(REPLACE "${locked_commit}" "0000000000000000000000000000000000000000" tampered "${lock}")
-file(WRITE "${WORK_DIR}/epm.lock" "${tampered}")
+file(WRITE "${WORK_DIR}/epm-lock.json" "${tampered}")
 file(REMOVE_RECURSE "${WORK_DIR}/cache/src")
 configure(FALSE tampered)
 string(REGEX REPLACE "[ \n]+" " " flattened "${configure_output}")
