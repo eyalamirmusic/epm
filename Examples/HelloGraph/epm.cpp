@@ -41,4 +41,7 @@ struct HelloGraph final : Recipe
 };
 } // namespace
 
-EPM_RECIPE(HelloGraph)
+int main(int argc, char** argv)
+{
+    return recipeMain<HelloGraph>(argc, argv);
+}

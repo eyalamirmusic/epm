@@ -13,4 +13,7 @@ struct Consumer final : Recipe
 };
 } // namespace
 
-EPM_RECIPE(Consumer)
+int main(int argc, char** argv)
+{
+    return recipeMain<Consumer>(argc, argv);
+}

@@ -61,7 +61,10 @@ struct App final : Recipe
 };
 } // namespace
 
-EPM_RECIPE(App)
+int main(int argc, char** argv)
+{
+    return recipeMain<App>(argc, argv);
+}
 ```
 
 `describe()` says what the project depends on; `Fmt` says how one of those packages is
@@ -108,11 +111,15 @@ A recipe is two phases of user code, each run in its recipe executable:
 ### Describe: `Recipe`
 
 - `#include <epm/Recipe/Recipe.h>`, then `using namespace epm;`, derive from
-  `Recipe` and override `describe()`. `EPM_RECIPE(Type)`, once per file at global
-  scope, names the class: it defines the executable's `main()`, which hands
-  `epm::recipeMain` (`Recipe/RecipeMain.h`) a `RecipeFactory` making one (a
-  `std::unique_ptr<Recipe>`). The directive brings in every name the
-  recipe headers declare in `epm` (`Recipe`, `PackageDecl`, `Package`,
+  `Recipe` and override `describe()`. The file writes the executable's `main()`,
+  which returns `epm::recipeMain<Type>(argc, argv)` (`Recipe/RecipeMain.h`; it hands
+  the factory overload `recipeMain(argc, argv, create)` a `RecipeFactory` making a
+  `Type`, as a `std::unique_ptr<Recipe>`). User code owns `main()`: `recipeMain<T>`
+  is only the default command-line parser (`configure`, `describe`, `build`, and the
+  usage with exit code 2 on an unknown command), so a recipe that wants commands of
+  its own checks `argv[1]` before delegating to it. `EPM_RECIPE(Type)`, once per file
+  at global scope, is a shorthand for that `main()`. The directive brings in every
+  name the recipe headers declare in `epm` (`Recipe`, `PackageDecl`, `Package`,
   `CMakePackage`, `CMakeBuild`, `Prefix`, `BuildError`, `Project`, `Env`, `Request`,
   `ManifestPackage`, the cache and fingerprint types, …); a recipe's own type or
   function of one of those names is ambiguous with it.
@@ -423,7 +430,7 @@ mismatch as such rather than half reading the file: the recipe as above, epm as
    the first `error:` line on its own line. A run failure adds how it ended
    (`<cache>/recipe/<key12>/epm-recipe exited with code 1`, `… was terminated by
    signal 6 (exit code 134)`, `… exited without writing its project`), then the last
-   20 lines it printed. A file without `EPM_RECIPE` has no `main()` and fails to link.
+   20 lines it printed. A file without a `main()` fails to link.
    The root's recipe is described in the configure's own process instead: what it
    throws is `the manifest <epm.cpp>: the recipe threw: …`, and a crash ends the
    configure, which `epm configure` reports (§6).
@@ -437,8 +444,8 @@ mismatch as such rather than half reading the file: the recipe as above, epm as
 `epm describe [<epm.cpp>] [--exe <path>] [--env <env.json>] [--cache <dir>] [--verbose]`
 prints the project a recipe describes, as JSON, for checking one by hand: it builds
 the file as `configure` does and runs its `describe` (`runRecipe`). `--exe` runs that
-recipe executable's `describe` (`epm_add_recipe`'s, below, or any program `EPM_RECIPE`
-made) instead of compiling the file, so the positional then only names the working
+recipe executable's `describe` (`epm_add_recipe`'s, below, or any program whose `main()`
+returns `recipeMain<T>`) instead of compiling the file, so the positional then only names the working
 directory (an `--exe` alone runs in the current one) and may be left out. `configure`
 has no such option: it always builds and runs its own.
 

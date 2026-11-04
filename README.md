@@ -115,7 +115,10 @@ struct HelloGraph final : Recipe
 };
 } // namespace
 
-EPM_RECIPE(HelloGraph)
+int main(int argc, char** argv)
+{
+    return recipeMain<HelloGraph>(argc, argv);
+}
 ```
 
 A recipe is ordinary C++ that epm compiles into a small program and runs, in

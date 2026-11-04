@@ -42,7 +42,8 @@ longer-term design and background.
   - `Recipe/` — `epm.cpp` recipes, each a standalone executable whose
     contract with epm is JSON. Recipe API (`epm-recipe`): `Recipe.h` (the
     header a recipe includes: `Recipe : CMakePackage`, `describe()`,
-    `add`/`add<T>`, `PackageDecl`, `EPM_RECIPE`, which writes `main()`),
+    `add`/`add<T>`, `PackageDecl`, and `EPM_RECIPE`, a shorthand for the
+    `main()` returning `recipeMain<T>(argc, argv)` that an `epm.cpp` writes),
     `Package` (one package's build step: `fetch`, `fingerprint`, `cached`,
     `cmake`, `exportPrefix`/`useSource`, `runPackage`), `CMakePackage` (the
     default steps with `configure`/`afterBuild` hooks, `buildInProcess`),

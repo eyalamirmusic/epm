@@ -64,4 +64,7 @@ struct TestProject final : Recipe
 };
 } // namespace
 
-EPM_RECIPE(TestProject)
+int main(int argc, char** argv)
+{
+    return recipeMain<TestProject>(argc, argv);
+}

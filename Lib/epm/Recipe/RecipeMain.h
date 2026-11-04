@@ -1,15 +1,17 @@
 #pragma once
 
 #include <memory>
+#include <type_traits>
 
 namespace epm
 {
 class Recipe;
 
-// Makes the Recipe a recipe executable runs; EPM_RECIPE writes one.
+// Makes the Recipe a recipe executable runs.
 using RecipeFactory = std::unique_ptr<Recipe> (*)();
 
-// The main() of a recipe executable, which EPM_RECIPE writes:
+// What a recipe executable's main() returns, the default command line of a
+// recipe (an epm.cpp's own main() may handle commands of its own first):
 //
 //     epm-recipe [configure] [--manifest <epm.cpp>] --env <env.json>
 //                --overrides <overrides.json> --out <dir> [--cache <dir>]
@@ -46,4 +48,22 @@ using RecipeFactory = std::unique_ptr<Recipe> (*)();
 // reported on stderr. Progress and child build output go to stdout as the
 // step runs.
 int recipeMain(int argc, char** argv, RecipeFactory create);
+
+// recipeMain for the Recipe `RecipeType`, what an epm.cpp's main() returns:
+//
+//     int main(int argc, char** argv)
+//     {
+//         return epm::recipeMain<App>(argc, argv);
+//     }
+template <class RecipeType>
+int recipeMain(int argc, char** argv)
+{
+    static_assert(std::is_base_of_v<Recipe, RecipeType>,
+                  "recipeMain<T>: T must derive from epm::Recipe");
+
+    return recipeMain(argc,
+                      argv,
+                      []() -> std::unique_ptr<Recipe>
+                      { return std::make_unique<RecipeType>(); });
+}
 } // namespace epm

@@ -19,4 +19,7 @@ struct Mid final : Recipe
 };
 } // namespace
 
-EPM_RECIPE(Mid)
+int main(int argc, char** argv)
+{
+    return recipeMain<Mid>(argc, argv);
+}

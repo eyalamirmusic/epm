@@ -1,6 +1,6 @@
 # epm's one library: what an epm.cpp recipe links (Recipe/Recipe.h), and the
 # driver that epm links. A recipe gets the types its describe() fills, the
-# main() that EPM_RECIPE writes, and everything a package's build() step may
+# recipeMain its main() returns, and everything a package's build() step may
 # call: the specs, the source and binary caches, the child build and the
 # harvest. The driver adds the graph walk, `epm resolve`, the graph files and
 # compiling and running recipes against the recipe SDK baked in below.

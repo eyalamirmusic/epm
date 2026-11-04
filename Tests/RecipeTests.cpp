@@ -74,7 +74,7 @@ std::filesystem::file_time_type modified(const FilePath& path)
     return std::filesystem::last_write_time(eacp::toStdPath(path));
 }
 
-// What recipeMain runs in-process, as EPM_RECIPE would make it.
+// What recipeMain runs in-process, as recipeMain<TwiceFmt> would make it.
 struct TwiceFmt final : Recipe
 {
     void describe() override

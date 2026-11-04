@@ -32,7 +32,10 @@
 //         }
 //     };
 //
-//     EPM_RECIPE(App)
+//     int main(int argc, char** argv)
+//     {
+//         return recipeMain<App>(argc, argv);
+//     }
 
 #include "CMakePackage.h"
 #include "Package.h"
@@ -108,13 +111,10 @@ private:
 };
 } // namespace epm
 
-// Names the recipe's Recipe type, once per epm.cpp, at global scope: the
-// recipe's main().
+// A shorthand, once per epm.cpp at global scope, for the main() returning
+// epm::recipeMain<Type>(argc, argv), which is the documented form.
 #define EPM_RECIPE(Type)                                                            \
     int main(int argc, char** argv)                                                 \
     {                                                                               \
-        return epm::recipeMain(argc,                                                \
-                               argv,                                                \
-                               []() -> std::unique_ptr<epm::Recipe>                 \
-                               { return std::make_unique<Type>(); });               \
+        return epm::recipeMain<Type>(argc, argv);                                   \
     }

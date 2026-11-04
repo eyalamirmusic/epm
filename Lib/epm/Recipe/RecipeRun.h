@@ -19,7 +19,7 @@ struct RecipeRun
     std::string error;
 };
 
-// Runs a recipe executable (buildRecipe(), or any program EPM_RECIPE made) as
+// Runs a recipe executable (buildRecipe(), or any program running recipeMain) as
 // `<executable> describe --env <env.json> --out <project.json>`, both files in a
 // scratch directory of their own, and reads the Project back. The recipe runs
 // in `workingDirectory`, its epm.cpp's directory, so a file it reads relative
