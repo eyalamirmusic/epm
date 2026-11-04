@@ -1,5 +1,12 @@
 # CLAUDE.md
 
+## Git rules
+
+Never commit, push, tag, or create releases unless the user explicitly asks for
+it in the current request. This applies to subagents too: every agent brief must
+say "do not commit or push". Leave changes in the working tree (or on the
+current branch, uncommitted) and report them; the user decides when they land.
+
 epm is a C++ package manager for CMake projects, built on the eacp framework
 (`eacp-core` only). `Docs/Graph.md` is the contract for the manifest
 (`epm.json`), the dependency provider and `epm configure`; `Docs/PoC.md` for
