@@ -20,6 +20,9 @@ nano_add_executable(epmTests
             TimestampTests.cpp
         TARGETS epm-recipe)
 
+add_subdirectory(${PROJECT_SOURCE_DIR}/Lib/DependencyResolution/Tests
+        DependencyResolutionTests)
+
 target_compile_definitions(epmTests PRIVATE
         EPM_TEST_RECIPE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Recipe"
         EPM_TEST_CMAKE="${CMAKE_COMMAND}")

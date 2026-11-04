@@ -1,1 +1,2 @@
+add_subdirectory(DependencyResolution)
 add_subdirectory(epm)

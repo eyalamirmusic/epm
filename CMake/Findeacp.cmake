@@ -5,7 +5,7 @@ include(CPM)
 CPMAddPackage(
         NAME eacp
         GITHUB_REPOSITORY eyalamirmusic/eacp
-        GIT_TAG main
+        GIT_TAG develop
         EXCLUDE_FROM_ALL YES
         OPTIONS
             "EACP_BUILD_GRAPHICS OFF"
