@@ -197,7 +197,7 @@ macro(epm_provider_read_graph)
     get_property(_epm_graph GLOBAL PROPERTY EPM_PROVIDER_GRAPH)
     set(epm_PACKAGES "")
 
-    if (NOT _epm_graph STREQUAL "")
+    if (NOT "${_epm_graph}" STREQUAL "")
         if (NOT EXISTS "${_epm_graph}")
             message(FATAL_ERROR
                     "epm: the dependency graph '${_epm_graph}' does not exist")
