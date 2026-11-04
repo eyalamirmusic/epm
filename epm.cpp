@@ -22,6 +22,10 @@ struct Epm final : Recipe
 
         setMode(project.add("Miro", "eyalamirmusic/Miro", "main"), "source");
         setMode(project.add("NanoTest", "eyalamirmusic/NanoTest", "main"), "source");
+
+        // What eacp finds on Linux with CMake's own search.
+        for (auto name: {"CURL", "PkgConfig", "Threads"})
+            project.addSystem(name);
     }
 };
 } // namespace
