@@ -253,12 +253,12 @@ auto tRecipeBuildsAndRuns = test("Recipe/buildAndRun") = []
         check(mac.project->packages[0].options.at("FMT_DOC") == "OFF");
     }
 
-    const auto linux = runRecipe(build.executable, envForSystem("Linux"));
-    check(linux.project.has_value() && linux.project->packages.size() == 2);
+    const auto linuxProject = runRecipe(build.executable, envForSystem("Linux"));
+    check(linuxProject.project.has_value() && linuxProject.project->packages.size() == 2);
 
-    if (linux.project && linux.project->packages.size() == 2)
+    if (linuxProject.project && linuxProject.project->packages.size() == 2)
     {
-        const auto& uuid = linux.project->packages[1];
+        const auto& uuid = linuxProject.project->packages[1];
         check(uuid.name == "uuid");
         check(uuid.git == "/opt/epm/libuuid");
         check(uuid.mode == "source");
@@ -1013,10 +1013,10 @@ auto tRecipeManifestLoader = test("Recipe/manifestLoader/describesForTheEnv") = 
     auto loader = RecipeManifestLoader {CacheRoot {root.path()}};
     auto error = std::string {};
 
-    const auto linux =
+    const auto linuxProject =
         loader.load(recipeFixture().parentDirectory(), envForSystem("Linux"), error);
     check(error.empty());
-    check(linux.has_value() && linux->packages.size() == 2);
+    check(linuxProject.has_value() && linuxProject->packages.size() == 2);
 
     const auto none =
         loader.load(root.path() / "no-recipe-here", envForSystem("Linux"), error);

@@ -2,7 +2,7 @@
 rem Windows twin of check-clean-build.sh: clones a branch of epm into a fresh
 rem directory with an empty cache, builds it with clang-cl and runs every test.
 rem
-rem   Scripts\check-clean-build.bat <vcvars batch file, e.g. vcvars64.bat> <work directory> [branch]
+rem   Scripts\check-clean-build.bat VCVARS_FILE WORK_DIRECTORY [BRANCH], e.g. vcvars64.bat
 setlocal
 call "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\%1" >nul
 set W=%2
