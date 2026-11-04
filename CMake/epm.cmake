@@ -10,9 +10,9 @@
 # Every package is pinned in the lock (EPM_LOCK_FILE, default
 # ${CMAKE_SOURCE_DIR}/epm-lock.json) to a commit and a Merkle hash of its files,
 # whichever way it is declared, and epm never builds what the lock cannot
-# satisfy (Docs/Resolution.md):
+# satisfy:
 #
-# 1. A manifest, epm.json beside the top-level CMakeLists.txt (Docs/Graph.md).
+# 1. A manifest, epm.json beside the top-level CMakeLists.txt.
 #    The dependency provider's first call writes env.json and overrides.json,
 #    runs `epm configure` for the whole graph and reads the graph.cmake it
 #    writes; find_package(<name>) then loads each package.
@@ -51,7 +51,7 @@
 #                               built as Release). A cache entry gains configs
 #                               as they are asked for; it never rebuilds one.
 #   EPM_ABI_MATCH               which cached build may be used: compatible
-#                               (default), strict or any (Docs/PoC.md)
+#                               (default), strict or any
 #   EPM_<Name>_SOURCE, CPM_<Name>_SOURCE   a local checkout to use instead
 #
 # With a manifest, EPM_CONFIGS, EPM_ABI_MATCH and EPM_BUILD_MISSING_BINARIES are
@@ -159,7 +159,7 @@ function(epm_json_string_array out_var)
     set(${out_var} "${array}" PARENT_SCOPE)
 endfunction()
 
-# Writes overrides.json (Docs/Graph.md §3) from the EPM_* variables visible
+# Writes overrides.json from the EPM_* variables visible
 # here, normal or cache, a normal one winning as ${} has it. Empty values are
 # left out; EPM_<name>_SOURCE is made absolute against CMAKE_SOURCE_DIR.
 # buildMissingBinaries (EPM_BUILD_MISSING_BINARIES) is written only when set.

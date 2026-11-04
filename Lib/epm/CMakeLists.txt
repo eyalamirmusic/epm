@@ -11,12 +11,10 @@ add_library(epm-core STATIC
         Cache/CacheListing.h
         Cache/CacheRoot.cpp
         Cache/CacheRoot.h
+        Cache/CrossProcessLock.cpp
+        Cache/CrossProcessLock.h
         Cache/Fingerprint.cpp
         Cache/Fingerprint.h
-        Cache/PackageLock.cpp
-        Cache/PackageLock.h
-        Cache/SourceCache.cpp
-        Cache/SourceCache.h
         Emit/GraphResponse.cpp
         Emit/GraphResponse.h
         Emit/Response.cpp
@@ -26,12 +24,12 @@ add_library(epm-core STATIC
         Graph/Merge.cpp
         Graph/Merge.h
         Graph/ResolvedGraph.h
+        Lock/ErrorMessages.cpp
+        Lock/ErrorMessages.h
         Lock/LockFile.cpp
         Lock/LockFile.h
         Lock/MerkleHash.cpp
         Lock/MerkleHash.h
-        Lock/Messages.cpp
-        Lock/Messages.h
         Lock/Requirements.cpp
         Lock/Requirements.h
         Lock/Session.cpp
@@ -40,12 +38,14 @@ add_library(epm-core STATIC
         Resolve/Commands.h
         Resolve/Resolve.cpp
         Resolve/Resolve.h
+        Source/BareClone.cpp
+        Source/BareClone.h
         Source/Download.cpp
         Source/Download.h
-        Source/Mirror.cpp
-        Source/Mirror.h
-        Source/PackageCache.cpp
-        Source/PackageCache.h
+        Source/SourceCache.cpp
+        Source/SourceCache.h
+        Source/SourceSnapshot.cpp
+        Source/SourceSnapshot.h
         Source/Submodules.cpp
         Source/Submodules.h
         Spec/Env.h

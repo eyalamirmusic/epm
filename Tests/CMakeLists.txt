@@ -5,18 +5,18 @@ nano_add_executable(epmTests
             BinaryCacheTests.cpp
             CacheRootTests.cpp
             ConfigsTests.cpp
+            ErrorMessagesTests.cpp
             FingerprintTests.cpp
             GraphTests.cpp
             HarvestTests.cpp
             LockFileTests.cpp
             ManifestTests.cpp
             MerkleHashTests.cpp
-            MessagesTests.cpp
             PackageArgumentsTests.cpp
             PlatformTests.cpp
             RequirementsTests.cpp
             ResolveTests.cpp
-            SourceCacheTests.cpp
+            SourceSnapshotTests.cpp
             SpecTests.cpp
             TimestampTests.cpp
         TARGETS epm-core)

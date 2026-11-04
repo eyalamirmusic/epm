@@ -37,7 +37,7 @@ struct Node
 };
 
 // Every declaration of the node that names a source: the root's, then the
-// dependencies' in walk order (Docs/Resolution.md).
+// dependencies' in walk order.
 EA::Vector<Requirement> requirementsOf(const Node& node)
 {
     auto requirements = EA::Vector<Requirement> {};
@@ -122,7 +122,7 @@ std::string configsText(const EA::Vector<std::string>& configs)
         return "auto";
 
     const auto built = buildConfigsFor(configs);
-    return joinList(built.empty() ? configs : built, ";");
+    return eacp::Strings::join(built.empty() ? configs : built, ";");
 }
 
 // A field of the winning declaration and who declared it.
@@ -243,8 +243,8 @@ EA::Vector<std::string>
 
     for (const auto& key: keys)
         if (names[key].size() > 1)
-            notes.add(joinList(names[key], " and ") + " are the same repository ("
-                      + key + ")");
+            notes.add(eacp::Strings::join(names[key], " and ")
+                      + " are the same repository (" + key + ")");
 
     return notes;
 }
@@ -318,7 +318,7 @@ public:
         if (overrides.strict && !plan.notes.empty())
             return failed(plan,
                           "EPM_STRICT is on and the graph has notes:\n  "
-                              + joinList(plan.notes, "\n  "));
+                              + eacp::Strings::join(plan.notes, "\n  "));
 
         plan.ok = true;
         return plan;
@@ -370,8 +370,8 @@ private:
             return true;
 
         if (node.visiting)
-            return fail("dependency cycle: " + joinList(stack, " -> ") + " -> "
-                        + name);
+            return fail("dependency cycle: " + eacp::Strings::join(stack, " -> ")
+                        + " -> " + name);
 
         node.visiting = true;
         stack.add(name);
@@ -405,7 +405,7 @@ private:
 
         if (requirements.empty())
             return fail(name + " has no git and tag (declared by "
-                        + joinList(declarersOf(node), ", ") + ")");
+                        + eacp::Strings::join(declarersOf(node), ", ") + ")");
 
         const auto fetched = fetch(name, requirements);
 

@@ -1,7 +1,5 @@
 #pragma once
 
-#include <epm/Util/Text.h>
-
 #include <eacp/Core/Utils/Files.h>
 
 #include <Miro/Json.h>
@@ -37,11 +35,5 @@ std::optional<T> loadJsonFile(const eacp::FilePath& path)
         return std::nullopt;
 
     return Miro::createFromJSON<T>(*json);
-}
-
-template <typename T>
-bool saveJsonFile(const eacp::FilePath& path, const T& value)
-{
-    return writeTextFile(path, Miro::toJSONString(value, 2) + "\n");
 }
 } // namespace epm

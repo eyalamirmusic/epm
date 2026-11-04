@@ -69,8 +69,8 @@ struct ManifestOverride
     MIRO_REFLECT(url, commit, tag)
 };
 
-// epm.json (Docs/Graph.md §2). `packages` is an array so that the file's
-// order, which decides among dependencies (§5 rule 3), survives loading.
+// epm.json. `packages` is an array so that the file's
+// order, which decides among dependencies, survives loading.
 struct Manifest
 {
     int schema = 1;
@@ -80,8 +80,7 @@ struct Manifest
     // (relative to the manifest's directory).
     std::map<std::string, Miro::JSON> profiles;
 
-    // Docs/Resolution.md: settles requirements minimal version selection
-    // cannot, by name.
+    // Settles, by name, what minimal version selection cannot.
     std::map<std::string, ManifestOverride> overrides;
 
     MIRO_REFLECT(schema, packages, profiles, overrides)

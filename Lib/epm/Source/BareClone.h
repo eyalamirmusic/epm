@@ -1,5 +1,8 @@
 #pragma once
 
+// A bare clone in the cache holding only the commits epm fetched into it,
+// under git/: not a `clone --mirror`, which copies every ref.
+
 #include <eacp/Core/Process/Process.h>
 #include <eacp/Core/Utils/FilePath.h>
 
@@ -9,18 +12,13 @@
 
 namespace epm
 {
-// git's trimmed stdout, or nullopt when it cannot be launched or exits
-// non-zero, in which case its stderr has been printed.
-std::optional<std::string>
-    runGit(const EA::Vector<std::string>& arguments,
-           const EA::Vector<eacp::Processes::EnvironmentVariable>& environment = {});
+void createBareClone(const eacp::FilePath& bareClone, const std::string& url);
 
-void createBareMirror(const eacp::FilePath& mirror, const std::string& url);
-
-bool hasCommit(const eacp::FilePath& mirror, const std::string& commit);
+bool hasCommit(const eacp::FilePath& bareClone, const std::string& commit);
 
 // The commit `ref` names on the remote now: a branch, a tag or a full sha.
-std::string fetchRefIntoMirror(const eacp::FilePath& mirror, const std::string& ref);
+std::string fetchRefIntoBareClone(const eacp::FilePath& bareClone,
+                                  const std::string& ref);
 
 enum class GitLfsFiles
 {
@@ -37,7 +35,7 @@ struct GitLink
 // One `ls-tree -r` of `commit`: its gitlinks and its .gitattributes files.
 struct GitTreeListing
 {
-    eacp::FilePath mirror;
+    eacp::FilePath bareClone;
     std::string commit;
     EA::Vector<GitLink> gitlinks;
     EA::Vector<std::string> attributeFiles;
@@ -46,16 +44,16 @@ struct GitTreeListing
     EA::Vector<std::string> symlinks;
 };
 
-GitTreeListing listTree(const eacp::FilePath& mirror, const std::string& commit);
+GitTreeListing listTree(const eacp::FilePath& bareClone, const std::string& commit);
 
 // True when any .gitattributes in the listing routes files through lfs.
 bool usesGitLfs(const GitTreeListing& listing);
 
-// Fetches every lfs object `commit` needs into the mirror; throws, naming the
+// Fetches every lfs object `commit` needs into the bare clone; throws, naming the
 // package to install, when git-lfs is missing.
-void fetchGitLfsObjects(const eacp::FilePath& mirror, const std::string& commit);
+void fetchGitLfsObjects(const eacp::FilePath& bareClone, const std::string& commit);
 
-void checkOutCommit(const eacp::FilePath& mirror,
+void checkOutCommit(const eacp::FilePath& bareClone,
                     const std::string& commit,
                     const eacp::FilePath& destination,
                     GitLfsFiles lfsFiles);
@@ -73,6 +71,4 @@ struct GitSubmodule
 EA::Vector<GitSubmodule> listSubmodules(const GitTreeListing& listing,
                                         const eacp::FilePath& tree);
 
-// The patch.exe Git for Windows installs, or an empty path when git is missing.
-eacp::FilePath findGitBundledPatch();
 } // namespace epm

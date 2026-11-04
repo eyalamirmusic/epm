@@ -64,7 +64,7 @@ struct CommandOptions
 };
 
 int runBeginCommand(const CommandOptions& options);
-int runAddCommand(const CommandOptions& options);
+int runResolveCommand(const CommandOptions& options);
 int runConfigureCommand(const CommandOptions& options);
 int runProvideCommand(const CommandOptions& options);
 int runUpdateCommand(const CommandOptions& options);

@@ -1,5 +1,5 @@
 #include <epm/Source/Download.h>
-#include <epm/Lock/Messages.h>
+#include <epm/Lock/ErrorMessages.h>
 #include <eacp/Core/Utils/Sha256.h>
 
 #include <eacp/Core/Utils/Files.h>

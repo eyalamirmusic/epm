@@ -45,7 +45,6 @@ ChildBuild sampleChildBuild()
     build.sourceDirectory = "/cache/src/eacp/abc";
     build.buildDirectory = "/cache/build/eacp/def/Release";
     build.prefix = "/cache/bin/eacp/def";
-    build.cpmCache = "/cache/cpm";
     build.config = "Release";
     return build;
 }
@@ -161,7 +160,6 @@ auto tConfigureArguments = test("ChildBuild/configureArguments") = []
     check(has("-DCMAKE_CXX_COMPILER=/usr/bin/c++"));
     check(has("-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0"));
     check(has("-DCMAKE_ARCHIVE_OUTPUT_DIRECTORY=/cache/bin/eacp/def/lib/Release"));
-    check(has("-DCPM_SOURCE_CACHE=/cache/cpm"));
     check(has("-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=/cache/build/eacp/def/Release/"
               "epm-export.cmake;/cache/build/eacp/def/Release/epm.cmake"));
     check(has("-DEPM_NESTED=ON"));

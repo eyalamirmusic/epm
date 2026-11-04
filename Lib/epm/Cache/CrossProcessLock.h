@@ -14,12 +14,12 @@ namespace epm
 //
 // eacp's IPC::Lock keeps its lock files in its own per-user directory, so the
 // lock name carries a hash of the cache root to keep two caches independent.
-class PackageLock
+class CrossProcessLock
 {
 public:
-    PackageLock(const CacheRoot& cache,
-                std::string_view name,
-                eacp::Time::MS timeout);
+    CrossProcessLock(const CacheRoot& cache,
+                     std::string_view name,
+                     eacp::Time::MS timeout);
 
     bool isLocked() const;
 
@@ -29,5 +29,5 @@ private:
 };
 
 // Long enough for another process to finish a full Debug + Release build.
-constexpr auto packageLockTimeout = eacp::Time::MS {60 * 60 * 1000};
+constexpr auto crossProcessLockTimeout = eacp::Time::MS {60 * 60 * 1000};
 } // namespace epm

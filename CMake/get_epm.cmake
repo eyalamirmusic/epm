@@ -1,6 +1,6 @@
 # get_epm.cmake -- the one file a project vendors to use epm.
 #
-# With a manifest (Docs/Graph.md): list this file in
+# With a manifest: list this file in
 # CMAKE_PROJECT_TOP_LEVEL_INCLUDES before project(), and keep epm.json beside
 # the top-level CMakeLists.txt:
 #
@@ -66,17 +66,22 @@
 #   EPM_BOOTSTRAP_NO_DOWNLOAD ON: never download a release binary (skips 4)
 #   EPM_SOURCE_REF            build this epm tag, branch or commit (skips 2-4)
 #   EPM_SOURCE_URL            build this source tarball (skips 2-4)
+#   EPM_RELEASE_REPOSITORY    the GitHub repository whose releases are used
+#                             (default https://github.com/eyalamirmusic/epm)
 #   EPM_CACHE                cache root (else the EPM_CACHE environment
 #                             variable, else the platform cache directory)
 #   EPM_VERBOSE               say what is tried; stream the build output
 #   EPM_NESTED                set by epm for its child builds: do nothing
 #
-# The binary ends up in EPM_EXECUTABLE (cache INTERNAL). See Docs/PoC.md §8 and
-# Docs/Graph.md §8.
+# The binary ends up in EPM_EXECUTABLE (cache INTERNAL).
 
 include_guard(GLOBAL)
 
 set(GET_EPM_REPOSITORY "https://github.com/eyalamirmusic/epm")
+
+if (EPM_RELEASE_REPOSITORY)
+    set(GET_EPM_REPOSITORY "${EPM_RELEASE_REPOSITORY}")
+endif ()
 set(GET_EPM_DIR "${CMAKE_CURRENT_LIST_DIR}")
 set(GET_EPM_FILE "${CMAKE_CURRENT_LIST_FILE}")
 
@@ -484,7 +489,7 @@ function(get_epm_build cache tool_dir ref source description)
     endif ()
 
     set(configure "${CMAKE_COMMAND}" -S "${source_dir}" -B "${build_dir}"
-            -DCMAKE_BUILD_TYPE=Release -DEPM_ENABLE_TESTS=OFF -DEPM_SELF_HOST=OFF
+            -DCMAKE_BUILD_TYPE=Release -DEPM_ENABLE_TESTS=OFF
             "-DCMAKE_INSTALL_PREFIX=${tool_dir}")
     set(build "${CMAKE_COMMAND}" --build "${build_dir}" --config Release --parallel)
     set(install "${CMAKE_COMMAND}" --install "${build_dir}" --config Release)
@@ -595,7 +600,12 @@ function(get_epm_source_dir_setting out_var)
     else ()
         get_epm_user_executable(user_executable)
 
-        if (NOT user_executable AND NOT EPM_SOURCE_REF AND NOT EPM_SOURCE_URL)
+        # epm itself builds with a release, never with the checkout it builds.
+        get_filename_component(checkout "${GET_EPM_DIR}/.." REALPATH)
+        get_filename_component(project_root "${CMAKE_SOURCE_DIR}" REALPATH)
+
+        if (NOT user_executable AND NOT EPM_SOURCE_REF AND NOT EPM_SOURCE_URL
+                AND NOT checkout STREQUAL project_root)
             get_epm_check_source_dir("${GET_EPM_DIR}/..")
 
             if (source_error STREQUAL "")
@@ -675,7 +685,7 @@ function(get_epm_build_checkout cache source_dir)
     endif ()
 
     set(configure "${CMAKE_COMMAND}" -S "${source_dir}" -B "${build_dir}"
-            ${toolchain_args} -DCMAKE_BUILD_TYPE=Release -DEPM_ENABLE_TESTS=OFF -DEPM_SELF_HOST=OFF
+            ${toolchain_args} -DCMAKE_BUILD_TYPE=Release -DEPM_ENABLE_TESTS=OFF
             "-DCMAKE_INSTALL_PREFIX=${tool_dir}")
     set(build "${CMAKE_COMMAND}" --build "${build_dir}" --config Release --parallel)
     set(install "${CMAKE_COMMAND}" --install "${build_dir}" --config Release
@@ -914,7 +924,7 @@ function(get_epm_is_top_level_include out_var)
 endfunction()
 
 # Tests/GetEpmRanges.cmake wants the functions only. A child build epm runs
-# (Docs/Graph.md §10) has the provider injected by its parent and needs no
+# has the provider injected by its parent and needs no
 # binary: bootstrapping one there could find no module beside an EPM_EXECUTABLE
 # in a build tree and go on to download a release.
 if (GET_EPM_FUNCTIONS_ONLY OR EPM_NESTED)
@@ -939,7 +949,7 @@ unset(EPM_UPDATE CACHE)
 
 include("${get_epm_module}")
 
-# The manifest flow (Docs/Graph.md §8). A project without epm.json may still
+# The manifest flow. A project without epm.json may still
 # call epm_add_package.
 if (NOT EXISTS "${CMAKE_SOURCE_DIR}/epm.json")
     return()

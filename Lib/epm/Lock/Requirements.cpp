@@ -1,5 +1,5 @@
 #include <epm/Lock/Requirements.h>
-#include <epm/Lock/Messages.h>
+#include <epm/Lock/ErrorMessages.h>
 
 #include <eacp/Core/Utils/Strings.h>
 

@@ -20,7 +20,6 @@ public:
     eacp::FilePath downloads() const;
     eacp::FilePath bin() const;
     eacp::FilePath build() const;
-    eacp::FilePath cpm() const;
     eacp::FilePath tmp() const;
     eacp::FilePath locks() const;
 

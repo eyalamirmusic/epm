@@ -2,7 +2,7 @@
 
 #include "CacheRoot.h"
 #include "Fingerprint.h"
-#include "SourceCache.h"
+#include <epm/Source/SourceSnapshot.h>
 
 #include <epm/Build/ChildBuild.h>
 #include <epm/Spec/Env.h>

@@ -124,7 +124,9 @@ ResolveResult resolveSnapshot(const Request& request,
     Log::step("epm: " + request.name + " " + wanted.platform + " "
               + fingerprintId(wanted).substr(0, 12) + ": "
               + (existing ? "entry " + existing->prefix.fileName() : "no entry")
-              + (missing.empty() ? "" : ", missing " + joinList(missing, ", ")));
+              + (missing.empty()
+                     ? ""
+                     : ", missing " + eacp::Strings::join(missing, ", ")));
 
     switch (decide(request, existing && missing.empty()))
     {
@@ -137,10 +139,11 @@ ResolveResult resolveSnapshot(const Request& request,
         case Decision::missingBinary:
             return failure(
                 request.name + " is binary-only, but the cache has no "
-                + wanted.platform + " entry holding " + joinList(configs, ", ")
-                + " for " + fingerprintId(wanted).substr(0, 12)
+                + wanted.platform + " entry holding "
+                + eacp::Strings::join(configs, ", ") + " for "
+                + fingerprintId(wanted).substr(0, 12)
                 + (existing ? " (entry " + existing->prefix.fileName() + " lacks "
-                                  + joinList(missing, ", ") + ")"
+                                  + eacp::Strings::join(missing, ", ") + ")"
                             : ""));
 
         case Decision::buildBinary:

@@ -126,7 +126,7 @@ std::string configSelector(const EA::Vector<std::string>& available,
             if (mapConsumerConfig(consumer, configs) == config)
                 mapped.add(consumer);
 
-        expression = "$<IF:$<CONFIG:" + joinList(mapped, ",") + ">,"
+        expression = "$<IF:$<CONFIG:" + eacp::Strings::join(mapped, ",") + ">,"
                      + targetIn(config) + "," + expression + ">";
     }
 

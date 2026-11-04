@@ -84,7 +84,6 @@ jobs:
           {
             echo "ROOT=$root"
             echo "EXE_SUFFIX=$suffix"
-            echo "CPM_SOURCE_CACHE=$root/.cpm-cache"
           } >> "$GITHUB_ENV"
 
       - name: Show the toolchain
@@ -97,24 +96,10 @@ jobs:
             clang++ --version
           fi
 
-      # eacp is fetched at GIT_TAG develop, which CPM never refreshes inside an
-      # existing source cache, so eacp's current commit is part of the key and a
-      # new eacp commit starts a fresh cache rather than restoring a stale one.
-      - name: Resolve eacp develop
-        id: eacp
-        run: |
-          echo "sha=$(git ls-remote https://github.com/eyalamirmusic/eacp refs/heads/develop | cut -f1)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache CPM sources
-        uses: actions/cache@v6
-        with:
-          path: .cpm-cache
-          key: cpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMake/Find*.cmake') }}-eacp-${{ steps.eacp.outputs.sha }}
-
       - name: Configure
         run: >
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          -DEPM_LOCK_MODE=locked "-DEPM_CACHE=${{ env.ROOT }}/.epm-self-cache"
+          -DEPM_LOCK_MODE=locked -DEPM_CI=ON "-DEPM_CACHE=${{ env.ROOT }}/.epm-self-cache"
           ${{ matrix.cmake-flags }} ${{ matrix.epm-flags }}
 
       - name: Build

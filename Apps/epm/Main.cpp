@@ -219,7 +219,7 @@ int runPackageCommand(const std::string& command, int argumentsToSkip)
             options.lock = FilePath::currentDirectory() / options.lock.str();
 
         if (command == "resolve")
-            return epm::runAddCommand(options);
+            return epm::runResolveCommand(options);
 
         if (command == "configure")
             return epm::runConfigureCommand(options);
@@ -263,13 +263,12 @@ int graphCMake()
 
     try
     {
-        const auto loaded = epm::loadGraphJson(graph);
+        const auto loaded = epm::loadJsonFile<epm::ResolvedGraph>(graph);
 
         if (!loaded)
             return fail("cannot read the graph file " + graph.str());
 
-        if (!epm::writeGraphCMake(out, *loaded))
-            return fail("cannot write " + out.str());
+        Files::writeFileAtomically(out, epm::graphCMakeText(*loaded));
     }
     catch (const std::exception& error)
     {

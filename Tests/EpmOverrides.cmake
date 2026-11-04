@@ -1,4 +1,4 @@
-# Self-test of the overrides.json writer in CMake/epm.cmake (Docs/Graph.md §3).
+# Self-test of the overrides.json writer in CMake/epm.cmake.
 #
 #   cmake -P Tests/EpmOverrides.cmake
 

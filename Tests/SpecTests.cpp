@@ -11,7 +11,6 @@ using namespace epm;
 
 namespace
 {
-// Verbatim from Docs/PoC.md §2.
 constexpr auto envFixture = R"({ "schema": 1,
   "cmake": "/path/to/cmake", "cmakeVersion": "3.31.6", "generator": "Ninja",
   "isMultiConfig": false,
@@ -72,7 +71,7 @@ auto tEnvRoundTrip = test("Spec/env/roundTrip") = []
     env.cxxCompiler = "/usr/bin/c++";
 
     auto file = eacp::TemporaryFile {".json"};
-    check(saveJsonFile(file.path(), env));
+    eacp::Files::writeFile(file.path(), Miro::toJSONString(env, 2));
 
     const auto loaded = loadJsonFile<Env>(file.path());
 
@@ -114,7 +113,7 @@ auto tRequestRoundTrip = test("Spec/request/roundTrip") = []
     request.buildMissingBinaries = false;
 
     auto file = eacp::TemporaryFile {".json"};
-    check(saveJsonFile(file.path(), request));
+    eacp::Files::writeFile(file.path(), Miro::toJSONString(request, 2));
 
     const auto text = eacp::Files::readFile(file.path());
     check(text.find("\"gitUrl\"") != std::string::npos);

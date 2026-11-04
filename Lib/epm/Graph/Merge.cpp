@@ -167,7 +167,8 @@ MergeResult
     if (!resolved)
     {
         result.error = name + " has an unknown configuration in configs '"
-                       + joinList(configs, ";") + "' (from " + provenance["configs"]
+                       + eacp::Strings::join(configs, ";") + "' (from "
+                       + provenance["configs"]
                        + "): give auto, or Debug, Release, RelWithDebInfo and "
                          "MinSizeRel";
         return result;

@@ -50,11 +50,6 @@ FilePath CacheRoot::build() const
     return subdirectory("build");
 }
 
-FilePath CacheRoot::cpm() const
-{
-    return subdirectory("cpm");
-}
-
 FilePath CacheRoot::tmp() const
 {
     return subdirectory("tmp");

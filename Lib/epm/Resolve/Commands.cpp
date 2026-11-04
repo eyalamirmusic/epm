@@ -5,9 +5,9 @@
 #include <epm/Resolve/Resolve.h>
 #include <epm/Spec/Overrides.h>
 #include <epm/Lock/LockFile.h>
-#include <epm/Lock/Messages.h>
+#include <epm/Lock/ErrorMessages.h>
 #include <epm/Spec/PackageArguments.h>
-#include <epm/Source/PackageCache.h>
+#include <epm/Source/SourceCache.h>
 #include <epm/Lock/Session.h>
 #include <epm/Util/Status.h>
 
@@ -21,7 +21,7 @@
 #include <ea_data_structures/Utilities/VectorUtilities.h>
 
 #include <epm/Lock/MerkleHash.h>
-#include <epm/Cache/SourceCache.h>
+#include <epm/Source/SourceSnapshot.h>
 #include <epm/Spec/JsonFile.h>
 #include <epm/Spec/Manifest.h>
 #include <eacp/Core/Utils/Sha256.h>
@@ -36,6 +36,7 @@ namespace epm
 {
 namespace
 {
+constexpr auto jsonIndent = 2;
 constexpr auto overrideSuffix = std::string_view {"_SOURCE"};
 constexpr auto overridePrefixes = EA::Array<std::string_view, 2> {"EPM_", "CPM_"};
 
@@ -125,7 +126,7 @@ PackageRequest createRequestFromLock(const eacp::FilePath& lockPath,
     return request;
 }
 
-LockedPackage resolvePackage(const PackageCache& cache,
+LockedPackage resolvePackage(const SourceCache& cache,
                              const PackageRequest& request,
                              const EA::Vector<std::string>& patchesForLock)
 {
@@ -149,7 +150,7 @@ LockedPackage resolvePackage(const PackageCache& cache,
 }
 
 eacp::FilePath ensureLockedPackageIsCached(const CommandOptions& options,
-                                           const PackageCache& cache,
+                                           const SourceCache& cache,
                                            const PackageRequest& request,
                                            const LockedPackage& locked,
                                            Network network)
@@ -231,9 +232,9 @@ PackageRequest createRequest(const CommandOptions& options, const PackageSpec& s
     return request;
 }
 
-PackageCache createPackageCache(const CommandOptions& options)
+SourceCache createSourceCache(const CommandOptions& options)
 {
-    return PackageCache {CacheRoot {options.cache}, options.cmake};
+    return SourceCache {CacheRoot {options.cache}, options.cmake};
 }
 
 EA::Vector<std::string> getPatchesForLock(const CommandOptions& options,
@@ -307,7 +308,7 @@ CachedSource resolveLockedSource(const CommandOptions& options,
                                  const PackageSpec& spec,
                                  const Session& session)
 {
-    auto cache = createPackageCache(options);
+    auto cache = createSourceCache(options);
     auto lock = readLockFile(options.lock);
     auto request = createRequest(options, spec);
 
@@ -688,7 +689,7 @@ std::string resolveRequirementCommit(const CommandOptions& options,
     if (isResolvingRequirements(options, session))
     {
         auto request = createRequest(options, withRequirement(spec, requirement));
-        return createPackageCache(options).resolveCommit(request, Network::allowed);
+        return createSourceCache(options).resolveCommit(request, Network::allowed);
     }
 
     auto locked = readLockFile(options.lock).findPackage(spec.name);
@@ -1020,6 +1021,16 @@ LockedSource lockGraphPackage(const CommandOptions& options,
                                           : session.findRequirements(name),
                                  override.has_value());
 
+    // Recorded, so the package calls its own CMake makes are attributed to it.
+    if (!session.findPackage(name))
+        session.packages.push_back({name,
+                                    selection.selected.requestedRef,
+                                    source.directory.str(),
+                                    {},
+                                    "graph",
+                                    source.hash,
+                                    selection.selected.commit});
+
     return {
         true,
         SourceSnapshot {selection.selected.commit, source.hash, source.directory},
@@ -1138,16 +1149,14 @@ int runConfigureCommand(const CommandOptions& options)
     auto graphJson = options.outputDirectory / "graph.json";
     auto graphCMake = options.outputDirectory / "graph.cmake";
 
-    if (!writeGraphJson(graphJson, result.graph))
-        throw std::runtime_error("cannot write " + graphJson.str());
-
-    if (!writeGraphCMake(graphCMake, result.graph))
-        throw std::runtime_error("cannot write " + graphCMake.str());
+    eacp::Files::writeFileAtomically(
+        graphJson, Miro::toJSONString(result.graph, jsonIndent) + "\n");
+    eacp::Files::writeFileAtomically(graphCMake, graphCMakeText(result.graph));
 
     return 0;
 }
 
-int runAddCommand(const CommandOptions& options)
+int runResolveCommand(const CommandOptions& options)
 {
     auto spec = parseArgumentsFrom(options);
     writeSnippet(options, addPackage(options, spec));
@@ -1174,7 +1183,7 @@ int runProvideCommand(const CommandOptions& options)
 
 int runUpdateCommand(const CommandOptions& options)
 {
-    auto cache = createPackageCache(options);
+    auto cache = createSourceCache(options);
     auto lock = readLockFile(options.lock);
     auto updatedCount = 0;
 
@@ -1210,7 +1219,7 @@ int runUpdateCommand(const CommandOptions& options)
 
 int runVerifyCommand(const CommandOptions& options)
 {
-    auto cache = createPackageCache(options);
+    auto cache = createSourceCache(options);
     auto lock = readLockFile(options.lock);
     auto failedCount = 0;
 

@@ -7,7 +7,7 @@
 # registers epm_provide_dependency for find_package() and
 # FetchContent_MakeAvailable(). It must be called while the first project()
 # processes CMAKE_PROJECT_TOP_LEVEL_INCLUDES (a CMake rule for every dependency
-# provider). The graph file (Docs/Graph.md §7) is read at the first call the
+# provider). The graph file is read at the first call the
 # provider receives, after running PREPARE once when one is given, so a
 # PREPARE command that writes the graph sees the variables the project set
 # between project() and its first find_package (CMAKE_CXX_STANDARD, say).
@@ -146,7 +146,8 @@ function(epm_load_package name)
         epm_set_options(${arg_OPTIONS})
 
         set(binary_dir "${CMAKE_BINARY_DIR}/_deps/${name}-build")
-        add_subdirectory("${arg_SOURCE_DIR}" "${binary_dir}")
+        # As a prebuilt entry would, a source package builds only what links it.
+        add_subdirectory("${arg_SOURCE_DIR}" "${binary_dir}" EXCLUDE_FROM_ALL)
 
         get_filename_component(id "${arg_SOURCE_DIR}" NAME)
     else ()

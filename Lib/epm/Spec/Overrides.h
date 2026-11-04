@@ -25,7 +25,7 @@ struct PackageOverride
     MIRO_REFLECT(mode, source, configs, options)
 };
 
-// overrides.json (Docs/Graph.md §3), written by get_epm.cmake from the CMake
+// overrides.json, written by get_epm.cmake from the CMake
 // variables it sees. Unset strings and lists are empty.
 struct Overrides
 {

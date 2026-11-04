@@ -2,7 +2,7 @@
 
 #include <epm/Build/ChildBuild.h>
 #include <epm/Cache/CacheRoot.h>
-#include <epm/Cache/SourceCache.h>
+#include <epm/Source/SourceSnapshot.h>
 #include <epm/Emit/Response.h>
 #include <epm/Spec/Env.h>
 #include <epm/Spec/Request.h>

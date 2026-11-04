@@ -1,4 +1,4 @@
-#include <epm/Lock/Messages.h>
+#include <epm/Lock/ErrorMessages.h>
 
 #include <NanoTest/NanoTest.h>
 

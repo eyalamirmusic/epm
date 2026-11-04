@@ -1,4 +1,4 @@
-#include "PackageLock.h"
+#include <epm/Cache/CrossProcessLock.h>
 
 #include <eacp/Core/Utils/Sha256.h>
 
@@ -13,15 +13,15 @@ std::string lockName(const CacheRoot& cache, std::string_view name)
 }
 } // namespace
 
-PackageLock::PackageLock(const CacheRoot& cache,
-                         std::string_view name,
-                         eacp::Time::MS timeout)
+CrossProcessLock::CrossProcessLock(const CacheRoot& cache,
+                                   std::string_view name,
+                                   eacp::Time::MS timeout)
     : lock(lockName(cache, name))
     , guard(lock, timeout)
 {
 }
 
-bool PackageLock::isLocked() const
+bool CrossProcessLock::isLocked() const
 {
     return guard.isLocked();
 }

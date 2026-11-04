@@ -1,27 +1,11 @@
 #include "Text.h"
 
 #include <eacp/Core/Utils/Files.h>
+#include <eacp/Core/Utils/Strings.h>
 
 namespace epm
 {
 using namespace eacp;
-
-bool writeTextFile(const FilePath& path, std::string_view text)
-{
-    if (!Files::createDirectories(path.parentDirectory()))
-        return false;
-
-    try
-    {
-        Files::writeFileAtomically(path, text);
-    }
-    catch (const std::exception&)
-    {
-        return false;
-    }
-
-    return true;
-}
 
 EA::Vector<std::string_view> splitLines(std::string_view text)
 {
@@ -89,19 +73,4 @@ EA::Vector<std::string> splitList(std::string_view text, char separator)
     return items;
 }
 
-std::string joinList(const EA::Vector<std::string>& items,
-                     std::string_view separator)
-{
-    auto result = std::string {};
-
-    for (auto i = 0; i < items.size(); ++i)
-    {
-        if (i > 0)
-            result += separator;
-
-        result += items[i];
-    }
-
-    return result;
-}
 } // namespace epm

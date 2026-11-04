@@ -4,6 +4,7 @@
 #include <epm/Util/Text.h>
 
 #include <eacp/Core/Utils/FilePath.h>
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/Sha256.h>
 
 #include <Miro/Json.h>
@@ -150,6 +151,6 @@ std::optional<std::string> abiNote(const AbiFingerprint& recorded,
         "toolchainFileHash", recorded.toolchainFileHash, current.toolchainFileHash);
     compare("deps", recorded.deps, current.deps);
 
-    return "built with a different " + joinList(fields, ", ");
+    return "built with a different " + eacp::Strings::join(fields, ", ");
 }
 } // namespace epm

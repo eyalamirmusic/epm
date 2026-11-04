@@ -17,7 +17,7 @@ std::string quotedList(const EA::Vector<std::string>& items)
     for (const auto& item: items)
         escaped.add(replaceAll(item, ";", "\\;"));
 
-    return cmakeQuoted(joinList(escaped, ";"));
+    return cmakeQuoted(eacp::Strings::join(escaped, ";"));
 }
 
 EA::Vector<std::string> optionList(const std::map<std::string, std::string>& options)
@@ -65,20 +65,5 @@ std::string graphCMakeText(const ResolvedGraph& graph)
         text += packageText(package);
 
     return text + "set(epm_NOTES " + quotedList(graph.notes) + ")\n";
-}
-
-bool writeGraphCMake(const FilePath& path, const ResolvedGraph& graph)
-{
-    return writeTextFile(path, graphCMakeText(graph));
-}
-
-bool writeGraphJson(const FilePath& path, const ResolvedGraph& graph)
-{
-    return saveJsonFile(path, graph);
-}
-
-std::optional<ResolvedGraph> loadGraphJson(const FilePath& path)
-{
-    return loadJsonFile<ResolvedGraph>(path);
 }
 } // namespace epm

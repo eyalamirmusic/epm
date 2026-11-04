@@ -12,7 +12,6 @@ using namespace epm;
 
 namespace
 {
-// Docs/Graph.md §1, plus a path-valued profile.
 constexpr auto manifestFixture = R"({
   "schema": 1,
   "packages": [
@@ -36,9 +35,9 @@ struct ManifestDirectory
 {
     ManifestDirectory()
     {
-        writeTextFile(manifestPath(), manifestFixture);
-        writeTextFile(directory.path() / "policy" / "external.json",
-                      externalProfile);
+        eacp::Files::writeFile(manifestPath(), manifestFixture);
+        eacp::Files::writeFile(directory.path() / "policy" / "external.json",
+                               externalProfile);
     }
 
     eacp::FilePath manifestPath() const { return directory.path() / "epm.json"; }
@@ -92,7 +91,7 @@ auto tManifestMissing = test("Manifest/load/missingOrMalformed") = []
     auto file = eacp::TemporaryFile {".json"};
     check(!loadManifest(file.path()).ok);
 
-    writeTextFile(file.path(), "[1, 2]");
+    eacp::Files::writeFile(file.path(), "[1, 2]");
     check(!loadManifest(file.path()).ok);
 };
 
@@ -152,8 +151,9 @@ auto tProfileFile = test("Manifest/profile/pathValueIsRelativeToManifest") = []
 auto tProfileFileDuplicate = test("Manifest/profile/fileRejectsDuplicateName") = []
 {
     const auto fixture = ManifestDirectory {};
-    writeTextFile(fixture.directory.path() / "policy" / "external.json",
-                  R"({ "packages": [ { "name": "B" }, { "name": "B" } ] })");
+    eacp::Files::writeFile(
+        fixture.directory.path() / "policy" / "external.json",
+        R"({ "packages": [ { "name": "B" }, { "name": "B" } ] })");
 
     const auto selection = selectProfile(
         fixture.manifest(), "external", fixture.manifestPath().parentDirectory());
@@ -200,7 +200,7 @@ auto tProfileBrokenFile = test("Manifest/profile/unreadableFile") = []
 auto tOverridesParse = test("Overrides/parsesContractFixture") = []
 {
     auto file = eacp::TemporaryFile {".json"};
-    writeTextFile(file.path(), R"({
+    eacp::Files::writeFile(file.path(), R"({
       "schema": 1, "profile": "ci", "mode": "", "configs": [], "abiMatch": "",
       "strict": true,
       "packages": { "fmt": { "mode": "source", "source": "/abs/fmt",

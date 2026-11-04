@@ -1,11 +1,12 @@
 #include "CacheListing.h"
 #include "BinaryCache.h"
-#include "SourceCache.h"
+#include <epm/Source/SourceSnapshot.h>
 
 #include <epm/Spec/JsonFile.h>
 #include <epm/Util/Text.h>
 
 #include <eacp/Core/Utils/File.h>
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Format.h>
 
@@ -98,7 +99,7 @@ EA::Vector<Row> binaryRows(const CacheRoot& cache)
         rows.add({name,
                   fingerprint.platform,
                   entry.configs.empty() ? std::string {"(none)"}
-                                        : joinList(entry.configs, "+"),
+                                        : eacp::Strings::join(entry.configs, "+"),
                   fingerprint.compilerId + " " + fingerprint.compilerMajor,
                   humanSize(directorySize(entry.prefix)),
                   entry.prefix.fileName()});

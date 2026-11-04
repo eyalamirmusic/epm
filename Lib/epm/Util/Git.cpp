@@ -2,6 +2,9 @@
 #include "Text.h"
 
 #include <eacp/Core/Platform/Platform.h>
+#include <eacp/Core/Utils/Strings.h>
+
+#include <stdexcept>
 
 namespace epm::Git
 {
@@ -68,10 +71,38 @@ Result run(const EA::Vector<std::string>& arguments,
                             : std::string {"could not run git - is it installed?"}};
 }
 
-bool isAvailable()
+std::string runOrThrow(const Vector<std::string>& arguments,
+                       const Vector<Processes::EnvironmentVariable>& environment)
 {
-    static const auto available = run({"--version"}).ok;
-    return available;
+    auto result = run(arguments, environment);
+
+    if (!result.ok)
+        throw std::runtime_error("git " + Strings::join(arguments, " ")
+                                 + " failed:\n" + Strings::trim(result.error));
+
+    return Strings::trim(result.output);
 }
 
+bool isLfsInstalled()
+{
+    return run({"lfs", "version"}).ok;
+}
+
+FilePath findPatchBesideGit()
+{
+    // Git for Windows ships patch.exe in usr/bin beside libexec/git-core, which
+    // is where CPM looks too.
+    constexpr auto levelsAboveGitInstall = 3;
+    auto execPath = run({"--exec-path"});
+
+    if (!execPath.ok)
+        return {};
+
+    auto install = FilePath {Strings::trim(execPath.output)};
+
+    for (auto level = 0; level < levelsAboveGitInstall; ++level)
+        install = install.parentDirectory();
+
+    return install / "usr" / "bin" / "patch.exe";
+}
 } // namespace epm::Git

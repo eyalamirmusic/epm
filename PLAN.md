@@ -5,8 +5,8 @@ CMake through a thin module, inspired by cpm.cmake for the user-facing shape, an
 what CPM deliberately leaves out: resolved pins, a sound source cache, prebuilt binaries,
 and local/remote cache repositories.
 
-Status: the local-cache proof of concept is implemented (`Docs/PoC.md`), and so is the
-manifest and dependency-graph stage that supersedes its per-call flow (`Docs/Graph.md`).
+Status: the local-cache proof of concept is implemented, and so are the manifest and
+dependency-graph stage and the lock (README.md).
 
 ---
 
@@ -302,7 +302,7 @@ same platform, compiler id and major version, deployment target, C++ standard, o
 source and toolchain-file contents, so Xcode's and the command-line tools' clang share
 entries), `strict` (every recorded field) or `any` (platform, options, source). An exact
 match is preferred; a non-exact one is reported on the configure line. In the PoC the
-recorded fingerprint is the env-derived subset of 6.1 (`Docs/PoC.md` §3, §9).
+recorded fingerprint is the env-derived subset of 6.1.
 
 ### 6.3 Building a package in isolation
 

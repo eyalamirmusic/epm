@@ -21,7 +21,7 @@ struct Declaration
     ManifestPackage package;
 };
 
-// Every source of a package's values, highest precedence first (§4).
+// Every source of a package's values, highest precedence first.
 struct MergeLayers
 {
     PackageOverride packageOverride;

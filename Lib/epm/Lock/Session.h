@@ -21,7 +21,8 @@ struct SessionPackage
     std::string sourceDirectory;
     std::string binaryDirectory;
 
-    // "source" or "prebuilt": how epm added it.
+    // "source" or "prebuilt": how a package call added it; "graph" for an
+    // epm.json package, which the provider adds.
     std::string mode = "source";
 
     // The Merkle hash of the cached tree; empty for a local checkout.

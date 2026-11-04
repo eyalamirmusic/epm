@@ -11,8 +11,7 @@ consumer's CMake does not change.
 
 The longer-term design (remote binary caches, lockfiles, transitive
 dependencies, a CPM compatibility shim) is in [PLAN.md](PLAN.md). What exists
-today, including the files exchanged between `epm.cmake` and the binary and the
-cache layout, is described in [Docs/PoC.md](Docs/PoC.md).
+today is described below.
 
 ## Status
 
@@ -77,7 +76,7 @@ Two cache variables, set with `-D` or before the first `epm_add_package`:
   the configure line:
   `-- epm: eacp (prebuilt, macos-arm64, 1a2b3c4d5e6f, built with AppleClang 17.0.0.17000013, current 17.0.0.17000319)`.
 
-`epm cache ls` lists what the cache holds. Docs/PoC.md §9 has the details.
+`epm cache ls` lists what the cache holds.
 
 ## Locking the dependency tree
 
@@ -109,8 +108,7 @@ work on the lock from the command line.
 The lock holds one version of each package for the whole tree. When projects
 ask for different versions, the highest semantic version tag wins and anything
 else stops the configure until the root's `epm.json` overrides it, as Go's
-minimal version selection and `replace` do; [Docs/Resolution.md](Docs/Resolution.md)
-is the model.
+minimal version selection and `replace` do.
 
 A binary cache entry's key includes the package's Merkle hash, and the entry
 records the hashes of the packages its child build added, so a cached library
@@ -168,15 +166,17 @@ configure and uses it (for working on epm), and `EPM_VERBOSE=ON` shows what is t
 that is itself part of an epm checkout (the examples in this repository use
 `../../CMake/get_epm.cmake`) builds that checkout unless `EPM_EXECUTABLE`,
 `EPM_SOURCE_DIR`, `EPM_SOURCE_REF` or `EPM_SOURCE_URL` says otherwise; a vendored
-copy never does. Details are in Docs/PoC.md §8.
+copy never does.
 
 ## Building and installing epm
 
-epm needs CMake 3.31 and a C++20 compiler. It builds itself with epm: its
-`CMakeLists.txt` loads `CMake/get_epm.cmake` during `project()`, so eacp,
-Miro and the rest come in locked from the committed `epm-lock.json`. The epm that resolves them is a first host build of the same
-checkout, which fetches its own dependencies with CPM (`EPM_SELF_HOST=OFF`);
-`-DEPM_EXECUTABLE=<an epm>` skips that build. Everything is linked statically.
+epm needs CMake 3.31 and a C++20 compiler. It builds itself with epm, as a
+compiler builds with its previous release: `CMakeLists.txt` pins a released
+epm (`EPM_VERSION`, `EPM_RELEASE_REPOSITORY`), `CMake/get_epm.cmake` downloads
+it during `project()`, and it resolves eacp, Miro and NanoTest from `epm.json`
+and the committed `epm-lock.json`; `find_package` reaches them through the
+provider. `-DEPM_EXECUTABLE=<an epm>` uses another. Everything is linked
+statically.
 
 ```bash
 cmake -S . -B build && cmake --build build && cmake --install build --prefix ~/.local

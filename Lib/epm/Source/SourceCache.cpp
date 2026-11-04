@@ -1,9 +1,10 @@
-#include <epm/Source/PackageCache.h>
+#include <epm/Source/SourceCache.h>
 #include <epm/Source/Download.h>
-#include <epm/Source/Mirror.h>
+#include <epm/Source/BareClone.h>
+#include <epm/Util/Git.h>
 #include <epm/Util/LongPath.h>
 #include <epm/Lock/MerkleHash.h>
-#include <epm/Lock/Messages.h>
+#include <epm/Lock/ErrorMessages.h>
 #include <eacp/Core/Utils/Sha256.h>
 #include <epm/Util/Status.h>
 #include <epm/Util/Text.h>
@@ -12,8 +13,8 @@
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/TemporaryFile.h>
-#include <epm/Cache/PackageLock.h>
-#include <epm/Cache/SourceCache.h>
+#include <epm/Cache/CrossProcessLock.h>
+#include <epm/Source/SourceSnapshot.h>
 #include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/Zip.h>
 #include <eacp/Core/Platform/Platform.h>
@@ -132,7 +133,7 @@ void applyPatch(const eacp::FilePath& tree, const eacp::FilePath& patch)
     auto result = runPatch("patch", tree, patch);
 
     if (!result.launched && eacp::Platform::isWindows())
-        result = runPatch(findGitBundledPatch().str(), tree, patch);
+        result = runPatch(Git::findPatchBesideGit().str(), tree, patch);
 
     if (!result.launched)
         throw std::runtime_error("applying " + patch.str()
@@ -147,17 +148,17 @@ void applyPatch(const eacp::FilePath& tree, const eacp::FilePath& patch)
 bool checkOutCommitWithLfs(const GitTreeListing& listing,
                            const eacp::FilePath& destination)
 {
-    const auto& mirror = listing.mirror;
+    const auto& bareClone = listing.bareClone;
     const auto& commit = listing.commit;
 
     if (!usesGitLfs(listing))
     {
-        checkOutCommit(mirror, commit, destination, GitLfsFiles::pointers);
+        checkOutCommit(bareClone, commit, destination, GitLfsFiles::pointers);
         return false;
     }
 
-    fetchGitLfsObjects(mirror, commit);
-    checkOutCommit(mirror, commit, destination, GitLfsFiles::content);
+    fetchGitLfsObjects(bareClone, commit);
+    checkOutCommit(bareClone, commit, destination, GitLfsFiles::content);
     return true;
 }
 
@@ -172,16 +173,16 @@ eacp::FilePath findArchiveContentRoot(const eacp::FilePath& extracted)
 
     return extracted;
 }
-constexpr auto mirrorLockTimeout = eacp::Time::MS {10 * 60 * 1000};
+constexpr auto fetchLockTimeout = eacp::Time::MS {10 * 60 * 1000};
 
-// Holds one URL's mirror or download for this process: configures sharing the
+// Holds one URL's bareClone or download for this process: configures sharing the
 // cache would otherwise fetch into the same bare repository at once, which
 // git's shallow file cannot take, or write the same .part file.
-class MirrorLock
+class FetchLock
 {
 public:
-    MirrorLock(const CacheRoot& cache, const std::string& url)
-        : lock(cache, "mirror-" + computeUrlKey(url), mirrorLockTimeout)
+    FetchLock(const CacheRoot& cache, const std::string& url)
+        : lock(cache, "fetch-" + computeUrlKey(url), fetchLockTimeout)
     {
         if (!lock.isLocked())
         {
@@ -191,41 +192,41 @@ public:
     }
 
 private:
-    PackageLock lock;
+    CrossProcessLock lock;
 };
 } // namespace
 
-PackageCache::PackageCache(CacheRoot rootToUse, eacp::FilePath cmakeToUse)
+SourceCache::SourceCache(CacheRoot rootToUse, eacp::FilePath cmakeToUse)
     : root(std::move(rootToUse))
     , cmake(std::move(cmakeToUse))
 {
 }
 
-eacp::FilePath PackageCache::getSourceDirectory(const std::string& hash) const
+eacp::FilePath SourceCache::getSourceDirectory(const std::string& hash) const
 {
     return root.src() / hash;
 }
 
-eacp::FilePath PackageCache::getMirrorDirectory(const std::string& url) const
+eacp::FilePath SourceCache::getBareCloneDirectory(const std::string& url) const
 {
     return root.git() / (computeUrlKey(url) + ".git");
 }
 
-eacp::FilePath PackageCache::getOrCreateMirror(const std::string& url) const
+eacp::FilePath SourceCache::getOrCreateBareClone(const std::string& url) const
 {
-    auto mirror = getMirrorDirectory(url);
-    eacp::Files::createDirectories(mirror.parentDirectory());
-    createBareMirror(mirror, url);
-    return mirror;
+    auto bareClone = getBareCloneDirectory(url);
+    eacp::Files::createDirectories(bareClone.parentDirectory());
+    createBareClone(bareClone, url);
+    return bareClone;
 }
 
-eacp::FilePath PackageCache::getDownloadPath(const std::string& url) const
+eacp::FilePath SourceCache::getDownloadPath(const std::string& url) const
 {
     auto name = eacp::Files::legalFileName(eacp::FilePath {url}.fileName());
     return root.downloads() / computeUrlKey(url) / name;
 }
 
-eacp::TemporaryFile PackageCache::createStagingDirectory() const
+eacp::TemporaryFile SourceCache::createStagingDirectory() const
 {
     // A random name, so configures sharing the cache never stage into one tree.
     auto staging = eacp::TemporaryFile {root.tmp(), ""};
@@ -233,8 +234,8 @@ eacp::TemporaryFile PackageCache::createStagingDirectory() const
     return staging;
 }
 
-bool PackageCache::hasIntactEntry(const std::string& hash,
-                                  Verification verification) const
+bool SourceCache::hasIntactEntry(const std::string& hash,
+                                 Verification verification) const
 {
     auto directory = getSourceDirectory(hash);
 
@@ -254,7 +255,7 @@ bool PackageCache::hasIntactEntry(const std::string& hash,
     return true;
 }
 
-void PackageCache::removeEntry(const std::string& hash) const
+void SourceCache::removeEntry(const std::string& hash) const
 {
     auto directory = getSourceDirectory(hash);
     removeTreeAtAnyLength(directory);
@@ -262,9 +263,9 @@ void PackageCache::removeEntry(const std::string& hash) const
     eacp::Files::removeFile(getSymlinksPath(directory));
 }
 
-MaterializedPackage PackageCache::materialize(const PackageRequest& request,
-                                              const std::string& commit,
-                                              Network network) const
+MaterializedPackage SourceCache::materialize(const PackageRequest& request,
+                                             const std::string& commit,
+                                             Network network) const
 {
     auto stagingReservation = createStagingDirectory();
     auto staging = stagingReservation.path();
@@ -308,16 +309,16 @@ MaterializedPackage PackageCache::materialize(const PackageRequest& request,
     }
 }
 
-eacp::FilePath PackageCache::fetchCommitIntoMirror(const std::string& name,
-                                                   const std::string& url,
-                                                   const std::string& commit,
-                                                   Network network) const
+eacp::FilePath SourceCache::fetchCommitIntoBareClone(const std::string& name,
+                                                     const std::string& url,
+                                                     const std::string& commit,
+                                                     Network network) const
 {
-    auto mirrorLock = MirrorLock {root, url};
-    auto mirror = getOrCreateMirror(url);
+    auto fetchLock = FetchLock {root, url};
+    auto bareClone = getOrCreateBareClone(url);
 
-    if (hasCommit(mirror, commit))
-        return mirror;
+    if (hasCommit(bareClone, commit))
+        return bareClone;
 
     if (network == Network::forbidden)
     {
@@ -328,18 +329,18 @@ eacp::FilePath PackageCache::fetchCommitIntoMirror(const std::string& name,
 
     try
     {
-        fetchRefIntoMirror(mirror, commit);
+        fetchRefIntoBareClone(bareClone, commit);
     }
     catch (const std::runtime_error&)
     {
         throw std::runtime_error(describeFailedDownload({name, url, commit}));
     }
 
-    return mirror;
+    return bareClone;
 }
 
-std::string PackageCache::resolveCommit(const PackageRequest& request,
-                                        Network network) const
+std::string SourceCache::resolveCommit(const PackageRequest& request,
+                                       Network network) const
 {
     if (request.kind != PackageKind::git)
         return request.archiveHash.hex;
@@ -352,20 +353,20 @@ std::string PackageCache::resolveCommit(const PackageRequest& request,
             "resolving " + request.name + "'s ref '" + request.ref
             + "' needs the network, which offline mode forbids");
 
-    auto mirrorLock = MirrorLock {root, request.url};
-    return fetchRefIntoMirror(getOrCreateMirror(request.url), request.ref);
+    auto fetchLock = FetchLock {root, request.url};
+    return fetchRefIntoBareClone(getOrCreateBareClone(request.url), request.ref);
 }
 
-std::string PackageCache::fetchGitTree(const PackageRequest& request,
-                                       const std::string& commit,
-                                       Network network,
-                                       const eacp::FilePath& staging,
-                                       EA::Vector<LockedSubmodule>& submodules,
-                                       bool& usesLfs,
-                                       DeclaredSymlinks& symlinks) const
+std::string SourceCache::fetchGitTree(const PackageRequest& request,
+                                      const std::string& commit,
+                                      Network network,
+                                      const eacp::FilePath& staging,
+                                      EA::Vector<LockedSubmodule>& submodules,
+                                      bool& usesLfs,
+                                      DeclaredSymlinks& symlinks) const
 {
     auto resolvedCommit = commit;
-    auto mirror = eacp::FilePath {};
+    auto bareClone = eacp::FilePath {};
 
     if (resolvedCommit.empty())
     {
@@ -376,17 +377,17 @@ std::string PackageCache::fetchGitTree(const PackageRequest& request,
                 + "' needs the network, which offline mode forbids");
         }
 
-        auto mirrorLock = MirrorLock {root, request.url};
-        mirror = getOrCreateMirror(request.url);
-        resolvedCommit = fetchRefIntoMirror(mirror, request.ref);
+        auto fetchLock = FetchLock {root, request.url};
+        bareClone = getOrCreateBareClone(request.url);
+        resolvedCommit = fetchRefIntoBareClone(bareClone, request.ref);
     }
     else
     {
-        mirror = fetchCommitIntoMirror(
+        bareClone = fetchCommitIntoBareClone(
             request.name, request.url, resolvedCommit, network);
     }
 
-    auto listing = listTree(mirror, resolvedCommit);
+    auto listing = listTree(bareClone, resolvedCommit);
     usesLfs = checkOutCommitWithLfs(listing, staging);
     addDeclaredSymlinks(symlinks, listing, {});
     checkOutSubmodules(request.name,
@@ -402,16 +403,16 @@ std::string PackageCache::fetchGitTree(const PackageRequest& request,
     return resolvedCommit;
 }
 
-void PackageCache::checkOutSubmodules(const std::string& name,
-                                      const std::string& parentUrl,
-                                      const GitTreeListing& parentListing,
-                                      const eacp::FilePath& tree,
-                                      const std::string& pathPrefix,
-                                      const SubmoduleSelection& selection,
-                                      Network network,
-                                      EA::Vector<LockedSubmodule>& submodules,
-                                      bool& usesLfs,
-                                      DeclaredSymlinks& symlinks) const
+void SourceCache::checkOutSubmodules(const std::string& name,
+                                     const std::string& parentUrl,
+                                     const GitTreeListing& parentListing,
+                                     const eacp::FilePath& tree,
+                                     const std::string& pathPrefix,
+                                     const SubmoduleSelection& selection,
+                                     Network network,
+                                     EA::Vector<LockedSubmodule>& submodules,
+                                     bool& usesLfs,
+                                     DeclaredSymlinks& symlinks) const
 {
     for (const auto& submodule: listSubmodules(parentListing, tree))
     {
@@ -423,10 +424,11 @@ void PackageCache::checkOutSubmodules(const std::string& name,
             continue;
 
         auto url = resolveSubmoduleUrl(parentUrl, submodule.url);
-        auto mirror = fetchCommitIntoMirror(name, url, submodule.commit, network);
+        auto bareClone =
+            fetchCommitIntoBareClone(name, url, submodule.commit, network);
         auto destination = tree / submodule.path;
         eacp::Files::createDirectories(destination);
-        auto submoduleListing = listTree(mirror, submodule.commit);
+        auto submoduleListing = listTree(bareClone, submodule.commit);
         usesLfs = checkOutCommitWithLfs(submoduleListing, destination) || usesLfs;
         addDeclaredSymlinks(symlinks, submoduleListing, fullPath + "/");
         submodules.push_back({fullPath, url, submodule.commit});
@@ -447,14 +449,14 @@ void PackageCache::checkOutSubmodules(const std::string& name,
     }
 }
 
-DeclaredSymlinks PackageCache::fetchArchiveTree(const PackageRequest& request,
-                                                Network network,
-                                                const eacp::FilePath& staging) const
+DeclaredSymlinks SourceCache::fetchArchiveTree(const PackageRequest& request,
+                                               Network network,
+                                               const eacp::FilePath& staging) const
 {
     auto archive = getDownloadPath(request.url);
 
     // Configures sharing the cache would otherwise write one .part file at once.
-    auto downloadLock = MirrorLock {root, request.url};
+    auto downloadLock = FetchLock {root, request.url};
 
     if (!eacp::Files::isFile(archive))
     {
@@ -491,8 +493,8 @@ DeclaredSymlinks PackageCache::fetchArchiveTree(const PackageRequest& request,
 }
 
 // file(<algorithm>) knows every algorithm URL_HASH may name, SHA-3 included.
-std::string PackageCache::computeArchiveHash(const eacp::FilePath& archive,
-                                             const std::string& algorithm) const
+std::string SourceCache::computeArchiveHash(const eacp::FilePath& archive,
+                                            const std::string& algorithm) const
 {
     auto script = root.tmp() / "hash-file.cmake";
     eacp::Files::writeFile(
@@ -513,9 +515,8 @@ std::string PackageCache::computeArchiveHash(const eacp::FilePath& archive,
     return eacp::Strings::toLower(eacp::Strings::trim(result.errorOutput));
 }
 
-DeclaredSymlinks
-    PackageCache::extractArchive(const eacp::FilePath& archive,
-                                 const eacp::FilePath& destination) const
+DeclaredSymlinks SourceCache::extractArchive(const eacp::FilePath& archive,
+                                             const eacp::FilePath& destination) const
 {
     if (archive.hasExtension("zip"))
     {
@@ -546,8 +547,8 @@ DeclaredSymlinks
 }
 
 eacp::Processes::ProcessResult
-    PackageCache::runCMakeTar(const EA::Vector<std::string>& arguments,
-                              const eacp::FilePath& workingDirectory) const
+    SourceCache::runCMakeTar(const EA::Vector<std::string>& arguments,
+                             const eacp::FilePath& workingDirectory) const
 {
     auto options = eacp::Processes::ProcessOptions {};
     options.executable = cmake.str();
@@ -561,7 +562,7 @@ eacp::Processes::ProcessResult
 // entries in the same order, with a mode column and "name -> target" for a
 // symlink, so the names never have to be parsed out of the long form.
 std::map<std::string, std::string>
-    PackageCache::listArchiveSymlinks(const eacp::FilePath& archive) const
+    SourceCache::listArchiveSymlinks(const eacp::FilePath& archive) const
 {
     auto names = runCMakeTar({"tf", archive.str()}, archive.parentDirectory());
     auto details = runCMakeTar({"tvf", archive.str()}, archive.parentDirectory());
@@ -593,7 +594,7 @@ std::map<std::string, std::string>
 // Each symlink the archive holds as the link where this machine makes links,
 // and on Windows as a plain file holding the link text, whatever extraction
 // left there, so the tree does not depend on the account's privileges.
-void PackageCache::placeArchiveSymlinks(
+void SourceCache::placeArchiveSymlinks(
     const std::map<std::string, std::string>& symlinks,
     const eacp::FilePath& destination) const
 {
@@ -618,10 +619,10 @@ void PackageCache::placeArchiveSymlinks(
     }
 }
 
-MaterializedPackage PackageCache::storeTree(const eacp::FilePath& tree,
-                                            const std::string& commit,
-                                            EA::Vector<LockedSubmodule> submodules,
-                                            const DeclaredSymlinks& symlinks) const
+MaterializedPackage SourceCache::storeTree(const eacp::FilePath& tree,
+                                           const std::string& commit,
+                                           EA::Vector<LockedSubmodule> submodules,
+                                           const DeclaredSymlinks& symlinks) const
 {
     auto hash = computeMerkleHash(tree, symlinks);
     auto destination = getSourceDirectory(hash);

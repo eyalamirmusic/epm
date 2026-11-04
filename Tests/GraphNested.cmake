@@ -1,4 +1,4 @@
-# End-to-end self-test of nested child builds (Docs/Graph.md §10) with the real
+# End-to-end self-test of nested child builds with the real
 # epm binary. Commits Tests/Nested/Leaf and Tests/Nested/Mid (whose epm.json
 # declares Leaf) into local git repositories, then configures, builds and runs
 # Tests/Nested/Consumer (whose epm.json declares only Mid) once per scenario:
@@ -8,7 +8,7 @@
 #                 deps and does not re-export Leaf
 #   cached        a fresh build directory reuses both entries
 #   source        EPM_MODE=source: both added as subdirectories
-#   leaf-source   EPM_Leaf_MODE=source forces Mid into source (§5 rule 6)
+#   leaf-source   EPM_Leaf_MODE=source forces Mid into source
 #   leaf-checkout EPM_Leaf_SOURCE=<checkout>: Leaf's repository is hidden, so
 #                 the checkout is used without a fetch
 #

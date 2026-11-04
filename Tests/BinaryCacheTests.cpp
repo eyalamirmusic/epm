@@ -145,11 +145,12 @@ auto tEntriesOnDisk = test("BinaryCache/entries/readFromDisk") = []
         EntryManifest {EntryManifest {}.schema, fingerprint, "abc", "2026-11-02"};
     const auto release = ConfigMarker {"Release", "2026-11-02", {}, {}};
 
-    check(saveJsonFile(prefix / "manifest.json", manifest));
-    check(saveJsonFile(prefix / "Release.json", release));
+    eacp::Files::writeFile(prefix / "manifest.json",
+                           Miro::toJSONString(manifest, 2));
+    eacp::Files::writeFile(prefix / "Release.json", Miro::toJSONString(release, 2));
 
     // A marker whose name and contents disagree does not count.
-    check(saveJsonFile(prefix / "Debug.json", release));
+    eacp::Files::writeFile(prefix / "Debug.json", Miro::toJSONString(release, 2));
 
     const auto entries = findEntries(cache, "eacp", "macos-arm64");
 

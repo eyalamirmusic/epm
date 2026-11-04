@@ -1,5 +1,5 @@
 #include "BinaryCache.h"
-#include "PackageLock.h"
+#include <epm/Cache/CrossProcessLock.h>
 
 #include <epm/Build/ChildBuild.h>
 #include <epm/Build/Configs.h>
@@ -13,6 +13,7 @@
 #include <epm/Util/Timestamp.h>
 
 #include <eacp/Core/Utils/Console.h>
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Time.h>
 
@@ -25,6 +26,7 @@ using namespace eacp;
 namespace
 {
 constexpr auto manifestFileName = "manifest.json";
+constexpr auto jsonIndent = 2;
 
 std::string createTimestamp()
 {
@@ -93,8 +95,8 @@ std::optional<BinaryEntry> createEntry(const CacheRoot& cache,
     const auto manifest = EntryManifest {
         EntryManifest {}.schema, fingerprint, sourceHash, createTimestamp()};
 
-    if (!saveJsonFile(prefix / manifestFileName, manifest))
-        return std::nullopt;
+    Files::writeFileAtomically(prefix / manifestFileName,
+                               Miro::toJSONString(manifest, jsonIndent) + "\n");
 
     return BinaryEntry {prefix, fingerprint, {}, {}, manifest.createdAt};
 }
@@ -252,7 +254,7 @@ BinaryResult buildBinary(const CacheRoot& cache,
         parseAbiMatch(request.abiMatch).value_or(AbiMatch::compatible);
     const auto configs = buildConfigsFor(request.configs);
 
-    auto lock = PackageLock {cache, request.name, packageLockTimeout};
+    auto lock = CrossProcessLock {cache, request.name, crossProcessLockTimeout};
 
     if (!lock.isLocked())
         return failure("timed out waiting for another epm process using "
@@ -283,9 +285,9 @@ BinaryResult buildBinary(const CacheRoot& cache,
     const auto generator = chooseGenerator(env, findExecutable("ninja"));
     auto keptBuildTree = false;
 
-    Log::step("epm: building " + request.name + " (" + joinList(missing, ", ")
-              + ") into " + prefix.str() + " with generator '" + generator.name
-              + "'");
+    Log::step("epm: building " + request.name + " ("
+              + eacp::Strings::join(missing, ", ") + ") into " + prefix.str()
+              + " with generator '" + generator.name + "'");
 
     for (const auto& config: missing)
     {
@@ -296,7 +298,6 @@ BinaryResult buildBinary(const CacheRoot& cache,
         build.sourceDirectory = snapshot.directory;
         build.buildDirectory = buildRoot / config;
         build.prefix = prefix;
-        build.cpmCache = cache.cpm();
         build.config = config;
         build.dependencyGraph = dependencyGraph;
         build.epmExecutable = Files::executablePath();
@@ -339,8 +340,8 @@ BinaryResult buildBinary(const CacheRoot& cache,
                           env.cxxCompilerVersion,
                           readLockedDependencies(build.buildDirectory)};
 
-        if (!saveJsonFile(markerFor(prefix, config), marker))
-            return failure("cannot write " + markerFor(prefix, config).str());
+        Files::writeFileAtomically(markerFor(prefix, config),
+                                   Miro::toJSONString(marker, jsonIndent) + "\n");
 
         entry->configs.add(config);
         entry->configs = canonicalConfigs(entry->configs);

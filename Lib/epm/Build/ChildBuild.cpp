@@ -6,6 +6,7 @@
 #include <epm/Util/Text.h>
 
 #include <eacp/Core/Platform/Platform.h>
+#include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Strings.h>
 
 namespace epm
@@ -48,7 +49,7 @@ ChildBuildResult runStep(const ChildBuild& build,
 
     const auto result = runCommand(build.env.cmake, arguments);
     const auto log = build.buildDirectory / ("epm-" + std::string {step} + ".log");
-    writeTextFile(log, result.output);
+    Files::writeFile(log, result.output);
 
     if (result.ok)
         return {true, {}, {}};
@@ -100,7 +101,6 @@ EA::Vector<std::string> configureArguments(const ChildBuild& build)
     addDefinition(arguments,
                   "CMAKE_ARCHIVE_OUTPUT_DIRECTORY",
                   (build.prefix / "lib" / build.config).str());
-    addDefinition(arguments, "CPM_SOURCE_CACHE", build.cpmCache.str());
     addDefinition(
         arguments, "CMAKE_PROJECT_TOP_LEVEL_INCLUDES", topLevelIncludes(build));
     addDefinition(arguments, "EPM_EXPORT_FILE", exportFile.str());
@@ -140,8 +140,7 @@ ChildBuildResult runChildBuild(const ChildBuild& build)
         files.add({build.buildDirectory / nestedGraphName, build.dependencyGraph});
 
     for (const auto& [path, text]: files)
-        if (!writeTextFile(path, text))
-            return {false, "cannot write " + path.str(), {}};
+        Files::writeFile(path, text);
 
     auto configured = runStep(build, "configure", configureArguments(build));
 

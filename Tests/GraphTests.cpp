@@ -1,4 +1,5 @@
 #include <epm/Emit/GraphResponse.h>
+#include <epm/Spec/JsonFile.h>
 #include <epm/Graph/Graph.h>
 #include <epm/Resolve/Resolve.h>
 #include <epm/Util/Text.h>
@@ -40,7 +41,7 @@ struct FakeSources
         eacp::Files::createDirectories(directory);
 
         if (!manifest.empty())
-            writeTextFile(directory / "epm.json", manifest);
+            eacp::Files::writeFile(directory / "epm.json", manifest);
     }
 
     SourceFetcher fetcher()
@@ -418,7 +419,7 @@ auto tGraphSourceOverride = test("Graph/walk/sourceOverrideIsReadNotFetched") = 
     sources.add("C", "v1");
 
     auto checkout = eacp::TemporaryFile {};
-    writeTextFile(checkout.path() / "epm.json", declaring("C", "v1"));
+    eacp::Files::writeFile(checkout.path() / "epm.json", declaring("C", "v1"));
 
     auto inputs = inputsFor(declaring("A", "v9"));
     inputs.environment = [&checkout](std::string_view name)
@@ -703,9 +704,10 @@ auto tGraphJsonRoundTrip = test("GraphResponse/jsonRoundTrip") = []
     auto directory = eacp::TemporaryFile {};
     const auto graph = sampleGraph();
 
-    check(writeGraphJson(directory.path() / "graph.json", graph));
+    eacp::Files::writeFile(directory.path() / "graph.json",
+                           Miro::toJSONString(graph, 2));
 
-    const auto loaded = loadGraphJson(directory.path() / "graph.json");
+    const auto loaded = loadJsonFile<ResolvedGraph>(directory.path() / "graph.json");
 
     check(loaded.has_value());
     check(loaded->schema == 1);

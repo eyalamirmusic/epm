@@ -92,7 +92,6 @@ bool isLockFileCurrent(const eacp::FilePath& path)
 
 void writeLockFile(const eacp::FilePath& path, LockFile lock)
 {
-    if (!writeTextFile(path, formatLockFile(std::move(lock))))
-        throw std::runtime_error("cannot write " + path.str());
+    eacp::Files::writeFileAtomically(path, formatLockFile(std::move(lock)));
 }
 } // namespace epm

@@ -1,17 +1,13 @@
 cmake_minimum_required(VERSION 3.31)
 
-# epm builds itself with epm, its dependencies locked in epm-lock.json. The epm that
-# resolves them is a first host build of this same checkout (get_epm.cmake,
-# inside an epm checkout, builds that checkout), which fetches its own
-# dependencies with CPM: get_epm builds it with EPM_SELF_HOST OFF.
-# -DEPM_EXECUTABLE=<an epm> skips that build.
-option(EPM_SELF_HOST "Fetch epm's own dependencies through epm and epm-lock.json" ON)
+# epm builds itself with the released epm below, as a compiler builds with its
+# previous release: get_epm.cmake downloads it, and it resolves epm.json's
+# packages from epm-lock.json. -DEPM_EXECUTABLE=<an epm> uses another.
+set(EPM_VERSION "0.1.3...0.1.3")
+set(EPM_RELEASE_REPOSITORY "https://github.com/jamierpond/epm")
+list(APPEND CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${CMAKE_CURRENT_LIST_DIR}/CMake/get_epm.cmake")
 
-if (EPM_SELF_HOST)
-    set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${CMAKE_CURRENT_LIST_DIR}/CMake/get_epm.cmake")
-endif ()
-
-project(epm VERSION 0.1.3 LANGUAGES C CXX)
+project(epm VERSION 0.1.4 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,7 +22,7 @@ endif ()
 option(EPM_VERBOSE_CONFIGURE
         "Print the third-party fetch and probe detail hidden by default" OFF)
 
-# Same knobs as eacp's ConfigureLog.cmake: keep a clean configure down to CPM's
+# Same knobs as eacp's ConfigureLog.cmake: keep a clean configure down to epm's
 # one line per package.
 if (EPM_VERBOSE_CONFIGURE)
     set(CMAKE_MESSAGE_LOG_LEVEL VERBOSE)
@@ -34,11 +30,6 @@ else ()
     set(CMAKE_REQUIRED_QUIET ON)
     set(Threads_FIND_QUIETLY TRUE)
 endif ()
-
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
-
-# With EPM_SELF_HOST, epm's stub answers this and CPMAddPackage is epm's.
-include(CPM)
 
 find_package(eacp REQUIRED)
 find_package(Miro REQUIRED)

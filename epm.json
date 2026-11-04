@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "packages": [
+    {
+      "name": "eacp",
+      "git": "eyalamirmusic/eacp",
+      "tag": "develop",
+      "mode": "source",
+      "options": {
+        "EACP_BUILD_GRAPHICS": "OFF",
+        "EACP_BUILD_WEBVIEW": "OFF",
+        "EACP_ENABLE_TESTS": "OFF",
+        "EACP_ENABLE_EXAMPLES": "OFF"
+      }
+    },
+    { "name": "Miro", "git": "eyalamirmusic/Miro", "tag": "main", "mode": "source" },
+    { "name": "NanoTest", "git": "eyalamirmusic/NanoTest", "tag": "main", "mode": "source" }
+  ]
+}

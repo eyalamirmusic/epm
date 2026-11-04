@@ -5,7 +5,7 @@
 
 #include <epm/Build/ChildBuild.h>
 #include <epm/Cache/CacheRoot.h>
-#include <epm/Cache/SourceCache.h>
+#include <epm/Source/SourceSnapshot.h>
 #include <epm/Lock/Requirements.h>
 #include <epm/Spec/Env.h>
 #include <epm/Spec/Manifest.h>
@@ -18,7 +18,7 @@
 namespace epm
 {
 // One package's source as the lock gives it, chosen from its requirements by
-// minimal version selection (Docs/Resolution.md).
+// minimal version selection.
 struct LockedSource
 {
     bool ok = false;
@@ -72,9 +72,9 @@ struct GraphPlan
 // "host/path", lower case (local paths keep their case).
 std::string repositoryKey(std::string_view url);
 
-// Rules 1-6 of Docs/Graph.md §5: walks the root manifest depth first in
+// Walks the root manifest depth first in
 // manifest order, fetching every package (or taking its EPM_<Name>_SOURCE)
-// and reading its epm.json, merges each package's effective request (§4),
+// and reading its epm.json, merges each package's effective request,
 // forces the dependents of source packages into source, and collects the
 // notes (strict makes them an error). Its git and tag are not merged but
 // selected from every declaration, the root's included, by minimal version
@@ -85,7 +85,7 @@ GraphPlan planGraph(const GraphInputs& inputs, const SourceFetcher& fetch);
 
 // The packages of `graph` that `deps` reach, directly or through their own
 // deps, in the graph's order and without notes: what a nested child build
-// of a package with those deps loads (Docs/Graph.md §10).
+// of a package with those deps loads.
 ResolvedGraph dependencyClosure(const ResolvedGraph& graph,
                                 const EA::Vector<std::string>& deps);
 

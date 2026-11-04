@@ -42,11 +42,10 @@ struct ChildBuild
     eacp::FilePath sourceDirectory;
     eacp::FilePath buildDirectory;
     eacp::FilePath prefix;
-    eacp::FilePath cpmCache;
     std::string config;
 
-    // graph.cmake (Docs/Graph.md §7) of the package's dependency closure, all
-    // prebuilt, which the nested provider loads (§10). Empty for a package
+    // graph.cmake of the package's dependency closure, all
+    // prebuilt, which the nested provider loads. Empty for a package
     // without dependencies.
     std::string dependencyGraph;
 
@@ -56,11 +55,11 @@ struct ChildBuild
     LockForChildBuilds childLock;
 };
 
-// The `cmake -S -B` arguments of PoC §5. Toolchain values the consumer left
+// The child's `cmake -S -B` arguments. Toolchain values the consumer left
 // empty are not passed at all. Every child also gets EPM_NESTED, the lock
 // settings and epm.cmake after epm-export.cmake in
 // CMAKE_PROJECT_TOP_LEVEL_INCLUDES, so its own package calls go through the
-// lock; with a dependencyGraph also EPM_GRAPH (Docs/Graph.md §10).
+// lock; with a dependencyGraph also EPM_GRAPH.
 EA::Vector<std::string> configureArguments(const ChildBuild& build);
 
 EA::Vector<std::string> buildArguments(const ChildBuild& build);

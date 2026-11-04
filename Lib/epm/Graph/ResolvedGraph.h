@@ -66,7 +66,7 @@ struct ResolvedPackage
                  provenance)
 };
 
-// graph.json (Docs/Graph.md §6): what `epm configure` resolved.
+// graph.json: what `epm configure` resolved.
 struct ResolvedGraph
 {
     int schema = 1;
