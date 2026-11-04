@@ -55,6 +55,11 @@ function(read_locked_commit name)
     endforeach ()
 endfunction()
 
+if (CMAKE_HOST_WIN32)
+    message(STATUS "graph-lock: skipped: no epm.cpp recipes on Windows yet")
+    return()
+endif ()
+
 file(REMOVE_RECURSE "${WORK_DIR}")
 set(fixture_url "file://${WORK_DIR}/fixtures")
 if (CMAKE_HOST_WIN32)

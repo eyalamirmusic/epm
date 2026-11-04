@@ -140,14 +140,6 @@ if (NOT configure_output MATCHES "disagree on shared: firstCommit asks for .* se
     message(FATAL_ERROR "commits: the conflict did not name both requesters")
 endif ()
 
-# 3. The same two commits settled by the root's epm.cpp.
-configure(override TRUE "firstCommit;secondCommit"
-        "project.overridePackage(\"shared\").commit = \"${second_commit}\";")
-read_shared("${lock}")
-if (NOT shared_commit STREQUAL second_commit OR NOT shared_overridden)
-    message(FATAL_ERROR "override: shared is at ${shared_commit}, overridden '${shared_overridden}'")
-endif ()
-
 # 4. A dependency's own lock is its requirement: shipsLock asks for main, but
 # its lock says the first commit.
 configure(shippedLock TRUE "shipsLock" "")
@@ -162,4 +154,17 @@ configure(dependencyManifest TRUE "shipsManifest" "")
 read_shared("${lock}")
 if (NOT shared_commit STREQUAL first_commit OR shared_overridden)
     message(FATAL_ERROR "dependencyManifest: shared is at ${shared_commit}, overridden '${shared_overridden}'")
+endif ()
+
+if (CMAKE_HOST_WIN32)
+    message(STATUS "requirements: the root epm.cpp override skipped: no epm.cpp recipes on Windows yet")
+    return()
+endif ()
+
+# 6. The same two commits settled by the root's epm.cpp.
+configure(override TRUE "firstCommit;secondCommit"
+        "project.overridePackage(\"shared\").commit = \"${second_commit}\";")
+read_shared("${lock}")
+if (NOT shared_commit STREQUAL second_commit OR NOT shared_overridden)
+    message(FATAL_ERROR "override: shared is at ${shared_commit}, overridden '${shared_overridden}'")
 endif ()

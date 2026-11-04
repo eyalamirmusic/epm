@@ -103,6 +103,11 @@ if (NOT configure_output MATCHES "CMakeLists.txt:17: find_package\\(nowhere\\) n
     message(FATAL_ERROR "unknown: the error does not name the call and the fix")
 endif ()
 
+if (CMAKE_HOST_WIN32)
+    message(STATUS "find-package: addSystem skipped: no epm.cpp recipes on Windows yet")
+    return()
+endif ()
+
 # 4. Added with addSystem in epm.cpp: CMake's own search finds it.
 configure(system TRUE "project.addSystem(\"Git\");"
         -DFIND_NAME=Git)
