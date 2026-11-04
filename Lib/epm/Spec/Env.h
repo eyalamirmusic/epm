@@ -49,6 +49,11 @@ struct Env
     // part of any fingerprint.
     std::string profile;
 
+    // The C++ compiler epm.cpp recipes are compiled with: CMAKE_CXX_COMPILER,
+    // or for a project without CXX the one CMake's check_language finds. Not
+    // part of any fingerprint.
+    std::string recipeCompiler;
+
     MIRO_REFLECT(schema,
                  cmake,
                  cmakeVersion,
@@ -70,6 +75,7 @@ struct Env
                  cxxStandard,
                  toolchainFile,
                  prefixPath,
-                 profile)
+                 profile,
+                 recipeCompiler)
 };
 } // namespace epm

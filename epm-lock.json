@@ -7,11 +7,12 @@
       "kind": "git",
       "name": "EADataStructures",
       "patches": [],
+      "recipeHash": "",
       "requestedRef": "main",
       "requirements": [
         {
           "commit": "9f26b4a120ef7e97a5f6d430c1bd9010d23e3709",
-          "requestedBy": "root",
+          "requestedBy": "eacp",
           "requestedRef": "main",
           "url": "https://github.com/eyalamirmusic/cpp_data_structures.git"
         }
@@ -32,11 +33,12 @@
       "kind": "git",
       "name": "ESIMD",
       "patches": [],
+      "recipeHash": "",
       "requestedRef": "main",
       "requirements": [
         {
           "commit": "1712e729e6c292f7e73abf817bf511f35dcffe4c",
-          "requestedBy": "root",
+          "requestedBy": "eacp",
           "requestedRef": "main",
           "url": "https://github.com/eyalamirmusic/ESIMD.git"
         }
@@ -57,6 +59,7 @@
       "kind": "git",
       "name": "Miro",
       "patches": [],
+      "recipeHash": "",
       "requestedRef": "main",
       "requirements": [
         {
@@ -82,6 +85,7 @@
       "kind": "git",
       "name": "NanoTest",
       "patches": [],
+      "recipeHash": "",
       "requestedRef": "main",
       "requirements": [
         {
@@ -107,11 +111,12 @@
       "kind": "git",
       "name": "ResEmbed",
       "patches": [],
+      "recipeHash": "",
       "requestedRef": "main",
       "requirements": [
         {
           "commit": "8cfcbfa7bdf2214c8939502a349b7d4fb4ac73bb",
-          "requestedBy": "root",
+          "requestedBy": "eacp",
           "requestedRef": "main",
           "url": "https://github.com/eyalamirmusic/ResEmbed.git"
         }
@@ -132,6 +137,7 @@
       "kind": "git",
       "name": "eacp",
       "patches": [],
+      "recipeHash": "",
       "requestedRef": "develop",
       "requirements": [
         {
@@ -157,11 +163,12 @@
       "kind": "git",
       "name": "glslang",
       "patches": [],
+      "recipeHash": "",
       "requestedRef": "16.5.0",
       "requirements": [
         {
           "commit": "a8d28bd082bff18ffbe80996e922b012f915cf07",
-          "requestedBy": "root",
+          "requestedBy": "eacp",
           "requestedRef": "16.5.0",
           "url": "https://github.com/KhronosGroup/glslang.git"
         }

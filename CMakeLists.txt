@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.31)
 
 # epm builds itself with the released epm below, as a compiler builds with its
-# previous release: get_epm.cmake downloads it, and it resolves epm.json's
+# previous release: get_epm.cmake downloads it, and it resolves epm.cpp's
 # packages from epm-lock.json. -DEPM_EXECUTABLE=<an epm> uses another.
-set(EPM_VERSION "0.1.3...0.1.3")
+set(EPM_VERSION "0.1.4...0.1.4")
 set(EPM_RELEASE_REPOSITORY "https://github.com/jamierpond/epm")
 list(APPEND CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${CMAKE_CURRENT_LIST_DIR}/CMake/get_epm.cmake")
 

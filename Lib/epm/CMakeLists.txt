@@ -124,7 +124,7 @@ target_sources(epm-core PRIVATE
 target_include_directories(epm-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 # eacp-network for IPC::Lock, the cross-process package lock.
-target_link_libraries(epm-core PUBLIC eacp-core eacp-network)
+target_link_libraries(epm-core PUBLIC eacp-core eacp-network PRIVATE ResEmbed)
 
 set_default_target_setting(epm-core)
 
@@ -169,10 +169,54 @@ target_sources(epm-core PRIVATE
 # static library under it, each linked whole and compiled at default
 # visibility. The helpers are eacp's (EacpPlugin.cmake). Windows has no
 # recipes: the target links as before.
+# The headers a recipe includes, through <epm/Recipe/Recipe.h>, copied out of
+# their include directories at build time (CollectRecipeHeaders.cmake) and
+# embedded in each executable that compiles recipes, so a released binary
+# writes them out wherever it runs (RecipeSdk.h) and bakes in no build path.
+set(epm_recipe_headers_dir "${CMAKE_CURRENT_BINARY_DIR}/recipe-include" CACHE INTERNAL "")
+set(epm_recipe_headers_stamp "${CMAKE_CURRENT_BINARY_DIR}/recipe-include.stamp" CACHE INTERNAL "")
+
+if (NOT WIN32)
+    file(GENERATE
+            OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/Generated/recipe-include-dirs-$<CONFIG>.txt"
+            CONTENT "$<REMOVE_DUPLICATES:$<TARGET_PROPERTY:epm-core,INCLUDE_DIRECTORIES>;$<TARGET_PROPERTY:epm-core,INTERFACE_INCLUDE_DIRECTORIES>>")
+    file(GENERATE
+            OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/Generated/recipe-definitions-$<CONFIG>.txt"
+            CONTENT "$<TARGET_PROPERTY:epm-core,COMPILE_DEFINITIONS>")
+    file(GLOB_RECURSE epm_public_headers CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
+
+    add_custom_command(
+            OUTPUT "${epm_recipe_headers_stamp}"
+            COMMAND "${CMAKE_COMMAND}"
+            "-DCOMPILER=${CMAKE_CXX_COMPILER}"
+            "-DSTANDARD=${CMAKE_CXX_STANDARD}"
+            "-DINCLUDE_DIRS_FILE=${CMAKE_CURRENT_BINARY_DIR}/Generated/recipe-include-dirs-$<CONFIG>.txt"
+            "-DDEFINITIONS_FILE=${CMAKE_CURRENT_BINARY_DIR}/Generated/recipe-definitions-$<CONFIG>.txt"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/recipe-include-probe"
+            "-DOUTPUT_DIR=${epm_recipe_headers_dir}"
+            "-DSTAMP=${epm_recipe_headers_stamp}"
+            "-DEPM_HEADERS=${epm_public_headers}"
+            "-DINCLUDE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/.."
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/Recipe/CollectRecipeHeaders.cmake"
+            DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Recipe/CollectRecipeHeaders.cmake"
+            ${epm_public_headers}
+            COMMENT "Collecting the headers an epm.cpp includes"
+            VERBATIM)
+    add_custom_target(epm-recipe-headers DEPENDS "${epm_recipe_headers_stamp}")
+endif ()
+
 function(epm_export_recipe_api target)
     if (WIN32)
         return()
     endif ()
+
+    res_embed_add(${target}
+            SCAN_DIR "${epm_recipe_headers_dir}"
+            BASE_DIRECTORY "${epm_recipe_headers_dir}"
+            DEPENDS epm-recipe-headers "${epm_recipe_headers_stamp}"
+            NAMESPACE RecipeHeaders
+            CATEGORY RecipeHeaders)
 
     set(archives epm-core)
     eacp_collect_link_targets(epm-core archives)

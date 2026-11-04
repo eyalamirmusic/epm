@@ -297,18 +297,19 @@ epm::RecipeLoad loadProjectModule(const FilePath& module, const FilePath& recipe
 
     if (!load.recipe)
         load.error += "\n(was " + module.str()
-                      + " built with another compiler than epm's, "
-                      + epm::recipeSdk().compiler + "?)";
+                      + " built with another kind of compiler than epm's, "
+                      + epm::recipeSdk().compilerId + "?)";
 
     return load;
 }
 
 std::optional<epm::RecipeLoad> loadCachedModule(const FilePath& recipe,
-                                                const FilePath& cache)
+                                                const FilePath& cache,
+                                                const epm::Env& env)
 {
     const auto cacheRoot =
         cache.empty() ? epm::CacheRoot::fromEnvironment() : epm::CacheRoot {cache};
-    const auto build = epm::buildRecipe(recipe, canonical(cacheRoot));
+    const auto build = epm::buildRecipe(recipe, canonical(cacheRoot), env);
 
     if (!build.ok)
     {
@@ -342,7 +343,10 @@ int describe()
                module,
                "load this module instead of compiling the epm.cpp, such as "
                "epm_add_recipe's Debug build, to debug it");
-    cli.option("--env", env, "the env JSON (default: an empty env)");
+    cli.option("--env",
+               env,
+               "the env JSON, whose C++ compiler compiles the epm.cpp (default: "
+               "an empty env, which only a --module needs)");
     cli.option("--cache", cache, "the cache root (default: $EPM_CACHE)");
     cli.flag("--verbose", verbose, "log each step");
 
@@ -370,7 +374,7 @@ int describe()
                 return fail("cannot read the env file " + env.str());
         }
 
-        auto load = module.empty() ? loadCachedModule(recipe, cache)
+        auto load = module.empty() ? loadCachedModule(recipe, cache, envSpec)
                                    : loadProjectModule(module, recipe);
 
         if (!load)
@@ -392,19 +396,25 @@ int describe()
 int recipeSdk()
 {
     auto out = FilePath {};
+    auto cache = FilePath {};
 
     auto cli = Args::Parser {"epm recipe-sdk",
-                             "Writes the compiler, standard, include directories, "
-                             "definitions and options epm compiles an epm.cpp "
+                             "Writes the headers embedded in this epm into the "
+                             "cache, and the standard, include directory, "
+                             "definitions and options it compiles an epm.cpp "
                              "with, as CMake variables (epm.cmake's epm::recipe)."};
     cli.option("--out", out, "the CMake file to write").required();
+    cli.option("--cache", cache, "the cache root (default: $EPM_CACHE)");
 
     if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
         return *code;
 
     try
     {
-        epm::writeRecipeSdkCMake(out, epm::recipeSdk());
+        const auto cacheRoot = cache.empty() ? epm::CacheRoot::fromEnvironment()
+                                             : epm::CacheRoot {cache};
+        epm::writeRecipeSdkCMake(
+            out, epm::recipeSdk(), epm::writeRecipeHeaders(canonical(cacheRoot)));
     }
     catch (const std::exception& error)
     {

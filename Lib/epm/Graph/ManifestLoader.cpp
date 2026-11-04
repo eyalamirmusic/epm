@@ -44,7 +44,7 @@ std::optional<Project> RecipeManifestLoader::loadFile(const FilePath& recipe,
                                                       const Env& env,
                                                       std::string& error)
 {
-    const auto build = buildRecipe(recipe, cache);
+    const auto build = buildRecipe(recipe, cache, env);
 
     if (!build.ok)
     {

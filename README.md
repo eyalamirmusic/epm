@@ -59,9 +59,11 @@ configure in another build type adds just that configuration.
 ## Declaring dependencies in epm.cpp
 
 A project can instead list its dependencies in `epm.cpp` beside the top-level
-`CMakeLists.txt`. epm compiles the file with the compiler that built epm, loads
-it into its own process and calls `describe`, so the list is C++ (macOS and
-Linux only; Windows has no recipes yet):
+`CMakeLists.txt`. epm compiles the file with the configure's own C++ compiler,
+against headers embedded in the epm binary and written to
+`<cache>/recipe-sdk/` on first use, loads it into its own process and calls
+`describe`, so the list is C++ (macOS and Linux only; Windows has no recipes
+yet):
 
 ```cpp
 #include <epm/Recipe/Recipe.h>
@@ -214,7 +216,7 @@ copy never does.
 epm needs CMake 3.31 and a C++20 compiler. It builds itself with epm, as a
 compiler builds with its previous release: `CMakeLists.txt` pins a released
 epm (`EPM_VERSION`, `EPM_RELEASE_REPOSITORY`), `CMake/get_epm.cmake` downloads
-it during `project()`, and it resolves eacp, Miro and NanoTest from `epm.json`
+it during `project()`, and it resolves eacp, Miro and NanoTest from `epm.cpp`
 and the committed `epm-lock.json`; `find_package` reaches them through the
 provider. `-DEPM_EXECUTABLE=<an epm>` uses another. Everything is linked
 statically.

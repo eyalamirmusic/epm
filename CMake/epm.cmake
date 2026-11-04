@@ -383,6 +383,22 @@ function(epm_write_env)
 
     epm_json_set_string(json profile "${profile}")
 
+    # What epm.cpp recipes compile with, found even when the project has no CXX.
+    set(recipe_compiler "${CMAKE_CXX_COMPILER}")
+
+    if (recipe_compiler STREQUAL "")
+        include(CheckLanguage)
+        check_language(CXX)
+        set(recipe_compiler "${CMAKE_CXX_COMPILER}")
+    endif ()
+
+    if (NOT recipe_compiler STREQUAL "" AND NOT IS_ABSOLUTE "${recipe_compiler}")
+        find_program(recipe_compiler_path "${recipe_compiler}" NO_CACHE)
+        set(recipe_compiler "${recipe_compiler_path}")
+    endif ()
+
+    epm_json_set_string(json recipeCompiler "${recipe_compiler}")
+
     file(WRITE "${EPM_DIR}/env.json" "${json}\n")
     set_property(GLOBAL PROPERTY EPM_ENV_WRITTEN TRUE)
 endfunction()
@@ -461,7 +477,14 @@ function(epm_recipe_sdk)
     set(sdk_file "${EPM_DIR}/recipe-sdk.cmake")
     file(REMOVE "${sdk_file}")
 
+    set(cache_argument "")
+
+    if (EPM_CACHE)
+        set(cache_argument "--cache=${EPM_CACHE}")
+    endif ()
+
     execute_process(COMMAND "${EPM_EXECUTABLE}" recipe-sdk --out "${sdk_file}"
+            ${cache_argument}
             RESULT_VARIABLE result
             ERROR_VARIABLE error)
 
@@ -472,13 +495,12 @@ function(epm_recipe_sdk)
 
     include("${sdk_file}")
 
-    # An imported target naming a missing include directory fails the generate:
-    # a binary built elsewhere (a release) cannot compile recipes here anyway.
+    # An imported target naming a missing include directory fails the generate.
     foreach (directory IN LISTS EPM_RECIPE_INCLUDE_DIRS)
         if (NOT IS_DIRECTORY "${directory}")
             set_property(GLOBAL PROPERTY EPM_RECIPE_SDK_PROBLEM
-                    "the epm at ${EPM_EXECUTABLE} was built against headers that "
-                    "are not here (${directory})")
+                    "the epm at ${EPM_EXECUTABLE} wrote no recipe headers to "
+                    "${directory}")
             return()
         endif ()
     endforeach ()
@@ -501,14 +523,6 @@ function(epm_recipe_sdk)
         set_property(TARGET epm::recipe APPEND PROPERTY INTERFACE_COMPILE_OPTIONS
                 "$<$<CXX_COMPILER_ID:${EPM_RECIPE_COMPILER_ID}>:${option}>")
     endforeach ()
-
-    file(REAL_PATH "${CMAKE_CXX_COMPILER}" ours)
-    file(REAL_PATH "${EPM_RECIPE_CXX_COMPILER}" epms)
-
-    if (NOT ours STREQUAL epms)
-        message(STATUS "epm: recipe targets build with ${CMAKE_CXX_COMPILER}, but "
-                "epm compiles the epm.cpp it runs with ${EPM_RECIPE_CXX_COMPILER}")
-    endif ()
 endfunction()
 
 # epm_add_recipe(<target> [SOURCE <file>] [NO_TEST])
