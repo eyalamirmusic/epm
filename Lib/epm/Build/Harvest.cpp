@@ -236,14 +236,14 @@ std::optional<std::string> writeTargetsFile(const FilePath& prefix,
         const auto namesFile = prefix / ("export-" + config + ".cmake.names");
         const auto aliasesFile = prefix / ("export-" + config + ".cmake.aliases");
 
-        if (!Files::isFile(exportFile) || !Files::isFile(namesFile))
-            return "missing " + exportFile.str() + " or its .names";
+        if (!Files::isFile(exportFile) || !Files::isFile(namesFile)
+            || !Files::isFile(aliasesFile))
+            return "missing " + exportFile.str() + " or its .names or .aliases";
 
         for (const auto& name: parseTargetNames(Files::readFile(namesFile)))
             targetNames.addIfNotThere(name);
 
-        if (Files::isFile(aliasesFile))
-            aliasesText += Files::readFile(aliasesFile) + "\n";
+        aliasesText += Files::readFile(aliasesFile) + "\n";
 
         needsThreads = needsThreads || mentionsThreads(Files::readFile(exportFile));
     }

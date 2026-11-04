@@ -9,13 +9,9 @@
 
 namespace epm
 {
-// The request schema this binary reads; epm.cmake writes the same number.
-constexpr auto requestSchema = 2;
-
-// requests/<name>.json: one epm_add_package call.
+// One package to resolve: what a package call or an epm.json graph asks for.
 struct Request
 {
-    int schema = requestSchema;
     std::string name;
     std::string gitUrl;
     std::string gitRef;
@@ -40,8 +36,7 @@ struct Request
     // dependency changes the entry of everything linking it.
     std::map<std::string, std::string> deps;
 
-    MIRO_REFLECT(schema,
-                 name,
+    MIRO_REFLECT(name,
                  gitUrl,
                  gitRef,
                  mode,

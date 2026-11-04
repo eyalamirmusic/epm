@@ -25,7 +25,7 @@ constexpr auto envFixture = R"({ "schema": 1,
   "cxxStandard": "20",
   "toolchainFile": "" })";
 
-constexpr auto requestFixture = R"({ "schema": 2,
+constexpr auto requestFixture = R"({
   "name": "eacp",
   "gitUrl": "https://github.com/eyalamirmusic/eacp.git",
   "gitRef": "main",
@@ -99,7 +99,6 @@ auto tRequestParses = test("Spec/request/parsesPoCFixture") = []
     check(request->options.size() == 2);
     check(request->options.at("EACP_BUILD_GRAPHICS") == "OFF");
     check(request->buildMissingBinaries);
-    check(request->schema == 2);
     check(request->configs.size() == 1 && request->configs[0] == "Debug");
     check(request->abiMatch == "compatible");
 };

@@ -204,7 +204,7 @@ auto tWriteTargetsAliases = test("Harvest/writeTargetsFile/aliases") = []
         check(writeTextFile(file.sibling(file.fileName() + ".names"), "fmt\n"));
     }
 
-    // Debug predates alias recording: its .aliases is missing.
+    check(writeTextFile(prefix / "export-Debug.cmake.aliases", ""));
     check(writeTextFile(prefix / "export-Release.cmake.aliases", "fmt::fmt fmt\n"));
     check(!writeTargetsFile(prefix, {"Debug", "Release"}).has_value());
 
@@ -264,6 +264,8 @@ auto tHarvestShares = test("Harvest/harvestConfig/sharesInterfaceSources") = []
                                 + tree + "/" + source + ">\"\n"));
         check(writeTextFile(
             prefix / ("export-" + std::string {config} + ".cmake.names"), "Miro\n"));
+        check(writeTextFile(
+            prefix / ("export-" + std::string {config} + ".cmake.aliases"), ""));
 
         const auto result = harvestConfig(build, prefix, config);
 

@@ -69,9 +69,8 @@ std::string targetsFileText(const EA::Vector<std::string>& targetNames,
                             const EA::Vector<std::string>& configs);
 
 // Rewrites <prefix>/epm-targets.cmake for `configs`, reading each config's
-// export file, .names and .aliases (absent in entries exported before aliases
-// were recorded). Returns the error when the export file or .names is
-// unreadable.
+// export file, .names and .aliases. Returns the error when one of them is
+// missing.
 std::optional<std::string> writeTargetsFile(const eacp::FilePath& prefix,
                                             const EA::Vector<std::string>& configs);
 

@@ -17,8 +17,7 @@ for the same name loads rather than fetching another. Child builds of
 prebuilt packages resolve their own calls against the root's lock, recorded
 under the package's name.
 
-A dependency that ships a lock (`epm-lock.json`, or a `lockstep.lock`, which has the
-same form) lists the commits it was built with. Each entry is that dependency's
+A dependency that ships an `epm-lock.json` lists the commits it was built with. Each entry is that dependency's
 requirement on the package, as a go.mod is, and replaces what its CMake asks
 for; it is never a second lock.
 

@@ -107,25 +107,6 @@ EA::Vector<Row> binaryRows(const CacheRoot& cache)
     return rows;
 }
 
-// bin/<name>/<key12> with its <key12>.json beside it: epm 0.1.2 and older.
-EA::Vector<FilePath> oldLayoutEntries(const CacheRoot& cache)
-{
-    auto entries = EA::Vector<FilePath> {};
-
-    for (const auto& nameDirectory:
-         entriesOfKind(cache.bin(), Files::EntryKind::directory))
-        for (const auto& marker:
-             entriesOfKind(nameDirectory, Files::EntryKind::file, "*.json"))
-        {
-            const auto directory = nameDirectory / marker.stem();
-
-            if (Files::isFile(directory / "epm-targets.cmake"))
-                entries.add(directory);
-        }
-
-    return entries;
-}
-
 // src/<merkle hash>: the trees the lock names, by hash.
 EA::Vector<Row> sourceRows(const CacheRoot& cache)
 {
@@ -196,22 +177,6 @@ std::string cacheListing(const CacheRoot& cache)
                 + section("binaries", binaryRows(cache)) + "\n"
                 + section("sources", sourceRows(cache)) + "\n"
                 + section("tools", toolRows(cache));
-
-    const auto old = oldLayoutEntries(cache);
-
-    if (!old.empty())
-    {
-        auto bytes = std::uint64_t {0};
-
-        for (const auto& directory: old)
-            bytes += directorySize(directory);
-
-        text += "\nignored: " + std::to_string(old.size())
-                + (old.size() == 1 ? " entry" : " entries")
-                + " of the old bin/<name>/<key> layout (epm 0.1.2 and older), "
-                + humanSize(bytes) + "; safe to delete, or delete all of "
-                + cache.bin().str() + " once\n";
-    }
 
     text.pop_back();
     return text;

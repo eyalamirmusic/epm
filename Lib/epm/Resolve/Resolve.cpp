@@ -71,13 +71,6 @@ Decision decide(const Request& request, bool binaryExists)
 
 std::optional<std::string> requestError(const Request& request)
 {
-    if (request.schema != requestSchema)
-        return "the request" + (request.name.empty() ? "" : " for " + request.name)
-               + " has schema " + std::to_string(request.schema)
-               + ", but this epm reads schema " + std::to_string(requestSchema)
-               + ": epm.cmake and the epm binary come from different versions "
-                 "(include get_epm.cmake, which takes both from one install)";
-
     if (request.name.empty())
         return "the request has no name";
 

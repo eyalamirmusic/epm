@@ -121,26 +121,6 @@ auto tRequestErrors = test("Resolve/requestErrors") = []
           != std::string::npos);
 };
 
-auto tRequestSchema = test("Resolve/requestErrors/schema") = []
-{
-    for (const auto schema: {0, 1, 3})
-    {
-        auto request = modeRequest("auto");
-        request.schema = schema;
-
-        const auto error = requestError(request);
-
-        check(error.has_value());
-        check(error.value_or("").find("has schema " + std::to_string(schema)
-                                      + ", but this epm reads schema 2")
-              != std::string::npos);
-        check(error.value_or("").find("get_epm.cmake") != std::string::npos);
-    }
-
-    check(modeRequest("auto").schema == requestSchema);
-    check(requestSchema == 2);
-};
-
 auto tGeneratorSingleConfig = test("ChildBuild/generator/consumersSingleConfig") = []
 {
     const auto generator = chooseGenerator(generatorEnv("Unix Makefiles", false),

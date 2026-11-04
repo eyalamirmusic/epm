@@ -65,7 +65,6 @@ eacp::FilePath entryPrefix(const CacheRoot& cache,
                            const AbiFingerprint& fingerprint);
 
 // Every entry of `name` under `platform` that has a manifest of this schema.
-// Entries of the old bin/<name>/<key12> layout are never seen.
 EA::Vector<BinaryEntry> findEntries(const CacheRoot& cache,
                                     const std::string& name,
                                     const std::string& platform);

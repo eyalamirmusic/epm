@@ -672,11 +672,6 @@ std::optional<std::string> findLockedCommit(const LockedPackage& locked,
             return recorded.commit;
     }
 
-    // A lock written before requirements were recorded holds only the one.
-    if (locked.requirements.empty() && locked.url == requirement.url
-        && locked.requestedRef == requirement.requestedRef)
-        return locked.commit;
-
     return std::nullopt;
 }
 
@@ -746,26 +741,20 @@ void recordRequirementsInLock(const CommandOptions& options,
     writeLockFile(options.lock, lock);
 }
 
-// A dependency that ships a lock (epm's, or lockstep's, which has the same
-// form) lists what it was built with; each entry is its requirement, as a
-// go.mod is, never a second lock.
+// A dependency that ships an epm-lock.json lists what it was built with; each
+// entry is its requirement, as a go.mod is, never a second lock.
 void addShippedRequirements(Session& session,
                             const std::string& name,
                             const eacp::FilePath& sourceDirectory)
 {
-    for (const auto* fileName: {lockFileName, "lockstep.lock"})
-    {
-        auto shipped = sourceDirectory / fileName;
+    auto shipped = sourceDirectory / lockFileName;
 
-        if (!eacp::Files::isFile(shipped))
-            continue;
-
-        for (const auto& package: readLockFile(shipped).packages)
-            session.addRequirement(
-                package.name, {name, package.url, package.commit, package.commit});
-
+    if (!eacp::Files::isFile(shipped))
         return;
-    }
+
+    for (const auto& package: readLockFile(shipped).packages)
+        session.addRequirement(package.name,
+                               {name, package.url, package.commit, package.commit});
 }
 
 void replaceRequirementOf(EA::Vector<Requirement>& requirements,

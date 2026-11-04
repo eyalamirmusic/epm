@@ -78,8 +78,6 @@ Two cache variables, set with `-D` or before the first `epm_add_package`:
   `-- epm: eacp (prebuilt, macos-arm64, 1a2b3c4d5e6f, built with AppleClang 17.0.0.17000013, current 17.0.0.17000319)`.
 
 `epm cache ls` lists what the cache holds. Docs/PoC.md §9 has the details.
-Builds cached by epm 0.1.2 and older use another layout and are ignored;
-delete the cache's `bin/` directory once to reclaim the space.
 
 ## Locking the dependency tree
 
@@ -166,8 +164,7 @@ The cache is `~/Library/Caches/epm` on macOS, `$XDG_CACHE_HOME/epm` or
 from source instead of downloading, `EPM_SOURCE_REF` (or `EPM_SOURCE_URL`)
 builds another tag, branch or commit from source, `EPM_SOURCE_DIR` (CMake or
 environment variable) builds a local epm checkout incrementally at every
-configure and uses it (for working on epm; `EPM_BOOTSTRAP_SOURCE_DIR` is its
-deprecated name), and `EPM_VERBOSE=ON` shows what is tried. A `get_epm.cmake`
+configure and uses it (for working on epm), and `EPM_VERBOSE=ON` shows what is tried. A `get_epm.cmake`
 that is itself part of an epm checkout (the examples in this repository use
 `../../CMake/get_epm.cmake`) builds that checkout unless `EPM_EXECUTABLE`,
 `EPM_SOURCE_DIR`, `EPM_SOURCE_REF` or `EPM_SOURCE_URL` says otherwise; a vendored

@@ -112,22 +112,6 @@ auto tManifestDuplicate = test("Manifest/load/rejectsDuplicateAndEmptyNames") = 
     check(manifestFromJSON(Miro::Json::parse(R"({ "packages": [] })")).ok);
 };
 
-auto tManifestOldShape = test("Manifest/load/packagesMustBeAnArray") = []
-{
-    const auto old = manifestFromJSON(Miro::Json::parse(
-        R"({ "packages": { "fmt": { "git": "fmtlib/fmt", "tag": "1" } } })"));
-
-    check(!old.ok);
-    check(old.error
-          == "packages must be an array of package objects, each with a name");
-
-    const auto oldProfile = manifestFromJSON(Miro::Json::parse(
-        R"({ "profiles": { "ci": { "packages": { "fmt": { "mode": "source" } } } } })"));
-
-    check(!oldProfile.ok);
-    check(oldProfile.error.starts_with("the packages of profile ci must be"));
-};
-
 auto tManifestShorthand = test("Manifest/expandGitUrl") = []
 {
     check(expandGitUrl("fmtlib/fmt") == "https://github.com/fmtlib/fmt.git");

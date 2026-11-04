@@ -87,7 +87,7 @@ Unset strings are empty, unset lists are empty; the binary applies defaults.
 - `name` is the `find_package` name, case-sensitive (as the PoC). A later stage may
   relax this. A package without a `name` is an error, and so is a name that appears
   twice in the same `packages` (of the manifest or of one profile; the error names
-  it) and a `packages` that is not an array (the earlier name-keyed object shape).
+  it).
   Inline profiles are checked when the manifest is read, profile files when selected.
 - `git` without `://`, `git@` or a leading `/` is a GitHub `owner/repo` shorthand.
 - `configs` names are the consumer-facing names (`Debug`, `Release`, `RelWithDebInfo`,

@@ -181,10 +181,6 @@ may use is decided by `EPM_ABI_MATCH` (§9), so an Xcode consumer can use the en
 consumer built with `/usr/bin/c++`. Full toolchain probing (compiler content hash, macros)
 comes later.
 
-Entries of the 0.1.2 layout (`bin/<name>/<key12>/` with `<key12>.json` beside it) are
-ignored, never read or deleted; `epm cache ls` reports them. Delete `bin/` once after
-upgrading (it only holds rebuildable binaries).
-
 `epm cache ls [--cache <dir>]` prints one line per binary entry
 (`<name>  <platform>  <configs>  <compiler> <major>  <size>  <fp12>`), then the sources and
 the tools; `epm cache path` prints the cache root.
@@ -410,9 +406,7 @@ First in-range match wins:
      directory passes them; delete the entry to change compilers. The entry's `bin/epm` and `share/epm/cmake/epm.cmake` are used and
      the marker rewritten; the version is printed (`-- epm: using epm 0.1.3 built from
      …`), never checked against `EPM_VERSION`. For testing an unreleased epm from a
-     consumer. `EPM_BOOTSTRAP_SOURCE_DIR`, the old name, is read as `EPM_SOURCE_DIR`
-     when neither the variable nor the environment variable is set, with
-     `-- epm: EPM_BOOTSTRAP_SOURCE_DIR is deprecated; using it as EPM_SOURCE_DIR`.
+     consumer.
    - Else, when get_epm.cmake is itself `<dir>/CMake/get_epm.cmake` of an epm checkout
      (`<dir>/CMakeLists.txt` has `project(epm`, the same check) and no user
      `EPM_EXECUTABLE`, `EPM_SOURCE_REF` or `EPM_SOURCE_URL` is given, `EPM_SOURCE_DIR`
@@ -468,8 +462,6 @@ installed on PATH, is the layout `cmake --install` produces: `bin/epm[.exe]` and
 includes `<entry>/share/epm/cmake/epm.cmake`. The pick is also remembered as
 `EPM_SELECTED_EXECUTABLE`, so the next configure picks afresh (a newer release, a changed
 range, a new PATH install) instead of mistaking it for a user-given `EPM_EXECUTABLE`.
-The same goes for a path the pre-get_epm `epm.cmake` bootstrapped
-(`EPM_BOOTSTRAPPED_EXECUTABLE`, removed from the cache on the first get_epm configure).
 
 The marker `<cache>/tool/<key>.json` holds `schema`, `ref`, `origin` (`release` or
 `source`), `url` (the asset, tarball or checkout it came from), `version` and `builtAt`.

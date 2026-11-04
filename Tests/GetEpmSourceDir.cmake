@@ -1,7 +1,6 @@
 # Self-test of the EPM_SOURCE_DIR decisions in CMake/get_epm.cmake: which
 # directories are epm checkouts, where the setting comes from (including the
-# default to the checkout get_epm.cmake sits in, and the deprecated
-# EPM_BOOTSTRAP_SOURCE_DIR), the tool entry a checkout maps to, and the
+# default to the checkout get_epm.cmake sits in), the tool entry a checkout maps to, and the
 # consumer toolchain passed to its build. Nothing is built.
 #
 #   cmake -DWORK_DIR=<scratch dir> -P Tests/GetEpmSourceDir.cmake
@@ -164,20 +163,6 @@ set(env_args "")
 # An EPM_EXECUTABLE get_epm picked on an earlier configure is not the user's.
 expect_setting(inside "${epm_lists}" "<dir>" enclosing
         -DEPM_EXECUTABLE=/picked/epm -DEPM_SELECTED_EXECUTABLE=/picked/epm)
-expect_setting(inside "${epm_lists}" "<dir>" enclosing
-        -DEPM_EXECUTABLE=/old/epm -DEPM_BOOTSTRAPPED_EXECUTABLE=/old/epm)
-
-# The deprecated EPM_BOOTSTRAP_SOURCE_DIR is EPM_SOURCE_DIR when that is unset.
-expect_setting(vendored "${app_lists}" "/old/name" deprecated
-        -DEPM_BOOTSTRAP_SOURCE_DIR=/old/name)
-expect_setting(inside "${epm_lists}" "/old/name" deprecated
-        -DEPM_BOOTSTRAP_SOURCE_DIR=/old/name)
-expect_setting(vendored "${app_lists}" "/new/name" variable
-        -DEPM_BOOTSTRAP_SOURCE_DIR=/old/name -DEPM_SOURCE_DIR=/new/name)
-set(env_args EPM_SOURCE_DIR=/from/env)
-expect_setting(vendored "${app_lists}" "/from/env" environment
-        -DEPM_BOOTSTRAP_SOURCE_DIR=/old/name)
-set(env_args "")
 
 # One entry per checkout: local-<first 12 hex digits of sha256(real path)>.
 string(SHA256 hash "${repo}")

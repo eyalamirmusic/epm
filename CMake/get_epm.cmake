@@ -66,8 +66,6 @@
 #   EPM_BOOTSTRAP_NO_DOWNLOAD ON: never download a release binary (skips 4)
 #   EPM_SOURCE_REF            build this epm tag, branch or commit (skips 2-4)
 #   EPM_SOURCE_URL            build this source tarball (skips 2-4)
-#   EPM_BOOTSTRAP_SOURCE_DIR  deprecated: read as EPM_SOURCE_DIR when that is
-#                             unset
 #   EPM_CACHE                cache root (else the EPM_CACHE environment
 #                             variable, else the platform cache directory)
 #   EPM_VERBOSE               say what is tried; stream the build output
@@ -570,11 +568,10 @@ function(get_epm_check_source_dir dir)
     set(source_error "${error}" PARENT_SCOPE)
 endfunction()
 
-# Whether EPM_EXECUTABLE is one the user gave: not the one an earlier configure
-# picked, nor one the pre-get_epm epm.cmake bootstrapped.
+# Whether EPM_EXECUTABLE is one the user gave, not the one an earlier configure
+# picked.
 function(get_epm_user_executable out_var)
-    if (EPM_EXECUTABLE AND NOT EPM_EXECUTABLE STREQUAL "${EPM_SELECTED_EXECUTABLE}"
-            AND NOT EPM_EXECUTABLE STREQUAL "${EPM_BOOTSTRAPPED_EXECUTABLE}")
+    if (EPM_EXECUTABLE AND NOT EPM_EXECUTABLE STREQUAL "${EPM_SELECTED_EXECUTABLE}")
         set(${out_var} TRUE PARENT_SCOPE)
     else ()
         set(${out_var} FALSE PARENT_SCOPE)
@@ -582,10 +579,9 @@ function(get_epm_user_executable out_var)
 endfunction()
 
 # The epm checkout to build, empty for none: the EPM_SOURCE_DIR CMake variable,
-# else the environment variable, else the deprecated EPM_BOOTSTRAP_SOURCE_DIR,
-# else the checkout this file belongs to (<checkout>/CMake/get_epm.cmake) when
+# else the environment variable, else the checkout this file belongs to (<checkout>/CMake/get_epm.cmake) when
 # nothing else asks for a particular epm. Sets `out_var` and `${out_var}_origin`
-# (variable, environment, deprecated, enclosing or empty).
+# (variable, environment, enclosing or empty).
 function(get_epm_source_dir_setting out_var)
     set(setting "")
     set(origin "")
@@ -596,9 +592,6 @@ function(get_epm_source_dir_setting out_var)
     elseif (NOT "$ENV{EPM_SOURCE_DIR}" STREQUAL "")
         set(setting "$ENV{EPM_SOURCE_DIR}")
         set(origin environment)
-    elseif (NOT "${EPM_BOOTSTRAP_SOURCE_DIR}" STREQUAL "")
-        set(setting "${EPM_BOOTSTRAP_SOURCE_DIR}")
-        set(origin deprecated)
     else ()
         get_epm_user_executable(user_executable)
 
@@ -759,10 +752,7 @@ function(get_epm_select)
     # nature, so its version is reported rather than checked.
     get_epm_source_dir_setting(source_setting)
 
-    if (source_setting_origin STREQUAL "deprecated")
-        message(STATUS "epm: EPM_BOOTSTRAP_SOURCE_DIR is deprecated; "
-                "using it as EPM_SOURCE_DIR")
-    elseif (source_setting_origin STREQUAL "enclosing")
+    if (source_setting_origin STREQUAL "enclosing")
         message(STATUS "epm: get_epm.cmake is inside the epm checkout "
                 "${source_setting}; building epm from it (-DEPM_EXECUTABLE or "
                 "-DEPM_SOURCE_DIR to use another)")
@@ -942,7 +932,6 @@ if (get_epm_remember)
     set(EPM_SELECTED_EXECUTABLE "${get_epm_executable}" CACHE INTERNAL "")
     set(EPM_EXECUTABLE "${get_epm_executable}" CACHE INTERNAL "Path to the epm binary")
     set(EPM_EXECUTABLE "${get_epm_executable}")
-    unset(EPM_BOOTSTRAPPED_EXECUTABLE CACHE)
 endif ()
 
 # -DEPM_UPDATE=ON is a one-off request, not a setting.

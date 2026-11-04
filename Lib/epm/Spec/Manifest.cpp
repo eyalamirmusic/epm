@@ -35,19 +35,6 @@ std::string profileNames(const Manifest& manifest)
     return names.empty() ? "none" : names;
 }
 
-// Miro reads an object where it expects an array as an empty array, so the
-// name-keyed shape of earlier manifests would otherwise declare nothing.
-bool packagesIsArray(const Miro::JSON& json)
-{
-    const auto* packages = Miro::Json::find(json.asObject(), "packages");
-    return packages == nullptr || packages->isArray();
-}
-
-std::string notAnArray(const std::string& where)
-{
-    return where + " must be an array of package objects, each with a name";
-}
-
 std::string profilePackages(const std::string& name)
 {
     return "the packages of profile " + name;
@@ -73,9 +60,6 @@ std::optional<std::string> packageNamesError(const EA::Vector<Package>& packages
 
 ProfileSelection profileFromObject(const std::string& name, const Miro::JSON& json)
 {
-    if (!packagesIsArray(json))
-        return profileError(notAnArray(profilePackages(name)));
-
     auto profile = Profile {};
 
     try
@@ -136,9 +120,6 @@ ManifestLoad manifestFromJSON(const Miro::JSON& json)
 {
     if (!json.isObject())
         return manifestLoadError("not a JSON object");
-
-    if (!packagesIsArray(json))
-        return manifestLoadError(notAnArray("packages"));
 
     auto manifest = Manifest {};
 

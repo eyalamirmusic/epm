@@ -151,11 +151,6 @@ auto tEntriesOnDisk = test("BinaryCache/entries/readFromDisk") = []
     // A marker whose name and contents disagree does not count.
     check(saveJsonFile(prefix / "Debug.json", release));
 
-    // An entry of the old bin/<name>/<key12> layout is never seen.
-    check(writeTextFile(cache.bin() / "eacp" / "8ea428e72a65" / "manifest.json",
-                        "{\"schema\": 1}"));
-    check(writeTextFile(cache.bin() / "eacp" / "8ea428e72a65.json", "{}"));
-
     const auto entries = findEntries(cache, "eacp", "macos-arm64");
 
     check(entries.size() == 1);
