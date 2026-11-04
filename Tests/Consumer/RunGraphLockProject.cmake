@@ -166,3 +166,23 @@ execute_process(COMMAND "${EPM_EXECUTABLE}" lock verify --full
 if (exit_code EQUAL 0 OR NOT output MATCHES "depender")
     message(FATAL_ERROR "lock verify --full did not catch depender's changed epm.cpp:\n${output}")
 endif ()
+
+# The cache trusts an entry whose files keep their sizes and modification
+# times. A locked configure still re-hashes depender's epm.cpp before running
+# it: a same-size edit with the time put back stops the configure, naming
+# depender.
+write_recipe("${source}/epm.cpp" "${root_packages}
+        project.overridePackage(\"shared\").commit = \"${first_commit}\";")
+configure(TRUE beforeTheEdit)
+file(MAKE_DIRECTORY "${WORK_DIR}/original-time")
+execute_process(COMMAND cp -p "${cached_recipe}" "${WORK_DIR}/original-time/epm.cpp"
+        COMMAND_ERROR_IS_FATAL ANY)
+file(READ "${cached_recipe}" recipe_text)
+string(REPLACE "v1.1.0" "v1.0.0" recipe_text "${recipe_text}")
+file(WRITE "${cached_recipe}" "${recipe_text}")
+execute_process(COMMAND touch -r "${WORK_DIR}/original-time/epm.cpp" "${cached_recipe}"
+        COMMAND_ERROR_IS_FATAL ANY)
+configure(FALSE changedRecipe)
+if (NOT configure_output MATCHES "depender's epm.cpp in .* is not the one .* records")
+    message(FATAL_ERROR "the changed epm.cpp of depender was run:\n${configure_output}")
+endif ()

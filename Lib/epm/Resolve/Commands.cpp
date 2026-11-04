@@ -144,6 +144,16 @@ PackageRequest createRequestFromLock(const eacp::FilePath& lockPath,
     return request;
 }
 
+std::string hashRecipeIn(const eacp::FilePath& sourceDirectory)
+{
+    auto recipe = sourceDirectory / manifestFileName;
+
+    if (!eacp::Files::isFile(recipe))
+        return {};
+
+    return eacp::computeFileSha256Hex(recipe);
+}
+
 LockedPackage resolvePackage(const SourceCache& cache,
                              const PackageRequest& request,
                              const EA::Vector<std::string>& patchesForLock)
@@ -155,16 +165,18 @@ LockedPackage resolvePackage(const SourceCache& cache,
         "locked " + request.name + " at "
         + describeVersion(request.kind, materialized.commit, materialized.hash));
 
-    return {request.name,
-            request.kind,
-            request.url,
-            request.ref,
-            patchesForLock,
-            request.submoduleSelection,
-            materialized.commit,
-            materialized.submodules,
-            materialized.usesGitLfs,
-            materialized.hash};
+    auto locked = LockedPackage {request.name,
+                                 request.kind,
+                                 request.url,
+                                 request.ref,
+                                 patchesForLock,
+                                 request.submoduleSelection,
+                                 materialized.commit,
+                                 materialized.submodules,
+                                 materialized.usesGitLfs,
+                                 materialized.hash};
+    locked.recipeHash = hashRecipeIn(materialized.sourceDirectory);
+    return locked;
 }
 
 eacp::FilePath ensureLockedPackageIsCached(const CommandOptions& options,
@@ -1032,6 +1044,28 @@ SessionOverride parseOverride(const std::string& definition)
 // One package of an epm.cpp graph through the lock: each declaration is a
 // requirement, the root's epm.cpp overrides replace them all, minimal version
 // selection chooses, and the choice is locked and fetched like any other.
+// The graph walk runs a dependency's epm.cpp next: it must be the one the
+// lock pinned, whatever happened to the cache entry since it was stamped.
+void checkRecipeMatchesLock(const CommandOptions& options,
+                            const std::string& name,
+                            const eacp::FilePath& sourceDirectory)
+{
+    auto locked = readLockFile(options.lock).findPackage(name);
+
+    if (!locked)
+        return;
+
+    if (hashRecipeIn(sourceDirectory) == locked->recipeHash)
+        return;
+
+    throw std::runtime_error(formatUserError(
+        name + "'s epm.cpp in " + getPathForUser(options, sourceDirectory)
+            + " is not the one " + getPathForUser(options, options.lock)
+            + " records, so epm will not run it.",
+        "Delete that directory to fetch it again, or re-lock with "
+        "-DEPM_LOCK_MODE=update."));
+}
+
 LockedSource lockGraphPackage(const CommandOptions& options,
                               Session& session,
                               const std::string& name,
@@ -1070,6 +1104,9 @@ LockedSource lockGraphPackage(const CommandOptions& options,
 
     auto spec = withRequirement(requested, selection.selected);
     auto source = resolvePackageSource(options, spec, session);
+
+    if (!source.hash.empty())
+        checkRecipeMatchesLock(options, name, source.directory);
 
     if (isResolvingRequirements(options, session))
         recordRequirementsInLock(options,

@@ -38,6 +38,11 @@ struct LockedPackage
     // Chosen by the root's epm.cpp rather than by the requirements.
     bool isOverridden = false;
 
+    // SHA-256 of the package's own epm.cpp, empty when it has none. A locked
+    // configure checks it before running the recipe, since the cache entry is
+    // otherwise trusted by its stamp and not re-hashed.
+    std::string recipeHash;
+
     MIRO_REFLECT(name,
                  kind,
                  url,
@@ -49,7 +54,8 @@ struct LockedPackage
                  usesGitLfs,
                  hash,
                  requirements,
-                 isOverridden)
+                 isOverridden,
+                 recipeHash)
 };
 
 struct LockFile
