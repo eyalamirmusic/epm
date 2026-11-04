@@ -523,8 +523,29 @@ build_and_run("11 1")
 expect_recipe_test()
 cache_markers(markers_before)
 
+# The first configure wrote epm-lock.json beside the consumer with both
+# packages; a locked configure under EPM_CI reads it and changes nothing.
+set(lock_file "${consumer}/epm-lock.json")
+
+if (NOT EXISTS "${lock_file}")
+    fail("the configure wrote no ${lock_file}")
+endif ()
+
+file(READ "${lock_file}" lock_written)
+
+foreach (name IN ITEMS Leaf Mid)
+    if (NOT lock_written MATCHES "\"name\": \"${name}\"")
+        fail("${lock_file} does not lock ${name}:\n${lock_written}")
+    endif ()
+endforeach ()
+
 # 2. A fresh build directory: both entries are reused, nothing is built.
-configure_consumer(cached)
+configure_consumer(cached -DEPM_CI=ON)
+file(READ "${lock_file}" lock_reread)
+
+if (NOT lock_written STREQUAL lock_reread)
+    fail("the locked configure rewrote ${lock_file}")
+endif ()
 expect_loaded(prebuilt)
 cache_markers(markers_after)
 

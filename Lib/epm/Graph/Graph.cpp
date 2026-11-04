@@ -1,4 +1,5 @@
 #include "Graph.h"
+#include "LockedSources.h"
 
 #include <epm/Build/Configs.h>
 #include <epm/Emit/GraphResponse.h>
@@ -816,10 +817,17 @@ GraphResult configureGraph(const GraphInputs& inputs,
                            const CacheRoot& cache,
                            ManifestLoader& loader)
 {
-    const auto fetch = [&cache](const std::string& name,
-                                const std::string& url,
-                                const std::string& ref)
-    { return fetchSource(cache, name, url, ref); };
+    auto lockedSources = std::optional<DependencyResolution::SourceResolver> {};
+    auto fetch = SourceFetcher {[&cache](const std::string& name,
+                                         const std::string& url,
+                                         const std::string& ref)
+                                { return fetchSource(cache, name, url, ref); }};
+
+    if (inputs.lock)
+    {
+        lockedSources.emplace(lockOptionsFor(*inputs.lock, cache, inputs.env));
+        fetch = makeLockedSourceFetcher(*lockedSources);
+    }
 
     const auto plan = planGraph(inputs, fetch, loader);
 

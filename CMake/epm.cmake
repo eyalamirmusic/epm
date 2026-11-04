@@ -237,7 +237,9 @@ function(epm_write_overrides file)
 
     foreach (var IN LISTS names)
         # Only matching names are read: reading some others warns (CMP0218).
-        if (NOT var MATCHES "^EPM_(.+)_(MODE|SOURCE|CONFIGS|OPTIONS)$")
+        # EPM_LOCK_MODE is the lock's (lock.json), not a package's.
+        if (var STREQUAL "EPM_LOCK_MODE"
+                OR NOT var MATCHES "^EPM_(.+)_(MODE|SOURCE|CONFIGS|OPTIONS)$")
             continue()
         endif ()
 
@@ -468,6 +470,48 @@ function(epm_run_binary what)
     endif ()
 endfunction()
 
+set(EPM_LOCK_MODE locked CACHE STRING "locked, update or offline")
+option(EPM_CI "Refuse to write epm-lock.json in locked mode" OFF)
+
+# Writes lock.json beside overrides.json: the lock `epm configure` resolves
+# sources through (EPM_LOCK_FILE, default epm-lock.json beside the top-level
+# CMakeLists.txt), EPM_LOCK_MODE, EPM_CI, and an EPM_OVERRIDE_<name> commit or
+# tag per package. The lock is an input of the configure, so a build after it
+# is edited, pulled or deleted reconfigures.
+function(epm_write_lock_settings file)
+    set(lock_file "${EPM_LOCK_FILE}")
+
+    if (lock_file STREQUAL "")
+        set(lock_file "${CMAKE_SOURCE_DIR}/epm-lock.json")
+    endif ()
+
+    cmake_path(ABSOLUTE_PATH lock_file BASE_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY
+            CMAKE_CONFIGURE_DEPENDS "${lock_file}")
+
+    set(json "{}")
+    epm_json_set_string(json lockFile "${lock_file}")
+    epm_json_set_string(json mode "${EPM_LOCK_MODE}")
+
+    if (EPM_CI)
+        string(JSON json SET "${json}" continuousIntegration true)
+    else ()
+        string(JSON json SET "${json}" continuousIntegration false)
+    endif ()
+
+    set(overrides "{}")
+    get_cmake_property(names VARIABLES)
+
+    foreach (var IN LISTS names)
+        if (var MATCHES "^EPM_OVERRIDE_(.+)$")
+            epm_json_set_string(overrides "${CMAKE_MATCH_1}" "${${var}}")
+        endif ()
+    endforeach ()
+
+    string(JSON json SET "${json}" overrides "${overrides}")
+    file(WRITE "${file}" "${json}\n")
+endfunction()
+
 # The provider's PREPARE step: env.json, overrides.json, then `epm configure`
 # over the manifest, which writes graph.cmake and graph.json.
 function(epm_configure_graph)
@@ -476,6 +520,7 @@ function(epm_configure_graph)
 
     epm_write_env()
     epm_write_overrides("${EPM_DIR}/overrides.json")
+    epm_write_lock_settings("${EPM_DIR}/lock.json")
     set_property(GLOBAL PROPERTY EPM_OVERRIDES_WRITTEN TRUE)
     file(REMOVE "${graph_file}")
 
@@ -755,6 +800,7 @@ function(epm_write_recipe_inputs)
 
     if (NOT written)
         epm_write_overrides("${EPM_DIR}/overrides.json")
+        epm_write_lock_settings("${EPM_DIR}/lock.json")
         set_property(GLOBAL PROPERTY EPM_OVERRIDES_WRITTEN TRUE)
     endif ()
 endfunction()

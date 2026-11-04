@@ -12,6 +12,8 @@
 
 #include <functional>
 #include <string>
+#include <map>
+#include <optional>
 #include <string_view>
 
 namespace epm
@@ -19,6 +21,23 @@ namespace epm
 // Fetches one package's source; fetchSource into the cache in the binary.
 using SourceFetcher = std::function<SourceResult(
     const std::string& name, const std::string& url, const std::string& ref)>;
+
+// lock.json, which epm.cmake writes beside overrides.json: where the lock
+// lives and how the configure treats it.
+struct LockSettings
+{
+    std::string lockFile;
+
+    // "locked", "update" or "offline".
+    std::string mode = "locked";
+
+    bool continuousIntegration = false;
+
+    // EPM_OVERRIDE_<name>: a commit or tag every request of <name> takes.
+    std::map<std::string, std::string> overrides;
+
+    MIRO_REFLECT(lockFile, mode, continuousIntegration, overrides)
+};
 
 struct GraphInputs
 {
@@ -36,6 +55,11 @@ struct GraphInputs
     // As read from overrides.json; the environment fills what it leaves
     // unset (withEnvironment). No environment unless one is given.
     Overrides overrides;
+
+    // As read from lock.json; sources are fetched through epm-lock.json when
+    // it is set, else straight into the cache.
+    std::optional<LockSettings> lock;
+
     EnvironmentLookup environment = [](std::string_view)
     { return std::optional<std::string> {}; };
 };

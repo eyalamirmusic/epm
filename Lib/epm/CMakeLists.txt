@@ -79,6 +79,8 @@ target_sources(epm-recipe PRIVATE
         Emit/Response.h
         Graph/Graph.cpp
         Graph/Graph.h
+        Graph/LockedSources.cpp
+        Graph/LockedSources.h
         Graph/ManifestLoader.cpp
         Graph/ManifestLoader.h
         Graph/Merge.cpp
@@ -98,7 +100,7 @@ target_sources(epm-recipe PRIVATE
 target_include_directories(epm-recipe PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 # eacp-network for IPC::Lock, the cross-process package lock.
-target_link_libraries(epm-recipe PUBLIC eacp-core eacp-network Miro)
+target_link_libraries(epm-recipe PUBLIC eacp-core eacp-network Miro DependencyResolution)
 
 set_default_target_setting(epm-recipe)
 

@@ -167,6 +167,20 @@ std::optional<GraphInputs> configureInputs(const ConfigureArgs& args,
         return std::nullopt;
     }
 
+    // Written by epm.cmake beside overrides.json; without it sources are
+    // fetched unlocked.
+    if (const auto lockSettings = args.overrides.sibling("lock.json");
+        Files::isFile(lockSettings))
+    {
+        if (auto loaded = loadJsonFile<LockSettings>(lockSettings))
+            inputs.lock = std::move(*loaded);
+        else
+        {
+            error = "cannot read the lock settings " + lockSettings.str();
+            return std::nullopt;
+        }
+    }
+
     return inputs;
 }
 
