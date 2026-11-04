@@ -240,6 +240,82 @@ auto tConfigureArguments = test("ChildBuild/configureArguments") = []
     }
 };
 
+namespace
+{
+// Whether any argument sets the target system, processor, sysroot or ABI.
+bool namesTargetSystem(const eacp::Vector<std::string>& arguments)
+{
+    for (const auto& argument: arguments)
+        for (const auto* name: {"-DCMAKE_SYSTEM_NAME=",
+                                "-DCMAKE_SYSTEM_PROCESSOR=",
+                                "-DCMAKE_OSX_SYSROOT=",
+                                "-DCMAKE_ANDROID_ARCH_ABI="})
+            if (argument.starts_with(name))
+                return true;
+
+    return false;
+}
+} // namespace
+
+auto tConfigureArgumentsIos = test("ChildBuild/configureArguments/iosSimulator") = []
+{
+    auto build = sampleChildBuild();
+    build.env.systemName = "iOS";
+    build.env.crossCompiling = true;
+    build.env.osxSysroot = "iphonesimulator";
+    build.env.osxArchitectures = "arm64";
+    build.env.osxDeploymentTarget = "15.0";
+    const auto arguments = configureArguments(build);
+    const auto has = [&](const std::string& argument)
+    { return arguments.contains(argument); };
+
+    check(has("-DCMAKE_SYSTEM_NAME=iOS"));
+    check(has("-DCMAKE_OSX_SYSROOT=iphonesimulator"));
+    check(has("-DCMAKE_OSX_ARCHITECTURES=arm64"));
+    check(has("-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0"));
+
+    // CMake leaves CMAKE_SYSTEM_PROCESSOR empty for iOS.
+    for (const auto& argument: arguments)
+        check(!argument.starts_with("-DCMAKE_SYSTEM_PROCESSOR="));
+
+    build.env.systemProcessor = "arm64";
+    check(configureArguments(build).contains("-DCMAKE_SYSTEM_PROCESSOR=arm64"));
+
+    // A toolchain file says the target system itself.
+    build.env.toolchainFile = "/x/ios.toolchain.cmake";
+    const auto withToolchain = configureArguments(build);
+    check(withToolchain.contains("-DCMAKE_TOOLCHAIN_FILE=/x/ios.toolchain.cmake"));
+    check(!namesTargetSystem(withToolchain));
+};
+
+auto tConfigureArgumentsHost = test("ChildBuild/configureArguments/hostSystem") = []
+{
+    auto build = sampleChildBuild();
+    build.env.systemName = "Darwin";
+    build.env.systemProcessor = "arm64";
+    build.env.osxSysroot = "/Applications/Xcode.app/Contents/Developer/Platforms/"
+                           "MacOSX.platform/Developer/SDKs/MacOSX.sdk";
+    check(!namesTargetSystem(configureArguments(build)));
+
+    build.env.systemName = "Linux";
+    build.env.osxSysroot.clear();
+    check(!namesTargetSystem(configureArguments(build)));
+};
+
+auto tConfigureArgumentsAndroid = test("ChildBuild/configureArguments/android") = []
+{
+    auto build = sampleChildBuild();
+    build.env.systemName = "Android";
+    build.env.crossCompiling = true;
+    build.env.systemProcessor = "aarch64";
+    build.env.androidAbi = "arm64-v8a";
+    const auto arguments = configureArguments(build);
+
+    check(arguments.contains("-DCMAKE_SYSTEM_NAME=Android"));
+    check(arguments.contains("-DCMAKE_SYSTEM_PROCESSOR=aarch64"));
+    check(arguments.contains("-DCMAKE_ANDROID_ARCH_ABI=arm64-v8a"));
+};
+
 auto tConfigureArgumentsNested = test("ChildBuild/configureArguments/nested") = []
 {
     auto build = sampleChildBuild();

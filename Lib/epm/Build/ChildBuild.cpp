@@ -1,6 +1,7 @@
 #include "ChildBuild.h"
 #include "Configs.h"
 
+#include <epm/Spec/Platform.h>
 #include <epm/Util/Command.h>
 #include <epm/Util/Log.h>
 #include <epm/Util/Text.h>
@@ -95,6 +96,17 @@ Vector<std::string> configureArguments(const ChildBuild& build)
     addDefinition(arguments, "CMAKE_MAKE_PROGRAM", build.generator.makeProgram);
     addDefinition(arguments, "CMAKE_BUILD_TYPE", build.config);
     addDefinition(arguments, "CMAKE_TOOLCHAIN_FILE", env.toolchainFile);
+
+    if (crossCompilesWithoutToolchain(env))
+    {
+        addDefinition(arguments, "CMAKE_SYSTEM_NAME", env.systemName);
+        addDefinition(arguments, "CMAKE_SYSTEM_PROCESSOR", env.systemProcessor);
+        addDefinition(arguments, "CMAKE_OSX_SYSROOT", env.osxSysroot);
+
+        if (env.systemName == "Android")
+            addDefinition(arguments, "CMAKE_ANDROID_ARCH_ABI", env.androidAbi);
+    }
+
     addDefinition(arguments, "CMAKE_C_COMPILER", env.cCompiler);
     addDefinition(arguments, "CMAKE_CXX_COMPILER", env.cxxCompiler);
     addDefinition(arguments, "CMAKE_OSX_ARCHITECTURES", env.osxArchitectures);

@@ -65,8 +65,12 @@
 # The build is a host build: nothing from the consumer's toolchain file, build
 # type or target architectures reaches it, so it works while the consumer
 # targets iOS or Android (when cross-compiling, CC, CXX, CFLAGS, CXXFLAGS and
-# LDFLAGS are dropped from its environment too). It uses the consumer's
-# generator and make program and any compiler launcher, and its C and C++
+# LDFLAGS are dropped from its environment too, and always SDKROOT and the
+# deployment targets an Xcode build exports). Whatever the consumer's
+# generator (Xcode, Visual Studio, Ninja Multi-Config), it is built with Ninja
+# when there is a ninja, else Unix Makefiles; on Windows without a ninja, or
+# for a Visual Studio consumer outside a developer prompt, with the consumer's
+# generator. It uses any compiler launcher, and the consumer's C and C++
 # compilers and CMAKE_LINKER_TYPE when they are known and native (no toolchain
 # file, not cross-compiling), so that epm's libraries match the compiler that
 # builds the consumer's recipe target (epm_add_recipe).
@@ -473,7 +477,9 @@ endfunction()
 # architectures reaches it unless passed on the command line, so it works while
 # the consumer targets iOS or Android. CMake reads these variables from the
 # environment too. A cross consumer's CC, CXX and flags (a Yocto-style SDK
-# environment) are dropped as well.
+# environment) are dropped as well. So are the SDK and deployment targets an
+# Xcode build exports, which reach a CMake re-run from inside one and would
+# point the host build at an iOS SDK.
 function(get_epm_run_step step log)
     set(clean_env "${CMAKE_COMMAND}" -E env
             --unset=CMAKE_TOOLCHAIN_FILE
@@ -484,7 +490,10 @@ function(get_epm_run_step step log)
             --unset=CMAKE_CONFIGURATION_TYPES
             --unset=CMAKE_OSX_ARCHITECTURES
             --unset=CMAKE_INSTALL_PREFIX
-            --unset=DESTDIR)
+            --unset=DESTDIR
+            --unset=SDKROOT
+            --unset=MACOSX_DEPLOYMENT_TARGET
+            --unset=IPHONEOS_DEPLOYMENT_TARGET)
     get_epm_consumer_is_native(native)
 
     if (NOT native)
@@ -518,25 +527,79 @@ function(get_epm_run_step step log)
     endif ()
 endfunction()
 
-# The consumer's generator, make program, compiler launchers, compilers and
-# linker type, for building epm (the same toolchain, and Ninja's speed when the
-# consumer uses it). Sets toolchain_args and build_name (the build directory:
-# one per generator, since a build directory cannot change generator). The
-# generator always runs on the host; the compilers and linker type are left out
-# when they may be a cross toolchain's: with a toolchain file or a foreign
-# CMAKE_SYSTEM_NAME (get_epm_consumer_is_native). get_epm, as a top-level include,
-# runs before languages are enabled, so the compilers are often not known yet;
-# the build then finds the same ones the consumer will (CC, CXX, the default).
+# The generator of the epm build, a host program whatever the consumer
+# targets: Ninja when there is one (`ninja`, the path of the ninja found or
+# empty), else Unix Makefiles, except on a Windows host (`windows`), where
+# there may be no make and the consumer's generator is kept. A Visual Studio
+# consumer on Windows outside a developer prompt (`msvc_env` false: no
+# VCINSTALLDIR) keeps its generator too, since Ninja would find no compiler
+# there. Never the consumer's Xcode on macOS: epm's per-config sources need a
+# generator that has them. Sets tool_generator, empty for CMake's default.
+function(get_epm_pick_generator consumer windows msvc_env ninja)
+    if (windows AND consumer MATCHES "^Visual Studio" AND NOT msvc_env)
+        set(generator "${consumer}")
+    elseif (NOT ninja STREQUAL "")
+        set(generator Ninja)
+    elseif (NOT windows)
+        set(generator "Unix Makefiles")
+    else ()
+        set(generator "${consumer}")
+    endif ()
+
+    set(tool_generator "${generator}" PARENT_SCOPE)
+endfunction()
+
+# The host's ninja for the epm build: the consumer's make program when its
+# generator is a Ninja one, else the first ninja on PATH, never re-rooted by a
+# cross toolchain; empty when there is none.
+function(get_epm_find_ninja out_var)
+    if (CMAKE_GENERATOR MATCHES "^Ninja" AND CMAKE_MAKE_PROGRAM)
+        set(${out_var} "${CMAKE_MAKE_PROGRAM}" PARENT_SCOPE)
+        return()
+    endif ()
+
+    find_program(ninja NAMES ninja ninja-build NO_CACHE NO_CMAKE_FIND_ROOT_PATH)
+
+    if (NOT ninja)
+        set(ninja "")
+    endif ()
+
+    set(${out_var} "${ninja}" PARENT_SCOPE)
+endfunction()
+
+# The generator, make program, compiler launchers, compilers and linker type
+# for building epm. Sets toolchain_args, tool_generator (get_epm_pick_generator)
+# and build_name (the build directory: one per generator, since a build
+# directory cannot change generator). The consumer's toolset and make program
+# go along only when the consumer's generator is the one picked. The compilers
+# and linker type are left out when they may be a cross toolchain's: with a
+# toolchain file or a foreign CMAKE_SYSTEM_NAME (get_epm_consumer_is_native).
+# get_epm, as a top-level include, runs before languages are enabled, so the
+# compilers are often not known yet; the build then finds the same ones the
+# consumer will (CC, CXX, the default).
 function(get_epm_consumer_toolchain)
     set(args "")
     set(name "build")
+    get_epm_find_ninja(ninja)
+    set(msvc_env FALSE)
 
-    if (NOT "${CMAKE_GENERATOR}" STREQUAL "")
-        list(APPEND args -G "${CMAKE_GENERATOR}")
-        string(TOLOWER "${CMAKE_GENERATOR}" generator)
+    if (NOT "$ENV{VCINSTALLDIR}" STREQUAL "")
+        set(msvc_env TRUE)
+    endif ()
+
+    get_epm_pick_generator("${CMAKE_GENERATOR}" "${CMAKE_HOST_WIN32}" ${msvc_env}
+            "${ninja}")
+
+    if (NOT tool_generator STREQUAL "")
+        list(APPEND args -G "${tool_generator}")
+        string(TOLOWER "${tool_generator}" generator)
         string(REGEX REPLACE "[^a-z0-9]+" "-" generator "${generator}")
         string(APPEND name "-${generator}")
+    endif ()
 
+    if (tool_generator STREQUAL "Ninja" AND NOT ninja STREQUAL "")
+        list(APPEND args "-DCMAKE_MAKE_PROGRAM=${ninja}")
+    elseif (NOT tool_generator STREQUAL "" AND tool_generator STREQUAL CMAKE_GENERATOR)
         if (CMAKE_GENERATOR_TOOLSET)
             list(APPEND args -T "${CMAKE_GENERATOR_TOOLSET}")
         endif ()
@@ -581,7 +644,7 @@ endfunction()
 # directories used.
 function(get_epm_build_configs source_dir tool_dir log what)
     get_epm_consumer_toolchain()
-    get_epm_is_multi_config("${CMAKE_GENERATOR}" multi_config)
+    get_epm_is_multi_config("${tool_generator}" multi_config)
     set(common_args -S "${source_dir}" ${toolchain_args} -DEPM_ENABLE_TESTS=OFF
             "-DCMAKE_INSTALL_PREFIX=${tool_dir}")
 

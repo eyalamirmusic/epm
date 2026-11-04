@@ -38,7 +38,8 @@ longer-term design and background.
     entry, `customBuild` for `add<T>`), `Overrides` (`overrides.json`, filled
     from the environment): Miro-reflected structs whose field names are the
     JSON keys; `JsonFile.h` loads and saves them. `Platform` names the target
-    platform from `Env`.
+    platform from `Env`, and says when a child build must be told the target
+    system (`crossCompilesWithoutToolchain`).
   - `Recipe/` — `epm.cpp` recipes, each a standalone executable whose
     contract with epm is JSON. Recipe API (`epm-recipe`): `Recipe.h` (the
     header a recipe includes: `Recipe : CMakePackage`, `describe()`,
@@ -113,9 +114,8 @@ longer-term design and background.
   it (`configure --manifest <src> --env <build>/epm/env.json --overrides
   <build>/epm/overrides.json --out <build>/epm`, plus `--cache`/`--verbose`
   as `epm_run_binary` adds them; the inputs written by a deferred
-  `epm_write_recipe_inputs`), and a test running the same into
-  `<build>/epm/test`; launching it with those arguments is how `describe` and
-  the root's hooks are debugged, with
+  `epm_write_recipe_inputs`); launching it with those arguments is how
+  `describe` and the root's hooks are debugged, with
   `build --package <n> --in <build>/epm/steps/<n>.in.json --out <file>` one
   build step the root owns (`steps/<n>.command` holds the exact command the
   configure ran, with the executable that ran it: epm's cached one for any
@@ -139,7 +139,9 @@ longer-term design and background.
   (get_epm's reading of a stale or corrupt `tool/latest.json`, ctest
   `get_epm_latest`), `EpmConfigsAuto.cmake` (epm.cmake's
   `EPM_CONFIGS` resolution, ctest `epm_configs_auto`), `EpmOverrides.cmake`
-  (the `overrides.json` writer, ctest `epm_overrides`), `GraphProvider.cmake`
+  (the `overrides.json` writer, ctest `epm_overrides`), `EpmEnv.cmake`
+  (`env.json`'s Apple architecture and deployment-target fallbacks, ctest
+  `epm_env`), `GraphProvider.cmake`
   (the provider over fixtures in `Tests/Graph/`, ctest `epm_graph_provider`)
   and `GraphNested.cmake` (ctest `epm_graph_nested`: the real binary over two
   local git repositories from `Tests/Nested/`, Mid and the Leaf it declares
@@ -147,17 +149,24 @@ longer-term design and background.
   recipe executable, its option lands in Leaf's fingerprint and, in source
   mode, in `graph.json` and `graph.cmake`'s `OPTIONS`, the
   `<build>/epm/steps/` files are kept and Leaf's step is re-run by hand from
-  them; plus the consumer's `epm_add_recipe` executable: its test, a whole
-  configure into `<build>/epm/test`, its `-configure` target refreshing
+  them; plus the consumer's `epm_add_recipe` executable: its `-configure`
+  target, a whole configure in that executable, refreshing
   `<build>/epm/graph.cmake` with everything cached and the dependencies'
   steps still in their cached recipe executables, its `describe` command and
-  `describe --exe`; skipped without git and on Windows) and
+  `describe --exe`; skipped without git and on Windows), `GraphIos.cmake`
+  (ctest `epm_graph_ios`: the same fixtures for an iOS simulator consumer,
+  `-DCMAKE_SYSTEM_NAME=iOS` without a toolchain file, under Xcode and Ninja:
+  the child builds get the target system, the entries are
+  `ios-simulator-<arch>` simulator archives and the app links; skipped off
+  macOS and without the simulator SDK) and
   `InstallRoundTrip.cmake` (ctest `epm_install_round_trip`, not on Windows:
   the installed epm through a symlink, `recipe-sdk`, `describe` and a
   `configure` of an empty recipe against the prefix only, and which `bin/epm`
   a second configuration's install leaves).
-- `Examples/` — consumer projects: `HelloEacp` (`epm_add_package`) and
-  `HelloGraph` (the same through `epm.cpp` and `find_package`).
+- `Examples/` — consumer projects: `HelloEacp` (`epm_add_package`),
+  `HelloGraph` (the same through `epm.cpp` and `find_package`) and
+  `NestedGraph` (`Lib`, pinning eacp to source, and `App`, using the sibling
+  `Lib` through `EPM_Lib_SOURCE` and taking eacp prebuilt for Release).
 
 ## Build
 
@@ -187,7 +196,9 @@ archives, so they must come from the local compiler). In order:
 `<cache>/tool/v*/`; else the newest in-range tag from `git ls-remote`
 (`EPM_REPOSITORY`, cached a day in `tool/latest.json`), shallow-fetched into
 `<entry>/src`, built Debug then Release as a host build (consumer toolchain
-unset) and installed into `<cache>/tool/<tag>/`, whose build dirs are then
+unset; Ninja, else Makefiles, whatever the consumer's generator: on Windows
+without a ninja, or a Visual Studio consumer outside a developer prompt, the
+consumer's) and installed into `<cache>/tool/<tag>/`, whose build dirs are then
 pruned. Then it includes that entry's `epm.cmake`.
 `CMake/epm.cmake` requires `EPM_EXECUTABLE` and has no bootstrap of its own.
 A `get_epm.cmake` inside an epm checkout (`<dir>/CMake/`, `<dir>/CMakeLists.txt`

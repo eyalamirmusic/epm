@@ -48,6 +48,37 @@ auto tPlatIos = test("Platform/ios") = []
           == "ios-simulator-arm64");
     check(platformName(platformEnv("iOS", "x86_64", "x86_64", "iphonesimulator"))
           == "ios-simulator-x64");
+
+    // CMake leaves the processor empty for iOS; epm.cmake fills the
+    // architectures the SDK builds by default (Xcode: ARCHS_STANDARD).
+    check(platformName(platformEnv("iOS", "", "arm64", simulator))
+          == "ios-simulator-arm64");
+    check(platformName(platformEnv("iOS", "", "arm64;x86_64", "iphonesimulator"))
+          == "ios-simulator-universal");
+};
+
+auto tPlatAppleEmbedded = test("Platform/appleEmbedded") = []
+{
+    check(platformName(platformEnv("tvOS", "", "arm64", "appletvos"))
+          == "tvos-arm64");
+    check(platformName(platformEnv("visionOS", "", "arm64", "xrsimulator"))
+          == "visionos-simulator-arm64");
+    check(platformName(platformEnv("watchOS", "", "arm64", "watchsimulator"))
+          == "watchos-simulator-arm64");
+};
+
+auto tPlatCrossCompiles = test("Platform/crossCompilesWithoutToolchain") = []
+{
+    auto env = platformEnv("iOS", "", "arm64", "iphonesimulator");
+    check(!crossCompilesWithoutToolchain(env));
+
+    env.crossCompiling = true;
+    check(crossCompilesWithoutToolchain(env));
+
+    env.toolchainFile = "/x/ios.toolchain.cmake";
+    check(!crossCompilesWithoutToolchain(env));
+
+    check(!crossCompilesWithoutToolchain(platformEnv("Darwin", "arm64")));
 };
 
 auto tPlatWindows = test("Platform/windows") = []

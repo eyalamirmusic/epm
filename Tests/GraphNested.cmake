@@ -14,11 +14,21 @@
 #   leaf-source   EPM_Leaf_MODE=source forces Mid into source (§5 rule 6)
 #   leaf-checkout EPM_Leaf_SOURCE=<checkout>: Leaf's repository is hidden, so
 #                 the checkout is used without a fetch
+#   lib-source    a consumer of mid-source, a Mid whose epm.cpp declares Leaf
+#                 mode("source"): both from source
+#   lib-source-root-prebuilt
+#                 its root also declares Leaf prebuilt (Release, or any config
+#                 on a multi-config generator): the root's mode wins, Mid's is
+#                 a note (an error with EPM_STRICT), Leaf's entry is reused and
+#                 Mid is prebuilt again
+#   lib-source-root-debug
+#                 the same root in a Debug build (single-config only): both
+#                 from source again
 #
 # Each scenario also builds the consumer's epm_add_recipe executable and checks
-# that Mid's epm_add_recipe built nothing; the default one runs its test and
-# its -configure target, each a whole configure in that executable, and its
-# describe command standalone.
+# that Mid's epm_add_recipe built nothing; the default one runs its -configure
+# target, a whole configure in that executable, and its describe command
+# standalone.
 #
 #   cmake -DEPM_BINARY=<epm> [-DWORK_DIR=<dir>] [-DTEST_GENERATOR=<generator>]
 #         [-DTEST_MAKE_PROGRAM=<path>] [-DTEST_CXX_COMPILER=<path>]
@@ -113,25 +123,49 @@ file(COPY "${fixtures}/Leaf/" DESTINATION "${repos}/Leaf")
 make_repository(Leaf)
 file_url("${repos}/Leaf" LEAF_URL)
 
-file(COPY "${fixtures}/Mid/" DESTINATION "${repos}/Mid" PATTERN "*.in" EXCLUDE)
-file(COPY "${repo_dir}/CMake/get_epm.cmake" DESTINATION "${repos}/Mid/cmake")
-configure_file("${fixtures}/Mid/epm.cpp.in" "${repos}/Mid/epm.cpp" @ONLY)
-make_repository(Mid)
-file_url("${repos}/Mid" MID_URL)
+# A repository ${repos}/<repository> of the package Mid, whose epm.cpp declares
+# Leaf in LEAF_MODE (empty: unset); sets <out_var> to its url.
+function(make_mid repository LEAF_MODE out_var)
+    set(directory "${repos}/${repository}")
+    file(COPY "${fixtures}/Mid/" DESTINATION "${directory}" PATTERN "*.in" EXCLUDE)
+    file(COPY "${repo_dir}/CMake/get_epm.cmake" DESTINATION "${directory}/cmake")
+    configure_file("${fixtures}/Mid/epm.cpp.in" "${directory}/epm.cpp" @ONLY)
+    make_repository(${repository})
+    file_url("${directory}" url)
+    set(${out_var} "${url}" PARENT_SCOPE)
+endfunction()
+
+make_mid(Mid "" MID_URL)
+make_mid(mid-source source MID_SOURCE_URL)
 
 file(COPY "${fixtures}/Leaf/" DESTINATION "${leaf_checkout}")
 file(WRITE "${leaf_checkout}/Leaf.cpp"
         "#include <Leaf.h>\n\nint leafValue()\n{\n    return 2;\n}\n")
 
-set(GET_EPM "${repo_dir}/CMake/get_epm.cmake")
-file(COPY "${fixtures}/Consumer/Main.cpp" DESTINATION "${consumer}")
-configure_file("${fixtures}/Consumer/CMakeLists.txt.in"
-        "${consumer}/CMakeLists.txt" @ONLY)
-configure_file("${fixtures}/Consumer/epm.cpp.in" "${consumer}/epm.cpp" @ONLY)
+# The consumer project in <directory>, declaring Mid from MID_URL; with
+# ROOT_CACHES_LEAF ON its root also declares Leaf prebuilt (Release, or a
+# multi-config generator).
+function(make_consumer directory MID_URL ROOT_CACHES_LEAF)
+    set(GET_EPM "${repo_dir}/CMake/get_epm.cmake")
+    file(COPY "${fixtures}/Consumer/Main.cpp" DESTINATION "${directory}")
+    configure_file("${fixtures}/Consumer/CMakeLists.txt.in"
+            "${directory}/CMakeLists.txt" @ONLY)
+    configure_file("${fixtures}/Consumer/epm.cpp.in" "${directory}/epm.cpp" @ONLY)
+endfunction()
 
-# Configures the consumer into ${WORK_DIR}/<name>; ARGN goes to cmake. Sets
-# `build` and `output`.
-macro(configure_consumer name)
+make_consumer("${consumer}" "${MID_URL}" OFF)
+make_consumer("${WORK_DIR}/Lib" "${MID_SOURCE_URL}" OFF)
+make_consumer("${WORK_DIR}/App" "${MID_SOURCE_URL}" ON)
+
+if (TEST_GENERATOR MATCHES "^(Xcode|Ninja Multi-Config|Visual Studio)")
+    set(multi_config ON)
+else ()
+    set(multi_config OFF)
+endif ()
+
+# Configures the consumer project in ${consumer} into ${WORK_DIR}/<name>; ARGN
+# goes to cmake. Sets `build`, `output` and `result`.
+macro(try_configure_consumer name)
     set(scenario "${name}")
     set(build "${WORK_DIR}/${name}")
     execute_process(
@@ -140,6 +174,11 @@ macro(configure_consumer name)
             RESULT_VARIABLE result
             OUTPUT_VARIABLE output
             ERROR_VARIABLE output)
+endmacro()
+
+# try_configure_consumer, which must succeed.
+macro(configure_consumer name)
+    try_configure_consumer(${name} ${ARGN})
 
     if (NOT result EQUAL 0)
         fail("configure failed (${result}):\n${output}")
@@ -182,22 +221,29 @@ function(expect_equal what actual expected)
     endif ()
 endfunction()
 
-# Builds the consumer and runs app, which prints Mid's and Leaf's values.
+# Builds the consumer in config ARGV1 (default Release) and runs app, which
+# prints Mid's and Leaf's values.
 function(build_and_run expected)
+    set(config Release)
+
+    if (ARGC GREATER 1)
+        set(config "${ARGV1}")
+    endif ()
+
     execute_process(
-            COMMAND "${CMAKE_COMMAND}" --build "${build}" --config Release
+            COMMAND "${CMAKE_COMMAND}" --build "${build}" --config ${config}
             RESULT_VARIABLE result
             OUTPUT_VARIABLE build_output
             ERROR_VARIABLE build_output)
 
     if (NOT result EQUAL 0)
-        fail("build failed (${result}):\n${build_output}")
+        fail("${config} build failed (${result}):\n${build_output}")
     endif ()
 
     set(app "")
 
     foreach (candidate IN ITEMS "${build}/app" "${build}/app.exe"
-            "${build}/Release/app" "${build}/Release/app.exe")
+            "${build}/${config}/app" "${build}/${config}/app.exe")
         if (NOT app AND EXISTS "${candidate}" AND NOT IS_DIRECTORY "${candidate}")
             set(app "${candidate}")
         endif ()
@@ -221,7 +267,8 @@ function(consumer_recipe out_var)
     set(found "")
 
     foreach (candidate IN ITEMS "${build}/ConsumerRecipe" "${build}/ConsumerRecipe.exe"
-            "${build}/Release/ConsumerRecipe" "${build}/Release/ConsumerRecipe.exe")
+            "${build}/Release/ConsumerRecipe" "${build}/Release/ConsumerRecipe.exe"
+            "${build}/Debug/ConsumerRecipe" "${build}/Debug/ConsumerRecipe.exe")
         if (NOT found AND EXISTS "${candidate}" AND NOT IS_DIRECTORY "${candidate}")
             set(found "${candidate}")
         endif ()
@@ -248,35 +295,13 @@ endfunction()
 # The Project JSON a recipe prints names Mid.
 set(names_mid "\"name\": *\"Mid\"")
 
-# ConsumerRecipe's test and the ConsumerRecipe-configure target run the whole
-# configure in the executable the build made, with this build's env.json and
-# overrides.json: the test into <build>/epm/test, the target into the build's
-# own <build>/epm, finding both entries cached. Its describe command prints
-# the project, and `epm describe --exe` runs it in place of one epm builds.
-function(expect_recipe_test)
-    set(test_graph "${build}/epm/test/graph.cmake")
-    file(REMOVE_RECURSE "${build}/epm/test")
+# The ConsumerRecipe-configure target runs the whole configure in the
+# executable the build made, with this build's env.json and overrides.json,
+# into the build's own <build>/epm, finding both entries cached. Its describe
+# command prints the project, and `epm describe --exe` runs it in place of one
+# epm builds.
+function(expect_recipe_configure)
     file(SHA256 "${build}/epm/graph.cmake" graph_before)
-    file(TIMESTAMP "${build}/epm/graph.cmake" graph_time_before "%s")
-
-    execute_process(
-            COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${build}" -C Release
-            -R "^ConsumerRecipe$" --output-on-failure
-            RESULT_VARIABLE result
-            OUTPUT_VARIABLE test_output
-            ERROR_VARIABLE test_output)
-
-    if (NOT result EQUAL 0 OR NOT test_output MATCHES "100% tests passed out of 1")
-        fail("ctest of ConsumerRecipe failed (${result}):\n${test_output}")
-    endif ()
-
-    if (NOT EXISTS "${test_graph}")
-        fail("the ConsumerRecipe test wrote no ${test_graph}")
-    endif ()
-
-    file(TIMESTAMP "${build}/epm/graph.cmake" graph_time_after "%s")
-    expect_equal("the build's graph.cmake time after the test"
-            "${graph_time_after}" "${graph_time_before}")
 
     # The target refreshes the build's own graph files, everything cached.
     file(REMOVE "${build}/epm/graph.cmake")
@@ -354,7 +379,7 @@ function(expect_recipe_test)
     # So does its configure, the default command.
     execute_process(
             COMMAND "${recipe}" --env "${WORK_DIR}/no-such-env.json"
-            --overrides "${build}/epm/overrides.json" --out "${build}/epm/test"
+            --overrides "${build}/epm/overrides.json" --out "${build}/recipe-out"
             WORKING_DIRECTORY "${consumer}"
             RESULT_VARIABLE result
             OUTPUT_VARIABLE run_output
@@ -520,7 +545,7 @@ if (step_output MATCHES "building Leaf")
 endif ()
 
 build_and_run("11 1")
-expect_recipe_test()
+expect_recipe_configure()
 cache_markers(markers_before)
 
 # 2. A fresh build directory: both entries are reused, nothing is built.
@@ -582,5 +607,116 @@ expect_equal("Leaf's commit" "${commit}" "")
 graph_value(Mid why provenance mode)
 expect_equal("Mid's mode provenance" "${why}" "source dependency Leaf")
 build_and_run("12 2")
+
+# 6. A library pins its dependency to source: mid-source's epm.cpp declares
+# Leaf with mode("source"), which forces Mid into source too (§5 rule 6).
+# Leaf's steps still run in Mid's recipe executable.
+set(consumer "${WORK_DIR}/Lib")
+configure_consumer(lib-source)
+expect_loaded(source)
+graph_value(Leaf why provenance mode)
+expect_equal("Leaf's mode provenance" "${why}" "manifest:Mid")
+graph_value(Mid why provenance mode)
+expect_equal("Mid's mode provenance" "${why}" "source dependency Leaf")
+graph_value(Leaf leaf_extra options LEAF_EXTRA)
+expect_equal("Leaf's graph.json option LEAF_EXTRA" "${leaf_extra}" "ON")
+
+foreach (name IN ITEMS Leaf Mid)
+    if (NOT IS_DIRECTORY "${build}/_deps/${name}-build")
+        fail("${name} was not added as a subdirectory")
+    endif ()
+endforeach ()
+
+build_and_run("11 1")
+
+# 7. The app re-enables the binary cache for that Leaf: its root declares Leaf
+# prebuilt for Release (and every config on a multi-config generator). The
+# root's mode wins over Mid's, the losing declaration is a note, and Leaf's
+# git, tag and steps still come from Mid, so the default scenario's entry is
+# reused and Mid is no longer forced into source.
+set(consumer "${WORK_DIR}/App")
+set(mode_note "Leaf: Mid declares mode source, root declares mode prebuilt")
+configure_consumer(lib-source-root-prebuilt)
+expect_loaded(prebuilt)
+graph_value(Leaf why provenance mode)
+expect_equal("Leaf's mode provenance" "${why}" "root")
+
+foreach (field IN ITEMS git tag)
+    graph_value(Leaf why provenance ${field})
+    expect_equal("Leaf's ${field} provenance" "${why}" "manifest:Mid")
+endforeach ()
+
+graph_value(Leaf git_url request gitUrl)
+expect_equal("Leaf's request gitUrl" "${git_url}" "${LEAF_URL}")
+graph_value(Leaf git_ref request gitRef)
+expect_equal("Leaf's request gitRef" "${git_ref}" "v1")
+graph_value(Leaf prefix prefix)
+expect_equal("Leaf's prefix" "${prefix}" "${Leaf_prefix}")
+file(READ "${prefix}/manifest.json" leaf_manifest)
+string(JSON leaf_extra GET "${leaf_manifest}" fingerprint options LEAF_EXTRA)
+expect_equal("Leaf's fingerprint option LEAF_EXTRA" "${leaf_extra}" "ON")
+file(READ "${build}/epm/steps/Leaf.in.json" leaf_input)
+string(JSON leaf_owner GET "${leaf_input}" recipeName)
+expect_equal("Leaf's step recipeName" "${leaf_owner}" "Mid")
+
+if (multi_config)
+    foreach (marker IN ITEMS Debug.json Release.json)
+        if (NOT EXISTS "${prefix}/${marker}")
+            fail("Leaf's entry ${prefix} has no ${marker}")
+        endif ()
+    endforeach ()
+endif ()
+
+graph_value(Mid mode mode)
+expect_equal("Mid's mode" "${mode}" prebuilt)
+graph_value(Mid why provenance mode)
+expect_equal("Mid's mode provenance" "${why}" "default")
+
+file(READ "${build}/epm/graph.json" graph)
+string(JSON notes GET "${graph}" notes)
+string(JSON note_count LENGTH "${graph}" notes)
+expect_equal("graph.json's note count (${notes})" "${note_count}" "1")
+string(JSON note GET "${graph}" notes 0)
+expect_equal("graph.json's note" "${note}" "${mode_note}")
+include("${build}/epm/graph.cmake")
+expect_equal("graph.cmake's epm_NOTES" "${epm_NOTES}" "${mode_note}")
+
+foreach (name IN ITEMS Leaf Mid)
+    if (EXISTS "${build}/_deps/${name}-build")
+        fail("${name} was added as a subdirectory")
+    endif ()
+endforeach ()
+
+build_and_run("11 1")
+
+if (multi_config)
+    build_and_run("11 1" Debug)
+endif ()
+
+# EPM_STRICT turns that note into an error, which CMake prints wrapped.
+try_configure_consumer(lib-source-root-prebuilt-strict -DEPM_STRICT=ON)
+string(REGEX REPLACE "[ \t\r\n]+" " " unwrapped "${output}")
+string(FIND "${unwrapped}" "EPM_STRICT is on and the graph has notes" strict_at)
+string(FIND "${unwrapped}" "${mode_note}" note_at)
+
+if (result EQUAL 0 OR strict_at EQUAL -1 OR note_at EQUAL -1)
+    fail("expected the configure to fail on the note (${result}):\n${output}")
+endif ()
+
+# 8. A Debug build of the app leaves Mid's source pin alone. Mode cannot
+# differ per config, so a multi-config generator has no Debug-only build.
+if (multi_config)
+    message(STATUS "epm-graph-nested: lib-source-root-debug: not run under "
+            "${TEST_GENERATOR}, a multi-config generator, where the root "
+            "caches Leaf for every config")
+else ()
+    configure_consumer(lib-source-root-debug -DCMAKE_BUILD_TYPE=Debug)
+    expect_loaded(source)
+    graph_value(Leaf why provenance mode)
+    expect_equal("Leaf's mode provenance" "${why}" "manifest:Mid")
+    graph_value(Mid why provenance mode)
+    expect_equal("Mid's mode provenance" "${why}" "source dependency Leaf")
+    build_and_run("11 1" Debug)
+endif ()
 
 message(STATUS "All nested graph checks passed")

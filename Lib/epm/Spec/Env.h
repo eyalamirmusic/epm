@@ -29,6 +29,12 @@ struct Env
     std::string cxxCompilerVersion;
     std::string systemName;
     std::string systemProcessor;
+
+    // CMAKE_CROSSCOMPILING: the consumer named its target system itself.
+    bool crossCompiling = false;
+
+    // CMAKE_OSX_ARCHITECTURES, or, for an Apple device or simulator SDK left
+    // without one, the architecture it builds for by default (epm.cmake).
     std::string osxArchitectures;
     std::string osxDeploymentTarget;
 
@@ -64,6 +70,7 @@ struct Env
                  cxxCompilerVersion,
                  systemName,
                  systemProcessor,
+                 crossCompiling,
                  osxArchitectures,
                  osxDeploymentTarget,
                  osxSysroot,

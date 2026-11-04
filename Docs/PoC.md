@@ -56,7 +56,7 @@ All under `${CMAKE_BINARY_DIR}/epm/`.
   "buildType": "Debug", "configurationTypes": [],
   "cCompiler": "/usr/bin/cc", "cxxCompiler": "/usr/bin/c++",
   "cxxCompilerId": "AppleClang", "cxxCompilerVersion": "17.0.0.17000013",
-  "systemName": "Darwin", "systemProcessor": "arm64",
+  "systemName": "Darwin", "systemProcessor": "arm64", "crossCompiling": false,
   "osxArchitectures": "", "osxDeploymentTarget": "11.0",
   "osxSysroot": "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
   "androidAbi": "",
@@ -66,8 +66,19 @@ All under `${CMAKE_BINARY_DIR}/epm/`.
   "epmExecutable": "/path/to/epm" }
 ```
 
-`osxSysroot` is `CMAKE_OSX_SYSROOT` and `androidAbi` is `CMAKE_ANDROID_ARCH_ABI` (else the
-NDK toolchain's `ANDROID_ABI`); both only feed the platform name (§9).
+`osxSysroot` is `CMAKE_OSX_SYSROOT` (an SDK name such as `iphonesimulator` under Xcode,
+the resolved path under other generators) and `androidAbi` is `CMAKE_ANDROID_ARCH_ABI`
+(else the NDK toolchain's `ANDROID_ABI`); both feed the platform name (§9), and a
+cross-compiling child build gets them (§5). `crossCompiling` is `CMAKE_CROSSCOMPILING`:
+the consumer named its target system itself. For an Apple device or simulator SDK (iOS,
+tvOS, watchOS, visionOS), whose `CMAKE_SYSTEM_PROCESSOR` CMake leaves empty, an empty
+`CMAKE_OSX_ARCHITECTURES` is written as what the SDK builds for by default: Xcode's
+`ARCHS_STANDARD` (`CMAKE_XCODE_ARCHS`, `arm64;x86_64` for a simulator), else the
+compiler's default target (`CMAKE_CXX_COMPILER_ARCHITECTURE_ID`), so the platform name and
+the fingerprint carry the architecture and child builds build exactly it; and an empty
+`CMAKE_OSX_DEPLOYMENT_TARGET` as `CMAKE_XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET` (`TVOS_`,
+`WATCHOS_`, `XROS_` alike) when the project sets that instead (`epm_osx_architectures`,
+`epm_osx_deployment_target`).
 Empty string / empty array when a variable is unset. Written at the first `epm_add_package`
 call (not at include time), once per configure. `cCompiler` is empty when the consumer does
 not enable C; the binary must not pass an empty `-DCMAKE_C_COMPILER` to child builds.
@@ -239,6 +250,9 @@ only those, in turn (child build dir `build/<name>/<platform>/<fp12>/<Config>`, 
 ```
 cmake -S <src> -B <builddir> -G <generator>
       -DCMAKE_BUILD_TYPE=<Config>
+      -DCMAKE_TOOLCHAIN_FILE=…                       # the consumer's, if any
+      -DCMAKE_SYSTEM_NAME=… -DCMAKE_SYSTEM_PROCESSOR=… -DCMAKE_OSX_SYSROOT=…
+                                                     # cross-compiling without a toolchain file
       -DCMAKE_C_COMPILER=… -DCMAKE_CXX_COMPILER=…
       -DCMAKE_OSX_ARCHITECTURES=… -DCMAKE_OSX_DEPLOYMENT_TARGET=… -DCMAKE_CXX_STANDARD=…
       -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY=<prefix>/lib/<Config>
@@ -260,6 +274,18 @@ the entry is keyed by what was actually passed.
   `Unix Makefiles` (or the platform default on Windows); `CMakeBuild::generator` overrides
   it. `-D` flags whose env value is empty are left out; `-DCMAKE_TOOLCHAIN_FILE` is passed
   when the consumer has one.
+- Target system: when the consumer cross-compiles without a toolchain file
+  (`crossCompilesWithoutToolchain`, `Spec/Platform`: `env.json`'s `crossCompiling` set
+  and its `toolchainFile` empty), as with `-DCMAKE_SYSTEM_NAME=iOS
+  -DCMAKE_OSX_SYSROOT=iphonesimulator`, the child gets `CMAKE_SYSTEM_NAME`,
+  `CMAKE_SYSTEM_PROCESSOR` and `CMAKE_OSX_SYSROOT` (each when non-empty; CMake leaves the
+  processor empty for iOS), and for Android `CMAKE_ANDROID_ARCH_ABI`, so it configures for
+  that system before its `project()` instead of for the host; with the architectures and
+  deployment target above, an iOS simulator consumer's packages are simulator archives
+  (`Tests/GraphIos.cmake`). A toolchain file, which the child gets too, names the system
+  itself, and a native consumer gets none of these. Not forwarded: `CMAKE_ANDROID_NDK`
+  and `CMAKE_SYSTEM_VERSION` (an Android child without a toolchain file finds the NDK
+  from the environment), nor the NDK toolchain's `ANDROID_ABI`/`ANDROID_PLATFORM`.
 - `epm-export.cmake` (source of truth: `CMake/epm-export.cmake` in this repo, embedded into
   the binary at build time and written into `<builddir>` before configure) does:
   `cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR} CALL epm_export_all_targets)`.
@@ -497,23 +523,34 @@ The source is configured, built and `cmake --install`ed with
 `--prefix <entry>`, Debug and then Release, so the Release `bin/epm` is the one that
 stays (*Install*, below):
 
+- epm is a host program, so its generator is not the consumer's: Ninja when a ninja is
+  found (the consumer's `CMAKE_MAKE_PROGRAM` under a Ninja generator, else `ninja` or
+  `ninja-build` on PATH, passed as `CMAKE_MAKE_PROGRAM`), else `Unix Makefiles`,
+  whatever the consumer uses (Xcode, which cannot build epm's per-config sources,
+  Visual Studio, Ninja Multi-Config). On Windows without a ninja, and for a Visual
+  Studio consumer there outside a developer prompt (no `VCINSTALLDIR`, so Ninja would
+  find no compiler), the consumer's generator is kept, with its toolset and make
+  program; otherwise neither of those (`xcodebuild`, MSBuild) reaches the build.
 - A single-config generator gets two build directories, `<entry>/build-<generator>-debug`
-  and `<entry>/build-<generator>` (`build-ninja`, …; `build` when the consumer's
-  generator is not known), each with its `CMAKE_BUILD_TYPE`; a multi-config generator
-  gets one, `<entry>/build-<generator>`, built and installed with `--config Debug` and
-  `--config Release`.
+  and `<entry>/build-<generator>` (`build-ninja`, `build-unix-makefiles`), each with its
+  `CMAKE_BUILD_TYPE`; a multi-config generator (only a kept Visual Studio one) gets
+  one, `<entry>/build-<generator>`, built and installed with `--config Debug` and
+  `--config Release`. Since the generator does not follow the consumer's, consumers
+  with different generators share a `local-<hash>` entry's build directories.
 - Every configure gets `-DEPM_ENABLE_TESTS=OFF` and, unless the environment sets
   `CPM_SOURCE_CACHE`, `-DCPM_SOURCE_CACHE=<entry>/cpm`, so both builds share one
   download of epm's dependencies.
 - It is a host build. Each step runs through `cmake -E env --unset=…`
   (`CMAKE_TOOLCHAIN_FILE`, `CMAKE_GENERATOR`, `CMAKE_GENERATOR_PLATFORM`,
   `CMAKE_GENERATOR_TOOLSET`, `CMAKE_BUILD_TYPE`, `CMAKE_CONFIGURATION_TYPES`,
-  `CMAKE_OSX_ARCHITECTURES`, `CMAKE_INSTALL_PREFIX`, `DESTDIR`), so nothing of the
+  `CMAKE_OSX_ARCHITECTURES`, `CMAKE_INSTALL_PREFIX`, `DESTDIR`, and the `SDKROOT`,
+  `MACOSX_DEPLOYMENT_TARGET` and `IPHONEOS_DEPLOYMENT_TARGET` an Xcode build exports to
+  a CMake re-run it starts), so nothing of the
   consumer's toolchain file, build type or target architectures reaches it, as variable
   or environment; a consumer targeting iOS or Android still gets a macOS or Linux epm.
   A consumer that is not native (below) also has `CC`, `CXX`, `CFLAGS`, `CXXFLAGS` and
   `LDFLAGS` unset, so a cross SDK's environment (Yocto-style) does not leak in.
-  It gets the consumer's generator (with its toolset and make program), its
+  It gets the generator above, the consumer's
   `CMAKE_<C|CXX>_COMPILER_LAUNCHER` (ccache; a single program, not a list), and its C and
   C++ compilers and `CMAKE_LINKER_TYPE` when they are known and native (no toolchain
   file, not cross-compiling, `CMAKE_SYSTEM_NAME` the host's): eacp's Release IPO needs
@@ -651,8 +688,12 @@ adds a note to the response and the status line:
 
 **Platform names** come from `env.json` (`platformName`, `Spec/Platform`):
 `macos-universal` (`CMAKE_OSX_ARCHITECTURES` holds both arm64 and x86_64), `macos-arm64`,
-`macos-x64`; `ios-arm64`, and `ios-simulator-arm64` / `ios-simulator-x64` when
-`CMAKE_OSX_SYSROOT` contains "simulator" (any case); `windows-x64`, `windows-arm64`,
+`macos-x64`; `ios-arm64`, and `ios-simulator-arm64` / `ios-simulator-x64` /
+`ios-simulator-universal` when `CMAKE_OSX_SYSROOT` contains "simulator" (any case), the
+architecture from `osxArchitectures` as for macOS, which `epm.cmake` fills when the consumer
+leaves it empty (§2: an Xcode simulator consumer is `ios-simulator-universal`, a Ninja one
+on Apple Silicon `ios-simulator-arm64`); `tvos-`, `watchos-` and `visionos-` alike;
+`windows-x64`, `windows-arm64`,
 `linux-x64`, `linux-arm64` (x86_64/AMD64 → x64, aarch64 → arm64); `android-<abi>`;
 anything else `<system name>-<processor>` in lower case. release.yml names its archives
 after the five desktop names.

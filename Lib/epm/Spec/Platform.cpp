@@ -45,6 +45,12 @@ bool isSimulatorSysroot(const std::string& sysroot)
 {
     return Strings::toLower(sysroot).find("simulator") != std::string::npos;
 }
+
+bool isAppleEmbedded(const std::string& system)
+{
+    return system == "iOS" || system == "tvOS" || system == "watchOS"
+           || system == "visionOS";
+}
 } // namespace
 
 std::string platformName(const Env& env)
@@ -54,9 +60,9 @@ std::string platformName(const Env& env)
     if (system == "Darwin")
         return "macos-" + appleArchitecture(env);
 
-    if (system == "iOS")
-        return std::string {isSimulatorSysroot(env.osxSysroot) ? "ios-simulator-"
-                                                               : "ios-"}
+    if (isAppleEmbedded(system))
+        return Strings::toLower(system)
+               + (isSimulatorSysroot(env.osxSysroot) ? "-simulator-" : "-")
                + appleArchitecture(env);
 
     if (system == "Windows")
@@ -72,5 +78,11 @@ std::string platformName(const Env& env)
 
     return Strings::toLower(system.empty() ? std::string {"unknown"} : system) + "-"
            + Strings::toLower(env.systemProcessor);
+}
+
+bool crossCompilesWithoutToolchain(const Env& env)
+{
+    return env.crossCompiling && env.toolchainFile.empty()
+           && !env.systemName.empty();
 }
 } // namespace epm

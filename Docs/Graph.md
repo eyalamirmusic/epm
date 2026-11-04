@@ -82,6 +82,28 @@ cmake -B build -DEPM_PROFILE=ci             # env().profile for the recipes
 
 The same names work as environment variables (§3 has the limits).
 
+A library can pin a dependency to source, and the app that uses it can take the
+binary cache back for its Release builds (the root wins, §5; the library's declaration
+becomes a note):
+
+```cpp
+// Lib's epm.cpp
+void describe() override { add("Leaf", "org/Leaf", "v1").mode("source"); }
+
+// App's epm.cpp: the root only adds to what Lib declares, no git, no tag.
+void describe() override
+{
+    add("Lib", "org/Lib", "v1");
+
+    if (env().isMultiConfig || env().buildType == "Release")
+        add("Leaf").mode("prebuilt");
+}
+```
+
+Mode is per package, not per config, so on a multi-config generator the root caches
+every config. `Examples/NestedGraph` is the runnable version, with eacp as the
+pinned dependency.
+
 ## 2. Manifest `epm.cpp`
 
 The manifest is a recipe: a C++ file named `epm.cpp` beside the top-level
@@ -140,8 +162,11 @@ A recipe is two phases of user code, each run in its recipe executable:
   `setMode` and `setAbiMatch`, which these wrap, remain for code that holds a
   `Project`.)
 - `env()` is the consumer's `env.json` (`Spec/Env.h`): generator, build type,
-  compiler, `systemName`, `systemProcessor`, deployment target and the rest, plus
-  `profile`. Every recipe in the graph, the root's and each dependency's, is described
+  compiler, `systemName`, `systemProcessor`, `crossCompiling`, `osxArchitectures`
+  (for an Apple device or simulator SDK, the ones it builds by default when the
+  consumer sets none), deployment target and the rest, plus `profile`; `PoC.md` §2.
+  A consumer cross-compiling without a toolchain file (`-DCMAKE_SYSTEM_NAME=iOS`)
+  has its child builds told the target system and sysroot too (`PoC.md` §5). Every recipe in the graph, the root's and each dependency's, is described
   for the same `env`, in both phases. A recipe's `describe` run without `--env`
   (below), and so `epm describe` without one, uses an empty one.
 - `project()` is what `describe()` declared.
@@ -452,8 +477,7 @@ has no such option: it always builds and runs its own.
 ### The recipe as a target of the project: `epm_add_recipe`
 
 ```cmake
-enable_testing()
-epm_add_recipe(AppRecipe)            # [SOURCE <file>] [NO_TEST]
+epm_add_recipe(AppRecipe)            # [SOURCE <file>]
 ```
 
 `epm_add_recipe` (`epm.cmake`) adds `epm.cpp` (or `SOURCE`, relative to the current
@@ -477,11 +501,9 @@ plus `--cache <dir>` when `EPM_CACHE` is set and `--verbose` under `EPM_VERBOSE`
 epm's run gets them. The custom target `AppRecipe-configure` (folder `epm`, not built
 by default) builds it and runs that in the top-level source directory: it describes,
 fetches, finds or builds the cache entries and rewrites `<build>/epm/graph.json`,
-`graph.cmake` and `steps/`, running the steps the root owns in its own process. Unless
-`NO_TEST` (or `BUILD_TESTING` is OFF) the test `AppRecipe` runs the same with `--out
-<build>/epm/test`, so that it never rewrites the build's own graph files; ctest sees it
-once the project calls `enable_testing()` (or `include(CTest)`), and it needs the
-executable built first. That `env.json` and `overrides.json` are the configure's own,
+`graph.cmake` and `steps/`, running the steps the root owns in its own process. The
+executable itself is part of `all`, so every build compiles `epm.cpp` with the
+project's toolchain. That `env.json` and `overrides.json` are the configure's own,
 written by a deferred call at the end of the configure even when nothing asked epm for
 a package.
 
@@ -489,8 +511,9 @@ a package.
 executable has debug info, launch `AppRecipe` under the debugger with its run
 arguments and stop in `describe` or in a hook (or `build()`) of a step the root owns.
 Xcode and Visual Studio already have those arguments, and the top-level source
-directory as working directory, in the target's scheme or debugger settings; CLion can
-debug the `AppRecipe` test from its CTest integration; by hand, `lldb --
+directory as working directory, in the target's scheme or debugger settings; in CLion,
+give the `AppRecipe` run configuration those arguments and that working directory
+(the `AppRecipe-configure` target's command shows them); by hand, `lldb --
 <build>/AppRecipe configure --manifest epm.cpp --env <build>/epm/env.json --overrides
 <build>/epm/overrides.json --out <build>/epm`. `AppRecipe describe --env
 <build>/epm/env.json` prints the project alone, and `epm describe epm.cpp --exe
@@ -670,6 +693,14 @@ The binary records, for every effective value, which source set it (`override`,
    - The owner decides only which code runs. The step's request is the merged one
      (§4), so the root's options, configs and mode reach it whoever owns it: a root
      that only tunes a package's options keeps a dependency's custom steps for it.
+
+`source` is a real `add_subdirectory` of the package's cached snapshot into
+`<build>/_deps/<name>-build`, its options set before it as normal variables (CMP0077
+NEW, §8). It differs from one written by hand in four ways: the snapshot has no
+`.git`; its tag is re-resolved with `git ls-remote` on every configure; it is not
+`EXCLUDE_FROM_ALL`; and it forces the packages that depend on it into source (rule 6).
+To build a working checkout instead, point the package at it with
+`EPM_<Name>_SOURCE=<dir>`.
 
 ## 6. The binary: `epm configure`
 

@@ -6,7 +6,9 @@ on:
   workflow_call:
     inputs:
       smoke:
-        description: Build and run Examples/HelloEacp with the just-built epm
+        description: >-
+          Build and run Examples/HelloEacp with the just-built epm (on macOS
+          also HelloGraph under Xcode and NestedGraph for the iOS simulator)
         type: boolean
         default: false
       package:
@@ -241,6 +243,59 @@ jobs:
           grep -Eq 'epm: using epm [0-9.]+ from .*/tool/v[0-9.]+/bin/epm' configure-range.log
           cmake --build build-hello-range
           "./build-hello-range/hello$EXE_SUFFIX"
+
+      # The Apple smoke tests below share one cache, $APPLE_CACHE, which (e)
+      # starts empty and (f) reuses for eacp's source.
+      #
+      # (e) An Xcode consumer with nothing set: Examples/HelloGraph's
+      # get_epm.cmake is inside this checkout, so it builds the checkout into
+      # <cache>/tool/local-<hash>/, with Ninja whatever the consumer's
+      # generator, then takes eacp prebuilt (Release).
+      - name: HelloGraph Xcode smoke test
+        if: inputs.smoke && runner.os == 'macOS'
+        run: |
+          echo "APPLE_CACHE=$ROOT/.epm-cache-apple" >> "$GITHUB_ENV"
+          rm -rf "$ROOT/.epm-cache-apple"
+          cmake -S Examples/HelloGraph -B build-hello-xcode -G Xcode \
+            "-DEPM_CACHE=$ROOT/.epm-cache-apple" 2>&1 | tee configure-xcode.log
+          grep -Eq 'epm: building epm from .* into .*/tool/local-[0-9a-f]+ \(Debug and Release; first time only\)' configure-xcode.log
+          if ! ls -d "$ROOT/.epm-cache-apple"/tool/local-*/build-ninja; then
+            echo "::error::get_epm.cmake did not build epm with Ninja under an Xcode consumer"
+            exit 1
+          fi
+          cmake --build build-hello-xcode --config Release
+          ./build-hello-xcode/Release/hello
+
+      # (f) An iOS simulator consumer under Xcode, without a toolchain file:
+      # NestedGraph's App, with the sibling Lib from source and eacp prebuilt
+      # (every config, as Xcode is multi-config) for the simulator's
+      # architectures. The app has to be a simulator binary for each of them,
+      # and eacp's cache entry an ios-simulator one.
+      - name: NestedGraph iOS simulator smoke test
+        if: inputs.smoke && runner.os == 'macOS'
+        run: |
+          cmake -S Examples/NestedGraph/App -B build-nested-ios -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphonesimulator \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+            "-DEPM_EXECUTABLE=$ROOT/build/Apps/epm/epm" \
+            "-DEPM_CACHE=$APPLE_CACHE" -DEPM_VERBOSE=ON
+          cmake --build build-nested-ios --config Release
+          app=build-nested-ios/Release-iphonesimulator/app.app/app
+          archs="$(lipo -archs "$app")"
+          echo "app architectures: $archs"
+          for arch in $archs; do
+            build_version="$(vtool -arch "$arch" -show-build "$app")"
+            echo "$build_version"
+            if ! grep -q 'platform IOSSIMULATOR' <<< "$build_version"; then
+              echo "::error::app ($arch) is not an iOS simulator binary"
+              exit 1
+            fi
+          done
+          if ! ls -d "$APPLE_CACHE"/bin/eacp/ios-simulator-*/; then
+            echo "::error::no ios-simulator entry for eacp in $APPLE_CACHE/bin/eacp"
+            exit 1
+          fi
 
       # A usable prefix holds the recipe libraries of both configurations
       # (lib/Debug/ and lib/Release/), so the package needs a Debug build of

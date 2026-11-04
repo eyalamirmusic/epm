@@ -1,15 +1,31 @@
-// The consumer's dependencies: only Mid, which brings Leaf.
-// Tests/GraphNested.cmake fills in @MID_URL@.
+// The consumer's dependencies: Mid, which brings Leaf. Tests/GraphNested.cmake
+// fills in @MID_URL@, and @ROOT_CACHES_LEAF@: ON in the App variant, whose
+// root re-enables the binary cache for the Leaf a library pins to source.
 
 #include <epm/Recipe/Recipe.h>
+
+#include <string_view>
 
 using namespace epm;
 
 namespace
 {
+constexpr auto rootCachesLeaf = std::string_view {"@ROOT_CACHES_LEAF@"} == "ON";
+
 struct Consumer final : Recipe
 {
-    void describe() override { add("Mid", "@MID_URL@", "v1"); }
+    void describe() override
+    {
+        add("Mid", "@MID_URL@", "v1");
+
+        if (!rootCachesLeaf)
+            return;
+
+        // The root only adds to what Mid declares: no git, no tag. Mode is per
+        // package, so a multi-config generator caches every config.
+        if (env().isMultiConfig || env().buildType == "Release")
+            add("Leaf").mode("prebuilt");
+    }
 };
 } // namespace
 

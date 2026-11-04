@@ -213,7 +213,9 @@ Once per configure, the module writes `<build>/epm/env.json`: compiler paths and
 `CMAKE_CXX_STANDARD`, `CMAKE_CXX_FLAGS(_<CONFIG>)`, `CMAKE_MSVC_RUNTIME_LIBRARY`,
 `CMAKE_POSITION_INDEPENDENT_CODE`, `CMAKE_INTERPROCEDURAL_OPTIMIZATION`, sanitizer flags,
 generator, CMake version, toolchain-file path. The tool turns this into a `build-config-id`
-(section 6.1).
+(section 6.1). *Built (`Docs/PoC.md` §2): `CMAKE_OSX_SYSROOT` rather than `CMAKE_SYSROOT`,
+`CMAKE_CROSSCOMPILING`, `CMAKE_ANDROID_ARCH_ABI`, and for an Apple device or simulator SDK
+the architectures it builds by default when `CMAKE_OSX_ARCHITECTURES` is empty.*
 
 ---
 
@@ -322,6 +324,11 @@ recorded fingerprint is the env-derived subset of 6.1 (`Docs/PoC.md` §3, §9).
    plus the env's ABI settings. The child includes the same `epm.cmake`, so the package's own
    `epm_add_package` calls recurse in prebuilt mode and populate `CMAKE_PREFIX_PATH` with
    their prefixes. Shared cache, shared lock, shared stores via environment.
+   *Built (`Docs/PoC.md` §5): the consumer's toolchain file when it has one; a consumer
+   cross-compiling without one (`-DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=…`) has
+   `CMAKE_SYSTEM_NAME`, `CMAKE_SYSTEM_PROCESSOR` and `CMAKE_OSX_SYSROOT` forwarded, with the
+   architectures and deployment target, so an iOS simulator consumer's packages are
+   simulator archives.*
 3. `cmake --build --config <cfg>` and `cmake --install --config <cfg>`.
 4. Relocatability: `-ffile-prefix-map=<src>=.` and `=<stage>=.`; reject config files that
    contain the stage path (check and warn); strip build dir from installed `.pc`/cmake files.

@@ -1,11 +1,17 @@
-// Mid's dependencies. Tests/GraphNested.cmake fills in @LEAF_URL@.
+// Mid's dependencies. Tests/GraphNested.cmake fills in @LEAF_URL@, and
+// @LEAF_MODE@: empty in the Mid repository, "source" in mid-source, a library
+// that pins its dependency to source.
 
 #include <epm/Recipe/Recipe.h>
+
+#include <string_view>
 
 using namespace epm;
 
 namespace
 {
+constexpr auto leafMode = std::string_view {"@LEAF_MODE@"};
+
 // Leaf's build steps, run in this recipe's executable: the default ones plus
 // an option, which the test finds in Leaf's entry.
 struct LeafSteps final : CMakePackage
@@ -15,7 +21,13 @@ struct LeafSteps final : CMakePackage
 
 struct Mid final : Recipe
 {
-    void describe() override { add<LeafSteps>("Leaf", "@LEAF_URL@", "v1"); }
+    void describe() override
+    {
+        auto leaf = add<LeafSteps>("Leaf", "@LEAF_URL@", "v1");
+
+        if (!leafMode.empty())
+            leaf.mode(std::string {leafMode});
+    }
 };
 } // namespace
 

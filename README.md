@@ -77,7 +77,6 @@ add_executable(hello Main.cpp)
 target_compile_features(hello PRIVATE cxx_std_20)
 target_link_libraries(hello PRIVATE eacp-core)
 
-enable_testing()
 epm_add_recipe(HelloGraphRecipe)    # optional: epm.cpp as a target of this build
 ```
 
@@ -142,9 +141,9 @@ steps it owns in its own process. Launch its Debug build under a debugger with
 its default arguments (`configure --manifest epm.cpp --env
 <build>/epm/env.json --overrides <build>/epm/overrides.json --out <build>/epm`;
 Xcode and Visual Studio get them already, and the `HelloGraphRecipe-configure`
-target runs the same) to stop in `describe()` or a hook; the ctest runs it too,
-into `<build>/epm/test`. The configure CMake runs still goes through `epm
-configure`, which compiles and runs its own cached copy of the recipe. Every
+target runs the same) to stop in `describe()` or a hook. The configure CMake
+runs still goes through `epm configure`, which compiles and runs its own
+cached copy of the recipe. Every
 configure keeps each build step's input in `<build>/epm/steps/<name>.in.json`,
 beside the command it ran (`<name>.command`, without the `--quiet` that keeps
 a failure off stderr), so a step runs again by
@@ -196,7 +195,8 @@ finds a binary in this order, taking the first one whose version is in range:
    cache, then built and installed there, Debug and Release, once per machine.
    One status line per phase (`-- epm: epm v0.1.3: building Release`); the full
    log is `<cache>/tool/v<x.y.z>/epm-bootstrap.log`. The build ignores the
-   consumer's toolchain file, build type and architectures, so it also works
+   consumer's toolchain file, build type, architectures and generator (it uses
+   Ninja, else Makefiles, even under Xcode or Visual Studio), so it also works
    when the consumer targets iOS or Android. A cold configure of
    `Examples/HelloGraph` takes about 66 s on macOS: 41 s to build epm, Debug
    and Release, and 21 s to build eacp's Release, streamed as it goes; a warm

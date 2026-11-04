@@ -1,8 +1,9 @@
 # Self-test of the EPM_SOURCE_DIR decisions in CMake/get_epm.cmake: which
 # directories are epm checkouts, where the setting comes from (including the
 # default to the checkout get_epm.cmake sits in, and the deprecated
-# EPM_BOOTSTRAP_SOURCE_DIR), the tool entry a checkout maps to, and the
-# consumer toolchain passed to its build. Nothing is built.
+# EPM_BOOTSTRAP_SOURCE_DIR), the tool entry a checkout maps to, the generator
+# picked for its build and the consumer toolchain passed to it. Nothing is
+# built.
 #
 #   cmake -DWORK_DIR=<scratch dir> -P Tests/GetEpmSourceDir.cmake
 
@@ -194,8 +195,34 @@ if (other_entry STREQUAL entry OR NOT other_entry MATCHES "^/cache/tool/local-[0
     fail("entry of ${WORK_DIR}/plain is '${other_entry}'")
 endif ()
 
-# The consumer's generator reaches the build, with a build directory of its own;
-# its compilers too, unless they may be a cross toolchain's. Without a native
+# The generator of the epm build: Ninja when there is one, else Unix
+# Makefiles; on a Windows host without a ninja, or for a Visual Studio consumer
+# outside a developer prompt there, the consumer's.
+macro(expect_generator consumer windows msvc_env ninja expected)
+    get_epm_pick_generator("${consumer}" "${windows}" ${msvc_env} "${ninja}")
+
+    if (NOT tool_generator STREQUAL "${expected}")
+        fail("generator for '${consumer}' (windows '${windows}', msvc env "
+                "${msvc_env}, ninja '${ninja}') is '${tool_generator}', expected "
+                "'${expected}'")
+    endif ()
+endmacro()
+
+foreach (consumer IN ITEMS Xcode Ninja "Ninja Multi-Config" "Unix Makefiles"
+        "Visual Studio 17 2022" "")
+    expect_generator("${consumer}" "" FALSE /bin/ninja Ninja)
+    expect_generator("${consumer}" "" FALSE "" "Unix Makefiles")
+endforeach ()
+
+expect_generator(Ninja 1 TRUE C:/ninja.exe Ninja)
+expect_generator("Visual Studio 17 2022" 1 TRUE C:/ninja.exe Ninja)
+expect_generator("Visual Studio 17 2022" 1 FALSE C:/ninja.exe "Visual Studio 17 2022")
+expect_generator("Visual Studio 17 2022" 1 TRUE "" "Visual Studio 17 2022")
+expect_generator("NMake Makefiles" 1 TRUE "" "NMake Makefiles")
+expect_generator("" 1 FALSE "" "")
+
+# The epm build's generator, with a build directory of its own; the consumer's
+# compilers too, unless they may be a cross toolchain's. Without a native
 # consumer, get_epm_run_step also drops CC, CXX and the flags from the
 # environment.
 macro(expect_toolchain expected_name)
@@ -204,14 +231,50 @@ macro(expect_toolchain expected_name)
 
     if (NOT build_name STREQUAL "${expected_name}"
             OR NOT toolchain_args STREQUAL "${expected_args}")
-        fail("consumer toolchain is '${toolchain_args}' in '${build_name}', "
-                "expected '${expected_args}' in '${expected_name}'")
+        fail("consumer toolchain for '${CMAKE_GENERATOR}' is '${toolchain_args}' "
+                "in '${build_name}', expected '${expected_args}' in "
+                "'${expected_name}'")
     endif ()
 endmacro()
 
-expect_toolchain(build)
+# What this host picks for a consumer whose generator is not a Ninja one.
+set(ENV{VCINSTALLDIR} "C:/VS/VC/")
+find_program(host_ninja NAMES ninja ninja-build NO_CACHE NO_CMAKE_FIND_ROOT_PATH)
+set(host_known TRUE)
+
+if (host_ninja)
+    set(host_name build-ninja)
+    set(host -G Ninja "-DCMAKE_MAKE_PROGRAM=${host_ninja}")
+elseif (NOT CMAKE_HOST_WIN32)
+    set(host_name build-unix-makefiles)
+    set(host -G "Unix Makefiles")
+else ()
+    set(host_known FALSE)
+endif ()
+
+if (host_known)
+    expect_toolchain(${host_name} ${host})
+    set(CMAKE_CXX_COMPILER /usr/bin/c++)
+    expect_toolchain(${host_name} ${host} -DCMAKE_CXX_COMPILER=/usr/bin/c++)
+
+    # Xcode and Visual Studio consumers: neither their generator nor their
+    # make program (xcodebuild, MSBuild) nor their toolset reach the build.
+    set(CMAKE_GENERATOR Xcode)
+    set(CMAKE_MAKE_PROGRAM /usr/bin/xcodebuild)
+    expect_toolchain(${host_name} ${host} -DCMAKE_CXX_COMPILER=/usr/bin/c++)
+    set(CMAKE_SYSTEM_NAME iOS)
+    expect_toolchain(${host_name} ${host})
+    unset(CMAKE_SYSTEM_NAME)
+    set(CMAKE_GENERATOR "Visual Studio 17 2022")
+    set(CMAKE_GENERATOR_TOOLSET ClangCL)
+    set(CMAKE_MAKE_PROGRAM "C:/VS/MSBuild.exe")
+    expect_toolchain(${host_name} ${host} -DCMAKE_CXX_COMPILER=/usr/bin/c++)
+    unset(CMAKE_GENERATOR_TOOLSET)
+endif ()
+
+# A Ninja consumer's own ninja is the one used, its build directory named as
+# before; Ninja Multi-Config gives way to Ninja.
 set(CMAKE_CXX_COMPILER /usr/bin/c++)
-expect_toolchain(build -DCMAKE_CXX_COMPILER=/usr/bin/c++)
 set(CMAKE_GENERATOR Ninja)
 set(CMAKE_MAKE_PROGRAM /usr/bin/ninja)
 set(native -G Ninja -DCMAKE_MAKE_PROGRAM=/usr/bin/ninja)
@@ -240,14 +303,25 @@ expect_toolchain(build-ninja ${native} -DCMAKE_CXX_COMPILER=/usr/bin/c++
         -DCMAKE_LINKER_TYPE=LLD)
 unset(CMAKE_LINKER_TYPE)
 unset(CMAKE_CXX_COMPILER_LAUNCHER)
-unset(CMAKE_MAKE_PROGRAM)
 set(CMAKE_GENERATOR "Ninja Multi-Config")
-expect_toolchain(build-ninja-multi-config -G "Ninja Multi-Config"
-        -DCMAKE_CXX_COMPILER=/usr/bin/c++)
-set(CMAKE_GENERATOR "Visual Studio 17 2022")
-set(CMAKE_GENERATOR_TOOLSET ClangCL)
-expect_toolchain(build-visual-studio-17-2022 -G "Visual Studio 17 2022" -T ClangCL
-        -DCMAKE_CXX_COMPILER=/usr/bin/c++)
+expect_toolchain(build-ninja ${native} -DCMAKE_CXX_COMPILER=/usr/bin/c++)
+unset(CMAKE_MAKE_PROGRAM)
+
+# The consumer's generator, toolset and make program are kept where it is the
+# one picked: a Visual Studio consumer on Windows outside a developer prompt.
+if (CMAKE_HOST_WIN32)
+    set(ENV{VCINSTALLDIR} "")
+    set(CMAKE_GENERATOR "Visual Studio 17 2022")
+    set(CMAKE_GENERATOR_TOOLSET ClangCL)
+    set(CMAKE_MAKE_PROGRAM "C:/VS/MSBuild.exe")
+    expect_toolchain(build-visual-studio-17-2022 -G "Visual Studio 17 2022"
+            -T ClangCL "-DCMAKE_MAKE_PROGRAM=C:/VS/MSBuild.exe"
+            -DCMAKE_CXX_COMPILER=/usr/bin/c++)
+    unset(CMAKE_GENERATOR_TOOLSET)
+    unset(CMAKE_MAKE_PROGRAM)
+endif ()
+
+unset(ENV{VCINSTALLDIR})
 
 # A cross consumer's compiler environment (a Yocto-style SDK) stays out of the
 # build; a native consumer's reaches it.
@@ -268,6 +342,24 @@ expect_build_env("")
 unset(CMAKE_TOOLCHAIN_FILE)
 expect_build_env("CC=/cross/bin/cc")
 unset(ENV{CC})
+
+# The SDK and deployment targets an Xcode build exports never reach it.
+set(ENV{SDKROOT} /iPhoneOS.sdk)
+set(ENV{MACOSX_DEPLOYMENT_TARGET} 10.9)
+set(ENV{IPHONEOS_DEPLOYMENT_TARGET} 15.0)
+set(env_log "${WORK_DIR}/env.log")
+file(WRITE "${env_log}" "")
+get_epm_run_step(probe "${env_log}" "${CMAKE_COMMAND}" -E environment)
+file(STRINGS "${env_log}" xcode_lines
+        REGEX "^(SDKROOT|MACOSX_DEPLOYMENT_TARGET|IPHONEOS_DEPLOYMENT_TARGET)=")
+
+if (NOT "${xcode_lines}" STREQUAL "")
+    fail("build environment has '${xcode_lines}'")
+endif ()
+
+unset(ENV{SDKROOT})
+unset(ENV{MACOSX_DEPLOYMENT_TARGET})
+unset(ENV{IPHONEOS_DEPLOYMENT_TARGET})
 
 file(REMOVE_RECURSE "${WORK_DIR}")
 

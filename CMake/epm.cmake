@@ -36,11 +36,11 @@
 # Either way <name>_SOURCE_DIR, <name>_ADDED and <name>_MODE are set in the
 # caller's scope (plus <name>_BINARY_DIR in source mode).
 #
-# epm_add_recipe(<target> [SOURCE <file>] [NO_TEST]) builds the project's
-# epm.cpp as an executable of its own build, the same standalone program epm
-# builds and runs to read the recipe, linked against epm's recipe libraries
-# (epm::recipe, from `epm recipe-sdk`), for IDEs, the build's diagnostics and
-# debugging, and adds a test running it (see the function below).
+# epm_add_recipe(<target> [SOURCE <file>]) builds the project's epm.cpp as an
+# executable of its own build, the same standalone program epm builds and runs
+# to read the recipe, linked against epm's recipe libraries (epm::recipe, from
+# `epm recipe-sdk`), for IDEs, the build's diagnostics and debugging, and adds
+# the target <target>-configure running it (see the function below).
 #
 # Variables read:
 #   EPM_EXECUTABLE              the epm binary (required; set by get_epm.cmake)
@@ -308,8 +308,48 @@ function(epm_write_overrides file)
     file(WRITE "${file}" "${json}\n")
 endfunction()
 
-# Tests/EpmConfigsAuto.cmake and Tests/EpmOverrides.cmake want the functions
-# above only.
+# env.json's osxArchitectures: CMAKE_OSX_ARCHITECTURES, else, for an Apple
+# device or simulator SDK, which leaves CMAKE_SYSTEM_PROCESSOR empty, what it
+# builds for by default: Xcode's ARCHS_STANDARD (CMAKE_XCODE_ARCHS, arm64;x86_64
+# for a simulator), else the compiler's default target. The platform name and
+# the fingerprint then carry the architecture, and child builds get it.
+function(epm_osx_architectures out_var)
+    set(architectures "${CMAKE_OSX_ARCHITECTURES}")
+
+    if (architectures STREQUAL ""
+            AND CMAKE_SYSTEM_NAME MATCHES "^(iOS|tvOS|watchOS|visionOS)$")
+        foreach (variable IN ITEMS CMAKE_XCODE_ARCHS
+                CMAKE_CXX_COMPILER_ARCHITECTURE_ID CMAKE_C_COMPILER_ARCHITECTURE_ID)
+            if (architectures STREQUAL "")
+                set(architectures "${${variable}}")
+            endif ()
+        endforeach ()
+    endif ()
+
+    set(${out_var} "${architectures}" PARENT_SCOPE)
+endfunction()
+
+# env.json's osxDeploymentTarget: CMAKE_OSX_DEPLOYMENT_TARGET, else, for an
+# Apple device or simulator SDK, the Xcode attribute a project may set instead
+# (CMAKE_XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET, or TVOS_, WATCHOS_, XROS_).
+function(epm_osx_deployment_target out_var)
+    set(target "${CMAKE_OSX_DEPLOYMENT_TARGET}")
+
+    foreach (pair IN ITEMS iOS=IPHONEOS tvOS=TVOS watchOS=WATCHOS visionOS=XROS)
+        string(REPLACE "=" ";" pair "${pair}")
+        list(GET pair 0 system)
+        list(GET pair 1 attribute)
+
+        if (target STREQUAL "" AND CMAKE_SYSTEM_NAME STREQUAL system)
+            set(target "${CMAKE_XCODE_ATTRIBUTE_${attribute}_DEPLOYMENT_TARGET}")
+        endif ()
+    endforeach ()
+
+    set(${out_var} "${target}" PARENT_SCOPE)
+endfunction()
+
+# Tests/EpmConfigsAuto.cmake, Tests/EpmOverrides.cmake and Tests/EpmEnv.cmake
+# want the functions above only.
 if (EPM_FUNCTIONS_ONLY)
     return()
 endif ()
@@ -399,8 +439,6 @@ function(epm_write_env)
             "cxxCompilerVersion=CMAKE_CXX_COMPILER_VERSION"
             "systemName=CMAKE_SYSTEM_NAME"
             "systemProcessor=CMAKE_SYSTEM_PROCESSOR"
-            "osxArchitectures=CMAKE_OSX_ARCHITECTURES"
-            "osxDeploymentTarget=CMAKE_OSX_DEPLOYMENT_TARGET"
             "osxSysroot=CMAKE_OSX_SYSROOT"
             "cxxStandard=CMAKE_CXX_STANDARD"
             "toolchainFile=CMAKE_TOOLCHAIN_FILE")
@@ -409,6 +447,18 @@ function(epm_write_env)
         list(GET pair 1 var)
         epm_json_set_string(json ${key} "${${var}}")
     endforeach ()
+
+    # A child build is told the target system only when CMake cross-compiles.
+    if (CMAKE_CROSSCOMPILING)
+        string(JSON json SET "${json}" crossCompiling true)
+    else ()
+        string(JSON json SET "${json}" crossCompiling false)
+    endif ()
+
+    epm_osx_architectures(architectures)
+    epm_json_set_string(json osxArchitectures "${architectures}")
+    epm_osx_deployment_target(deployment_target)
+    epm_json_set_string(json osxDeploymentTarget "${deployment_target}")
 
     # CMake's own Android support sets CMAKE_ANDROID_ARCH_ABI; the NDK's
     # legacy toolchain file only ANDROID_ABI.
@@ -759,7 +809,7 @@ function(epm_write_recipe_inputs)
     endif ()
 endfunction()
 
-# epm_add_recipe(<target> [SOURCE <file>] [NO_TEST])
+# epm_add_recipe(<target> [SOURCE <file>])
 #
 # Builds an epm.cpp (by default ${CMAKE_CURRENT_SOURCE_DIR}/epm.cpp) as the
 # executable <target>, linked against epm::recipe: the same program epm
@@ -780,10 +830,7 @@ endfunction()
 #
 # which is what the custom target <target>-configure runs (it refreshes the
 # build's graph files) and what Xcode and Visual Studio get as the target's
-# debugger arguments, in the top-level source directory. Unless NO_TEST (or
-# BUILD_TESTING is OFF) the test <target>, run only by a project that calls
-# enable_testing(), runs the same with --out <build dir>/epm/test, so that it
-# never rewrites the build's own graph files.
+# debugger arguments, in the top-level source directory.
 #
 # To debug describe() or a hook, run <target> with those default arguments
 # under a debugger, from a Debug build, and stop in it. To debug one build
@@ -804,7 +851,7 @@ endfunction()
 # package added from source; a child build epm runs gets a stub from
 # epm-export.cmake).
 function(epm_add_recipe target)
-    cmake_parse_arguments(EPM_ARGS "NO_TEST" "SOURCE" "" ${ARGN})
+    cmake_parse_arguments(EPM_ARGS "" "SOURCE" "" ${ARGN})
 
     if (EPM_ARGS_UNPARSED_ARGUMENTS)
         message(FATAL_ERROR
@@ -921,16 +968,6 @@ function(epm_add_recipe target)
             VERBATIM)
     add_dependencies(${target}-configure ${target})
     set_target_properties(${target}-configure PROPERTIES FOLDER epm)
-
-    if (EPM_ARGS_NO_TEST OR (DEFINED BUILD_TESTING AND NOT BUILD_TESTING))
-        return()
-    endif ()
-
-    # Into a directory of its own: a test run leaves the build's graph files
-    # and steps/ as the configure wrote them.
-    add_test(NAME ${target}
-            COMMAND ${target} configure ${inputs} --out "${EPM_DIR}/test" ${options}
-            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 endfunction()
 
 # A function, as CPMAddPackage is: OPTIONS stay local to the add_subdirectory

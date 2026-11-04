@@ -43,6 +43,9 @@ add_test(NAME epm_configs_auto
 add_test(NAME epm_overrides
         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/EpmOverrides.cmake)
 
+add_test(NAME epm_env
+        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/EpmEnv.cmake)
+
 add_test(NAME epm_graph_provider
         COMMAND ${CMAKE_COMMAND}
             "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/epm-graph-provider"
@@ -60,6 +63,33 @@ add_test(NAME epm_graph_nested
             -P ${CMAKE_CURRENT_SOURCE_DIR}/GraphNested.cmake)
 set_tests_properties(epm_graph_nested PROPERTIES
         SKIP_REGULAR_EXPRESSION "epm-graph-nested: skipped")
+
+# The same under Xcode, a multi-config generator with its own toolchain.
+if (APPLE)
+    find_program(EPM_XCODEBUILD xcodebuild)
+
+    if (EPM_XCODEBUILD)
+        add_test(NAME epm_graph_nested_xcode
+                COMMAND ${CMAKE_COMMAND}
+                    "-DEPM_BINARY=$<TARGET_FILE:epm>"
+                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/epm-graph-nested-xcode"
+                    -DTEST_GENERATOR=Xcode
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/GraphNested.cmake)
+        set_tests_properties(epm_graph_nested_xcode PROPERTIES
+                SKIP_REGULAR_EXPRESSION "epm-graph-nested: skipped")
+    endif ()
+endif ()
+
+# Prebuilt packages for an iOS simulator consumer, under Xcode and Ninja;
+# skipped off macOS and without the simulator SDK.
+add_test(NAME epm_graph_ios
+        COMMAND ${CMAKE_COMMAND}
+            "-DEPM_BINARY=$<TARGET_FILE:epm>"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/epm-graph-ios"
+            "-DTEST_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/GraphIos.cmake)
+set_tests_properties(epm_graph_ios PROPERTIES
+        SKIP_REGULAR_EXPRESSION "epm-graph-ios: skipped")
 
 if (NOT WIN32)
     add_test(NAME epm_install_round_trip
