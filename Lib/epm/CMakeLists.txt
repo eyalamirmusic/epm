@@ -1,9 +1,10 @@
-# What an epm.cpp recipe links (Recipe/Recipe.h): the types its describe()
-# fills, the main() that EPM_RECIPE writes, and everything a package's build()
-# step may call: the specs, the source and binary caches, the child build and
-# the harvest. A recipe executable runs a build step on its own, so it carries
-# that machinery; what describes the SDK or compiles and runs recipes stays in
-# epm-core, outside the library the SDK describes.
+# epm's one library: what an epm.cpp recipe links (Recipe/Recipe.h), and the
+# driver that epm links. A recipe gets the types its describe() fills, the
+# main() that EPM_RECIPE writes, and everything a package's build() step may
+# call: the specs, the source and binary caches, the child build and the
+# harvest. The driver adds the graph walk, `epm resolve`, the graph files and
+# compiling and running recipes against the recipe SDK baked in below.
+# epm_recipe_headers are the recipe API, the headers the SDK installs.
 set(epm_recipe_headers
         Build/ChildBuild.h
         Build/Configs.h
@@ -66,15 +67,8 @@ add_library(epm-recipe STATIC
         Util/Text.cpp
         Util/Timestamp.cpp)
 
-target_include_directories(epm-recipe PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-
-# eacp-network for IPC::Lock, the cross-process package lock.
-target_link_libraries(epm-recipe PUBLIC eacp-core eacp-network Miro)
-
-set_default_target_setting(epm-recipe)
-
 # The driver: the graph, `epm resolve`, and building and running recipes.
-add_library(epm-core STATIC
+target_sources(epm-recipe PRIVATE
         Cache/CacheListing.cpp
         Cache/CacheListing.h
         Emit/GraphResponse.cpp
@@ -92,12 +86,21 @@ add_library(epm-core STATIC
         Graph/ResolvedGraph.h
         Recipe/RecipeBuild.cpp
         Recipe/RecipeBuild.h
+        Recipe/RecipeConfigure.cpp
+        Recipe/RecipeConfigure.h
         Recipe/RecipeRun.cpp
         Recipe/RecipeRun.h
         Recipe/RecipeSdk.cpp
         Recipe/RecipeSdk.h
         Resolve/Resolve.cpp
         Resolve/Resolve.h)
+
+target_include_directories(epm-recipe PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+# eacp-network for IPC::Lock, the cross-process package lock.
+target_link_libraries(epm-recipe PUBLIC eacp-core eacp-network Miro)
+
+set_default_target_setting(epm-recipe)
 
 # epm-export.cmake and epm-provider.cmake (the core of epm-nested.cmake) are
 # compiled into epm-recipe, so an installed epm, and a recipe executable
@@ -122,11 +125,6 @@ configure_file(Build/EmbeddedScripts.cpp.in
         "${CMAKE_CURRENT_BINARY_DIR}/Generated/EmbeddedScripts.cpp" @ONLY)
 target_sources(epm-recipe PRIVATE
         "${CMAKE_CURRENT_BINARY_DIR}/Generated/EmbeddedScripts.cpp")
-
-target_include_directories(epm-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(epm-core PUBLIC epm-recipe)
-
-set_default_target_setting(epm-core)
 
 # The link options naming the shared library at `path` by name rather than by
 # the build machine's path to it (/usr/lib/<triplet>/libcurl.so), which a
@@ -411,10 +409,11 @@ foreach (target IN LISTS epm_header_targets)
     endforeach ()
 endforeach ()
 
-# The SDK as this binary bakes it in (Recipe/RecipeSdk.cpp.in): configure_file
+# The SDK as epm-recipe bakes it in (Recipe/RecipeSdk.cpp.in): configure_file
 # fills in the variables, file(GENERATE) the generator expressions, which it
 # evaluates over epm-recipe's usage requirements, transitively over eacp-core,
-# Miro and the rest, one file per configuration.
+# Miro and the rest, one file per configuration. It names epm-recipe's own
+# archive among the others, as a string: no build dependency.
 separate_arguments(EPM_SDK_CXX_FLAGS UNIX_COMMAND "${CMAKE_CXX_FLAGS}")
 
 foreach (config IN ITEMS Debug Release RelWithDebInfo MinSizeRel)
@@ -443,5 +442,5 @@ file(GENERATE
         OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/Generated/RecipeSdk-$<CONFIG>.cpp"
         INPUT "${CMAKE_CURRENT_BINARY_DIR}/Generated/RecipeSdk.cpp.in"
         TARGET epm-recipe)
-target_sources(epm-core PRIVATE
+target_sources(epm-recipe PRIVATE
         "${CMAKE_CURRENT_BINARY_DIR}/Generated/RecipeSdk-$<CONFIG>.cpp")

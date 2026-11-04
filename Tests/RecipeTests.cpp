@@ -1,16 +1,20 @@
+#include <epm/Emit/GraphResponse.h>
 #include <epm/Emit/RecipeSdkCMake.h>
 #include <epm/Graph/ManifestLoader.h>
 #include <epm/Recipe/Recipe.h>
 #include <epm/Recipe/RecipeBuild.h>
 #include <epm/Recipe/RecipeRun.h>
 #include <epm/Spec/JsonFile.h>
+#include <epm/Spec/Overrides.h>
 #include <epm/Spec/Platform.h>
 #include <epm/Util/Command.h>
 #include <epm/Util/Paths.h>
 #include <epm/Util/Text.h>
 
+#include <eacp/Core/App/Args.h>
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Utils/Console.h>
+#include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/StdPath.h>
 #include <eacp/Core/Utils/TemporaryFile.h>
@@ -109,8 +113,11 @@ std::unique_ptr<Recipe> createPicksSteps()
     return std::make_unique<PicksSteps>();
 }
 
+// recipeMain in-process, started in `workingDirectory` (this one when empty),
+// which is restored after: configure enters the manifest's directory.
 int runRecipeMain(eacp::Vector<std::string> arguments,
-                  RecipeFactory create = createTwiceFmt)
+                  RecipeFactory create = createTwiceFmt,
+                  const FilePath& workingDirectory = {})
 {
     arguments.insert(0, "epm-recipe");
     auto argv = eacp::Vector<char*> {};
@@ -118,7 +125,14 @@ int runRecipeMain(eacp::Vector<std::string> arguments,
     for (auto& argument: arguments)
         argv.add(argument.data());
 
-    return recipeMain(int(argv.size()), argv.data(), create);
+    const auto previous = std::filesystem::current_path();
+
+    if (!workingDirectory.empty())
+        std::filesystem::current_path(eacp::toStdPath(workingDirectory));
+
+    const auto code = recipeMain(int(argv.size()), argv.data(), create);
+    std::filesystem::current_path(previous);
+    return code;
 }
 
 // A build input for `name` in source mode, which needs neither git nor cmake.
@@ -386,6 +400,39 @@ auto tRecipeSdkHasLibraries = test("Recipe/sdkHasLibraries") = []
               != std::string::npos);
 };
 
+auto tRecipeSdkFor = test("Recipe/sdkFor") = []
+{
+    const auto& baked = bakedRecipeSdk();
+
+    check(recipeSdkFor(eacp::Files::executablePath()).identity
+          == recipeSdk().identity);
+
+    auto root = eacp::TemporaryFile {};
+    const auto prefix = resolvedPath(root.path());
+    const auto epm = prefix / "bin" / "epm";
+    check(writeTextFile(epm, "epm"));
+
+    const auto bare = recipeSdkFor(epm);
+    check(bare.includeDirectories == baked.sdk.includeDirectories);
+    check(recipeLibraries(bare) == recipeLibraries(baked.sdk));
+
+    const auto include = prefix / baked.includeDestination;
+    const auto libraries = prefix / baked.libraryDestination / baked.sdk.config;
+    check(writeTextFile(include / "epm" / "Recipe" / "Recipe.h", "#pragma once"));
+
+    for (const auto& name: baked.installedLibraries)
+        check(writeTextFile(libraries / name, "archive"));
+
+    const auto installed = recipeSdkFor(epm);
+    check(installed.includeDirectories == eacp::Vector<std::string> {include.str()});
+    check(recipeConfigs(installed) == eacp::Vector<std::string> {baked.sdk.config});
+
+    for (const auto& library: recipeLibraries(installed))
+        check(FilePath {library}.parentDirectory() == libraries);
+
+    check(installed.identity != bare.identity);
+};
+
 auto tRecipeCompileArguments = test("Recipe/compileArguments") = []
 {
     auto sdk = RecipeSdk {};
@@ -535,8 +582,11 @@ auto tRecipeMainWrites = test("Recipe/main/writesTheProject") = []
     check(saveJsonFile(root.path() / "env.json", env));
 
     const auto out = root.path() / "project.json";
-    check(runRecipeMain(
-              {"--env", (root.path() / "env.json").str(), "--out", out.str()})
+    check(runRecipeMain({"describe",
+                         "--env",
+                         (root.path() / "env.json").str(),
+                         "--out",
+                         out.str()})
           == 0);
 
     const auto project = loadJsonFile<Project>(out);
@@ -551,18 +601,163 @@ auto tRecipeMainFails = test("Recipe/main/fails") = []
     auto root = eacp::TemporaryFile {};
     const auto out = root.path() / "project.json";
 
-    check(runRecipeMain(
-              {"--env", (root.path() / "none.json").str(), "--out", out.str()})
+    check(runRecipeMain({"describe",
+                         "--env",
+                         (root.path() / "none.json").str(),
+                         "--out",
+                         out.str()})
           == 1);
     check(!eacp::Files::isFile(out));
 
     auto env = Env {};
     env.profile = "twice";
     check(saveJsonFile(root.path() / "env.json", env));
-    check(runRecipeMain(
-              {"--env", (root.path() / "env.json").str(), "--out", out.str()})
+    check(runRecipeMain({"describe",
+                         "--env",
+                         (root.path() / "env.json").str(),
+                         "--out",
+                         out.str()})
           == 1);
     check(!eacp::Files::isFile(out));
+};
+
+// Without a command it configures, which needs --overrides and --out: bare
+// describe arguments are not enough, and write nothing.
+auto tRecipeMainDefault = test("Recipe/main/configureIsTheDefault") = []
+{
+    auto root = eacp::TemporaryFile {};
+    check(saveJsonFile(root.path() / "env.json", Env {}));
+    const auto out = root.path() / "project.json";
+
+    check(runRecipeMain(
+              {"--env", (root.path() / "env.json").str(), "--out", out.str()})
+          != 0);
+    check(!eacp::Files::exists(out));
+
+    // Nothing, or a command it does not know, is a usage error.
+    check(runRecipeMain({}) == eacp::Args::badArguments);
+    check(runRecipeMain({"descibe", "--out", out.str()})
+          == eacp::Args::badArguments);
+    check(!eacp::Files::exists(out));
+};
+
+// A configure in this process over an empty project: the manifest named, its
+// env and overrides read, the graph files written.
+auto tRecipeMainConfigureEmpty = test("Recipe/main/configureWritesTheGraph") = []
+{
+    auto root = eacp::TemporaryFile {};
+    const auto work = resolvedPath(root.path());
+    const auto manifest = work / "project" / "epm.cpp";
+    check(writeTextFile(manifest, "// described in-process\n"));
+    check(saveJsonFile(work / "env.json", Env {}));
+    check(saveJsonFile(work / "overrides.json", Overrides {}));
+
+    const auto arguments = [&](const FilePath& env)
+    {
+        return eacp::Vector<std::string> {"configure",
+                                          "--manifest",
+                                          manifest.str(),
+                                          "--env",
+                                          env.str(),
+                                          "--overrides",
+                                          (work / "overrides.json").str(),
+                                          "--out",
+                                          (work / "out").str(),
+                                          "--cache",
+                                          (work / "cache").str()};
+    };
+
+    // PicksSteps declares Custom and Plain without git: the graph says so.
+    check(runRecipeMain(arguments(work / "env.json"), createPicksSteps) == 1);
+    check(!eacp::Files::exists(work / "out" / "graph.json"));
+
+    check(runRecipeMain(arguments(work / "none.json"), createTwiceFmt) == 1);
+
+    // TwiceFmt with an empty profile: fmt has no tag, a failure too, so an
+    // empty project stands in for one that resolves.
+    const auto createEmpty = []() -> std::unique_ptr<Recipe>
+    {
+        struct Empty final : Recipe
+        {
+            void describe() override {}
+        };
+
+        return std::make_unique<Empty>();
+    };
+
+    check(runRecipeMain(arguments(work / "env.json"), createEmpty) == 0);
+    check(eacp::Files::isFile(work / "out" / "graph.json"));
+    check(eacp::Files::isFile(work / "out" / "graph.cmake"));
+};
+
+// Started elsewhere, as an IDE starts it in the build directory, with the
+// other paths relative to there: the same graph as from the manifest's
+// directory, which describe() and the steps ran in.
+auto tRecipeMainConfigureCwd =
+    test("Recipe/main/configureEntersTheManifestDirectory") = []
+{
+    auto root = eacp::TemporaryFile {};
+    const auto work = resolvedPath(root.path());
+    const auto project = work / "project";
+    const auto manifest = project / "epm.cpp";
+    check(writeTextFile(manifest, "// described in-process\n"));
+    check(eacp::Files::createDirectories(work / "src"));
+    check(saveJsonFile(work / "env.json", Env {}));
+
+    // The package is named after the working directory; only "project" has
+    // a checkout, which makes it source mode: no fetch, no CMake.
+    auto overrides = Overrides {};
+    overrides.packages["project"].source = (work / "src").str();
+    check(saveJsonFile(work / "overrides.json", overrides));
+
+    const auto createNamedAfterCwd = []() -> std::unique_ptr<Recipe>
+    {
+        struct NamedAfterCwd final : Recipe
+        {
+            void describe() override
+            {
+                add(std::filesystem::current_path().filename().string());
+            }
+        };
+
+        return std::make_unique<NamedAfterCwd>();
+    };
+
+    const auto fromProject =
+        eacp::Vector<std::string> {"configure",
+                                   "--manifest",
+                                   manifest.str(),
+                                   "--env",
+                                   (work / "env.json").str(),
+                                   "--overrides",
+                                   (work / "overrides.json").str(),
+                                   "--out",
+                                   (work / "out").str(),
+                                   "--cache",
+                                   (work / "cache").str()};
+    check(runRecipeMain(fromProject, createNamedAfterCwd, project) == 0);
+
+    const auto graph = eacp::Files::readFile(work / "out" / "graph.json");
+    check(graph.find("\"project\"") != std::string::npos);
+
+    const auto fromWork = eacp::Vector<std::string> {"configure",
+                                                     "--manifest",
+                                                     manifest.str(),
+                                                     "--env",
+                                                     "env.json",
+                                                     "--overrides",
+                                                     "overrides.json",
+                                                     "--out",
+                                                     "out",
+                                                     "--cache",
+                                                     "cache"};
+    check(eacp::Files::removeFile(work / "out" / "graph.json"));
+    check(runRecipeMain(fromWork, createNamedAfterCwd, work) == 0);
+    check(eacp::Files::readFile(work / "out" / "graph.json") == graph);
+
+    const auto command =
+        eacp::Files::readFile(work / "out" / "steps" / "project.command");
+    check(command.starts_with("# run from: " + project.str() + "\n"));
 };
 
 // `--out p.json`: a file name without a directory, in the working directory.
@@ -1004,6 +1199,199 @@ auto tRecipeStepNoOutput = test("Recipe/step/exitsWithoutOutput") = []
           == std::string::npos);
     check(eacp::Files::readFile(work / "steps" / "Tiny.command").find("--quiet")
           == std::string::npos);
+};
+
+namespace
+{
+// Commits everything in `directory` into a git repository of its own, tagged
+// v1; false without git.
+bool commitAsRepository(const FilePath& directory)
+{
+    const auto git = findExecutable("git");
+
+    if (!git)
+        return false;
+
+    const auto identity =
+        eacp::Vector<std::string> {"-c",
+                                   "user.name=epm",
+                                   "-c",
+                                   "user.email=epm@example.invalid",
+                                   "-c",
+                                   "commit.gpgsign=false",
+                                   "-c",
+                                   "tag.gpgsign=false"};
+
+    for (auto arguments: {eacp::Vector<std::string> {"init", "-q"},
+                          eacp::Vector<std::string> {"add", "-A"},
+                          eacp::Vector<std::string> {"commit", "-q", "-m", "Tiny"},
+                          eacp::Vector<std::string> {"tag", "v1"}})
+    {
+        auto all = identity;
+        all.addFrom(arguments);
+
+        if (!runCommand(git->str(), all, directory).ok)
+            return false;
+    }
+
+    return true;
+}
+
+// The second line of a step's <name>.command: the command itself.
+std::string commandOf(const FilePath& commandFile)
+{
+    const auto text = eacp::Files::readFile(commandFile);
+    const auto lineEnd = text.find('\n');
+
+    if (lineEnd == std::string::npos)
+        return {};
+
+    auto command = text.substr(lineEnd + 1);
+
+    while (!command.empty() && command.back() == '\n')
+        command.pop_back();
+
+    return command;
+}
+} // namespace
+
+// The recipe executable drives epm configure itself, as epm_add_recipe's
+// build of it does: Tests/Recipe/epm.cpp, profile build, whose add<Tiny>
+// steps (a configure hook) run in its own process, with their files kept
+// in <out>/steps/ and <name>.command naming it, not epm's cached copy.
+auto tRecipeConfigure = test("Recipe/main/configure") = []
+{
+    if (!hasRecipeCompiler() || !hasTestCMake())
+        return;
+
+    auto root = eacp::TemporaryFile {};
+    const auto work = resolvedPath(root.path());
+    const auto cache = CacheRoot {work / "cache"};
+    auto env = tinyInput(work, cache).env;
+
+    if (!commitAsRepository(work / "src"))
+    {
+        eacp::Console::print("Recipe/main/configure: skipped, no git");
+        return;
+    }
+
+    const auto built = buildRecipe(recipeFixture(), cache);
+    check(built.ok);
+
+    if (!built.ok)
+        return;
+
+    // Away from the cache, as the project's own build of it is.
+    const auto recipe = work / "bin" / "TestRecipe";
+    check(eacp::Files::createDirectories(recipe.parentDirectory()));
+    check(eacp::Files::copyFile(built.executable, recipe));
+    std::filesystem::permissions(eacp::toStdPath(recipe),
+                                 std::filesystem::perms::owner_exec,
+                                 std::filesystem::perm_options::add);
+
+    // fmt (and on Linux uuid) from a local directory, in source mode, so
+    // nothing is fetched but Tiny.
+    check(eacp::Files::createDirectories(work / "fmt"));
+    auto overrides = Overrides {};
+    overrides.packages["fmt"].source = (work / "fmt").str();
+
+    if (env.systemName == "Linux")
+        overrides.packages["uuid"].source = (work / "fmt").str();
+
+    overrides.packages["Tiny"].options = {{"TINY_FLAG", "ON"}};
+    check(saveJsonFile(work / "env.json", env));
+    check(saveJsonFile(work / "overrides.json", overrides));
+
+    const auto out = work / "epm";
+    const auto steps = out / "steps";
+    const auto configure = [&]
+    {
+        return runCommandKeepingErrors(recipe.str(),
+                                       {"configure",
+                                        "--manifest",
+                                        recipeFixture().str(),
+                                        "--env",
+                                        (work / "env.json").str(),
+                                        "--overrides",
+                                        (work / "overrides.json").str(),
+                                        "--out",
+                                        out.str(),
+                                        "--cache",
+                                        cache.path().str()},
+                                       recipeFixture().parentDirectory());
+    };
+
+    eacp::setEnv("EPM_TEST_TINY_GIT", (work / "src").str());
+    const auto first = configure();
+    check(first.ok);
+
+    if (!first.ok)
+    {
+        eacp::Console::printError(first.output + first.errorOutput);
+        eacp::unsetEnv("EPM_TEST_TINY_GIT");
+        return;
+    }
+
+    check(first.output.find("building Tiny from source into the cache")
+          != std::string::npos);
+    check(eacp::Files::isFile(out / "graph.json"));
+    check(eacp::Files::isFile(out / "graph.cmake"));
+
+    for (const auto* name: {"Tiny", "fmt"})
+        for (const auto* suffix: {".in.json", ".out.json", ".command"})
+            check(eacp::Files::isFile(steps / (std::string {name} + suffix)));
+
+    // Run by this executable, so by hand the same.
+    const auto command = commandOf(steps / "Tiny.command");
+    check(command.starts_with(recipe.str() + " build --package Tiny --in "));
+    check(command.find(cache.recipe().str()) == std::string::npos);
+
+    // The add<Tiny> hook ran: its option is in the entry's fingerprint.
+    const auto graph = loadGraphJson(out / "graph.json");
+    check(graph.has_value());
+
+    auto tinyPrefix = std::string {};
+
+    if (graph)
+        for (const auto& package: graph->packages)
+            if (package.name == "Tiny")
+                tinyPrefix = package.prefix;
+
+    check(!tinyPrefix.empty());
+    const auto entry = readEntry(FilePath {tinyPrefix});
+    check(entry.has_value() && entry->fingerprint.options.at("TINY_VALUE") == "42");
+
+    // Again: the entry is found, nothing is built.
+    const auto second = configure();
+    check(second.ok);
+    check(second.output.find("building Tiny") == std::string::npos);
+    check(loadJsonFile<BuildOutput>(steps / "Tiny.out.json")
+              .value_or(BuildOutput {})
+              .prefix
+          == tinyPrefix);
+
+    // A step of its own that fails fails the configure, naming the package.
+    overrides.packages["Tiny"].options.clear();
+    check(saveJsonFile(work / "overrides.json", overrides));
+    const auto failed = configure();
+    check(!failed.ok && failed.exitCode == 1);
+    check(failed.errorOutput.find("TINY_FLAG is not set") != std::string::npos);
+    check(failed.errorOutput.find("epm: ") != std::string::npos);
+    check(failed.errorOutput.find("Tiny") != std::string::npos);
+    check(!loadJsonFile<BuildOutput>(steps / "Tiny.out.json")
+               .value_or(BuildOutput {})
+               .ok());
+
+    // So does its describe(), in this process too.
+    env.profile = "throw";
+    check(saveJsonFile(work / "env.json", env));
+    const auto thrown = configure();
+    check(!thrown.ok && thrown.exitCode == 1);
+    check(thrown.errorOutput.find("epm: the manifest " + recipeFixture().str()
+                                  + ": the recipe threw: asked to throw")
+          != std::string::npos);
+
+    eacp::unsetEnv("EPM_TEST_TINY_GIT");
 };
 
 auto tRecipeNoEntry = test("Recipe/noEntryPoint") = []

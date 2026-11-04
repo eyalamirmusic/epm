@@ -83,23 +83,27 @@ The same names work as environment variables (§3 has the limits).
 
 The manifest is a recipe: a C++ file named `epm.cpp` beside the top-level
 `CMakeLists.txt` of the consumer, and of every package that has dependencies, or build
-steps, of its own. The epm binary compiles it into a small executable, the *recipe
-executable*, and runs it; everything that passes between the two is JSON, so no C++
-ABI crosses the process boundary. The project may also build it itself, for its IDE,
-diagnostics and debugger (`epm_add_recipe`, below).
+steps, of its own. epm compiles it into a small executable, the *recipe executable*,
+and runs it; everything that passes between processes is JSON, so no C++ ABI crosses
+a process boundary. The root's recipe executable runs the configure itself (`epm
+configure` compiles it and runs its `configure` command, §6) and compiles and runs
+every other recipe in the graph the same way. The project may also build it itself,
+for its IDE, diagnostics and debugger (`epm_add_recipe`, below).
 
-A recipe is two phases of user code, each run by epm in a process of its own:
+A recipe is two phases of user code, each run in its recipe executable:
 
 1. **Describe.** `describe()` declares the packages the project depends on, for the
-   consumer's `env()`. epm runs it for every recipe in the graph while it walks it (§5)
-   and reads back the `epm::Project` (`Recipe/Project.h`) it declared.
+   consumer's `env()`. The configure runs it for every recipe in the graph while it
+   walks it (§5): the root's in its own process, every other as `<recipe> describe`,
+   whose `epm::Project` (`Recipe/Project.h`) it reads back.
 2. **Build steps.** A `Package`'s `build()` turns one package's source into what the
-   consumer links: a binary cache entry, or the source directory. epm runs it once per
-   configure for every package it resolves, in dependency order, in the executable of
-   the recipe that owns the package's step (§5 rule 9), as
-   `<recipe> build --package <name>` (§6). A package in source mode runs its step
-   too: nothing is built, but its hooks run, and the step records the source
-   directory and the options the consumer's `add_subdirectory` gets.
+   consumer links: a binary cache entry, or the source directory. The configure runs
+   it once for every package it resolves, in dependency order, in the executable of
+   the recipe that owns the package's step (§5 rule 9): a step the root owns in its
+   own process, every other as `<recipe> build --package <name>` (§6). A package in
+   source mode runs its step too: nothing is built, but its hooks run, and the step
+   records the source directory and the options the consumer's `add_subdirectory`
+   gets.
 
 ### Describe: `Recipe`
 
@@ -131,8 +135,8 @@ A recipe is two phases of user code, each run by epm in a process of its own:
 - `env()` is the consumer's `env.json` (`Spec/Env.h`): generator, build type,
   compiler, `systemName`, `systemProcessor`, deployment target and the rest, plus
   `profile`. Every recipe in the graph, the root's and each dependency's, is described
-  for the same `env`, in both phases. A recipe run without `--env` (below), and so
-  `epm describe` without one, uses an empty one.
+  for the same `env`, in both phases. A recipe's `describe` run without `--env`
+  (below), and so `epm describe` without one, uses an empty one.
 - `project()` is what `describe()` declared.
 
 | Field         | Values                                                            |
@@ -159,9 +163,10 @@ A recipe is two phases of user code, each run by epm in a process of its own:
 - A recipe may use anything the static library `epm-recipe` (the recipe API, the
   specs, the source and binary caches, the child build and harvest, `Util`),
   `eacp-core` (`eacp::FilePath`, `eacp::Strings`, `eacp::Processes`, …),
-  `eacp-network` and Miro offer: the executable links them statically. Nothing of
-  `epm-core` (the graph walk, `epm resolve`, compiling and running recipes, the
-  response writers) is in it.
+  `eacp-network` and Miro offer: the executable links them statically. The same
+  library holds the driver (the graph walk, `epm resolve`, compiling and running
+  recipes, the response writers), whose headers are not part of the installed recipe
+  API; the executable's `main()` runs it for its `configure` command (below).
 - Stores and lock files are not part of this stage.
 
 Profiles are code. `EPM_PROFILE` (a CMake variable, else the environment) reaches the
@@ -291,14 +296,34 @@ build would run.
 
 ### The recipe executable
 
-`Recipe/RecipeMain` gives it two command lines:
+`Recipe/RecipeMain` gives it three command lines:
 
 ```
-<recipe> [describe] [--env <env.json>] [--out <project.json>]
+<recipe> [configure] [--manifest <epm.cpp>] --env <env.json>
+         --overrides <overrides.json> --out <dir> [--cache <dir>] [--verbose]
+<recipe> describe [--env <env.json>] [--out <project.json>]
 <recipe> build --package <name> --in <input.json> --out <output.json> [--quiet]
 ```
 
-`describe`, the default, reads the `Env` (an empty one without `--env`), runs
+`configure` is the default: a first argument starting with `-` is one of its options,
+while any other word that is not `configure`, `describe` or `build`, or no argument at
+all, prints the usage and exits with 2. It is `epm configure` (§6), run in the recipe's own
+executable (`Recipe/RecipeConfigure`: `runConfigure` over a `SelfRecipeLoader`), with
+the same options; `--manifest` is the recipe's own file, `epm.cpp` in the working
+directory by default. Before anything else it changes its working directory to the manifest's
+directory. It reads the env and overrides, describes the recipe in its own process
+(the `--manifest` file, compared by resolved path, is itself), and walks the graph as
+§5 says: every other recipe is fetched, compiled into the cache against the recipe SDK
+of the env's `epmExecutable` (below) and described as a process of its own. Then it
+runs the build steps in dependency order, those the root owns (§5 rule 9) in its own
+process and every other in its owner's executable, and writes `graph.json`,
+`graph.cmake` and `steps/` into `--out` (§6). A step it runs itself keeps its
+`steps/` files as one run in another executable does, `<name>.command` naming this
+executable, so it can be run again by hand. A failure goes to stderr as `epm:
+<error>`, its details above it, with exit code 1: `epm configure` passes that stderr
+on as its own.
+
+`describe` reads the `Env` (an empty one without `--env`), runs
 `describe()` once and writes the `Project` as JSON (Miro reflection of `Project`) to
 `--out`, or to stdout without it. An unreadable env, an exception out of `describe` or
 a project that `projectError` rejects goes to stderr as one `epm-recipe: …` line, with
@@ -315,8 +340,9 @@ registers none for it`) rather than run the default steps in their place. It wri
 `BuildOutput` to `--out` whether or not the step succeeded, an exception out of
 `describe()` included (`the recipe threw: …`), and exits with code 1 when it failed.
 The failure goes to stderr as well (its details, then `epm-recipe: <error>`) unless
-`--quiet` is given: epm passes it to every step it runs and prints the failure itself,
-once (§6); the command it keeps for a run by hand omits it. An input it cannot
+`--quiet` is given: the configure passes it to every step it runs in another
+executable and prints the failure itself, once (§6); the command it keeps for a run by
+hand omits it. An input it cannot
 read, of another schema (`the build input has schema 2, but this recipe reads schema
 1`) or for another package is reported on stderr only, with no output written.
 Progress lines, and child build output under `--verbose`, go to stdout as the step
@@ -331,8 +357,9 @@ The two files (`Recipe/BuildProtocol.h`, Miro-reflected, field names as the JSON
   already has; an `EPM_<Name>_SOURCE` checkout has no commit or sourceId; without it
   `fetch()` fetches); `dependencies` (one per direct dependency: `name`, `mode`, and
   when prebuilt `fingerprint`, `prefix`, `targetsFile`, `configs`); `dependencyGraph`;
-  `epmExecutable` (the epm running the graph, which a child build with dependencies
-  gets as `EPM_EXECUTABLE`); `verbose`; `customBuild` (the owning declaration came
+  `epmExecutable` (the epm binary of the configure: the env's `epmExecutable`, else
+  the running executable; a child build with dependencies gets it as
+  `EPM_EXECUTABLE`); `verbose`; `customBuild` (the owning declaration came
   with steps of its own, `add<T>`: the recipe must have them).
 - `BuildOutput`: `schema`; `name`; `mode` (`prebuilt` or `source`, empty when the step
   failed); `sourceDirectory`; `options` (what the package is built or configured with:
@@ -352,7 +379,9 @@ mismatch as such rather than half reading the file: the recipe as above, epm as
 `Recipe/RecipeBuild`, `Recipe/RecipeRun`, `Graph/ManifestLoader`:
 
 1. `buildRecipe` compiles and links it with one direct compiler call, no CMake. The
-   call is the binary's recipe SDK (`Recipe/RecipeSdk`): the compiler that built epm,
+   call is the recipe SDK (`Recipe/RecipeSdk`) of an epm binary, the env's
+   `epmExecutable` or else the running one (in epm itself, the same binary): the
+   compiler that built epm,
    its C++ standard and dialect, the flags of the configuration epm was built in
    followed by `-O1` (a recipe is a few calls; a quick compile beats `-O3`), sysroot,
    architectures and deployment target, `epm-recipe`'s include directories,
@@ -366,20 +395,22 @@ mismatch as such rather than half reading the file: the recipe as above, epm as
    after `-L<dir>` only when the compiler does not search that directory already
    (`epm_shared_library_options` in `Lib/epm/CMakeLists.txt`); frameworks and static
    archives keep their paths. GCC and Clang spellings only.
-2. The SDK is located once per process. An installed epm (`<prefix>/bin/epm`, symlinks
-   resolved) uses `<prefix>/include` and every `<prefix>/lib/<Config>/` that holds all
-   the archives, and needs its own configuration among them. Otherwise (a build tree,
-   an incomplete install) it uses the build tree's paths, baked in at build time
+2. The SDK is located once per process and epm binary (`recipeSdkFor`), so a recipe
+   executable running the configure finds epm's from the env's `epmExecutable`. An
+   installed epm (`<prefix>/bin/epm`, symlinks resolved) uses `<prefix>/include` and
+   every `<prefix>/lib/<Config>/` that holds all the archives, and needs its own
+   configuration among them. Otherwise (a build tree, an incomplete install) it uses
+   the build tree's paths, baked into `epm-recipe` at build time
    (`Recipe/RecipeSdk.cpp.in`, through `file(GENERATE)`, once per configuration).
 3. Executables are cached in `<cache>/recipe/<key12>/epm-recipe` with `compile.log`
    beside it. The key hashes the SDK's identity (all of the above, with only epm's own
    configuration's archives), the contents of those archives and of epm's headers, the
-   epm executable itself and the recipe's source, so an unchanged recipe is compiled
+   epm binary itself and the recipe's source, so an unchanged recipe is compiled
    once per epm binary and its libraries, and an edited library or header, or a
    rebuilt epm, gets fresh executables. The compile runs under the package lock
    `recipe-<key12>`, into a temporary name moved into place on success.
-4. `runRecipe` runs it as `epm-recipe --env <env.json> --out <project.json>`, both
-   files in a scratch directory of their own per run (several epm processes may run one
+4. `runRecipe` runs it as `epm-recipe describe --env <env.json> --out <project.json>`,
+   both files in a scratch directory of their own per run (several processes may run one
    recipe at once, for different envs), with the `epm.cpp`'s directory as its working
    directory, so a file it reads by a relative path is its own package's, and reads the
    `Project` back.
@@ -393,18 +424,22 @@ mismatch as such rather than half reading the file: the recipe as above, epm as
    (`<cache>/recipe/<key12>/epm-recipe exited with code 1`, `… was terminated by
    signal 6 (exit code 134)`, `… exited without writing its project`), then the last
    20 lines it printed. A file without `EPM_RECIPE` has no `main()` and fails to link.
+   The root's recipe is described in the configure's own process instead: what it
+   throws is `the manifest <epm.cpp>: the recipe threw: …`, and a crash ends the
+   configure, which `epm configure` reports (§6).
 6. A build step runs in the same cached executable, compiled first if need be:
    `RecipeManifestLoader::build` runs `build --package <name>` in the `epm.cpp`'s
    directory, with its input, output and command line kept in `<out>/steps/` (§6).
-   The compile lock `recipe-<key12>` is held only while compiling, never while a recipe
-   runs.
+   A step the root owns runs in the configure's own process (`SelfRecipeLoader`),
+   keeping the same files. The compile lock `recipe-<key12>` is held only while
+   compiling, never while a recipe runs.
 
 `epm describe [<epm.cpp>] [--exe <path>] [--env <env.json>] [--cache <dir>] [--verbose]`
 prints the project a recipe describes, as JSON, for checking one by hand: it builds
-the file as `configure` does and runs it. `--exe` runs that recipe executable
-(`epm_add_recipe`'s, below, or any program `EPM_RECIPE` made) instead of compiling the
-file, so the positional then only names the working directory (an `--exe` alone runs
-in the current one) and may be left out. `configure`
+the file as `configure` does and runs its `describe` (`runRecipe`). `--exe` runs that
+recipe executable's `describe` (`epm_add_recipe`'s, below, or any program `EPM_RECIPE`
+made) instead of compiling the file, so the positional then only names the working
+directory (an `--exe` alone runs in the current one) and may be left out. `configure`
 has no such option: it always builds and runs its own.
 
 ### The recipe as a target of the project: `epm_add_recipe`
@@ -416,29 +451,45 @@ epm_add_recipe(AppRecipe)            # [SOURCE <file>] [NO_TEST]
 
 `epm_add_recipe` (`epm.cmake`) adds `epm.cpp` (or `SOURCE`, relative to the current
 source directory) to the project's own build as the executable `AppRecipe`: the same
-program `buildRecipe` makes, both phases of it, so the IDE indexes it with epm's
-headers, a compile error shows in the normal build, and a debugger can run it. It is linked to `epm::recipe`
-and built at epm's C++ standard and extensions, without IPO; on Apple, when
-`CMAKE_OSX_ARCHITECTURES` is set, for the host processor only (a recipe is a host
-program, and epm's archives need not hold the other architectures). The configure never
-runs this executable; it builds and runs its own in the cache. The custom target
-`AppRecipe-describe` (folder `epm`, not built by default) builds it and runs
-`AppRecipe --env <build>/epm/env.json` in the top-level source directory, printing the
-project. Unless `NO_TEST` (or `BUILD_TESTING` is OFF) the test `AppRecipe` runs the
-same command; ctest sees it once the project calls `enable_testing()` (or
-`include(CTest)`), and it needs the executable built first. That `env.json` is the
-configure's own, written by the end of the configure even when nothing asked epm for a
-package.
+program `buildRecipe` makes, all three commands of it, so the IDE indexes it with
+epm's headers, a compile error shows in the normal build, and a debugger can run it.
+It is linked to `epm::recipe` and built at epm's C++ standard and extensions, without
+IPO; on Apple, when `CMAKE_OSX_ARCHITECTURES` is set, for the host processor only (a
+recipe is a host program, and epm's archives need not hold the other architectures).
+The configure never runs this executable: `epm configure` compiles and runs its own
+copy of the same source in the cache (§6), as this one exists only once the project
+is built. Its run arguments are `epm configure`'s own, for the whole configure in this
+executable:
 
-**Debugging `describe`.** Build the Debug configuration, so the executable has debug
-info, launch `AppRecipe` under the debugger with `--env <build>/epm/env.json` and stop
-in `describe`. Xcode and Visual Studio already have those arguments, and the top-level
-source directory as working directory, in the target's scheme or debugger settings;
-CLion can debug the `AppRecipe` test from its CTest integration; by hand,
-`lldb -- <build>/AppRecipe --env <build>/epm/env.json`. `epm describe epm.cpp --exe
-<build>/AppRecipe --env <build>/epm/env.json` reads the same executable's output the
-way the configure does. The executable the configure runs is epm's own cached one: the
-same file and libraries, but compiled with epm's configuration flags and `-O1`.
+```
+configure --manifest <source> --env <build>/epm/env.json
+          --overrides <build>/epm/overrides.json --out <build>/epm
+```
+
+plus `--cache <dir>` when `EPM_CACHE` is set and `--verbose` under `EPM_VERBOSE`, as
+epm's run gets them. The custom target `AppRecipe-configure` (folder `epm`, not built
+by default) builds it and runs that in the top-level source directory: it describes,
+fetches, finds or builds the cache entries and rewrites `<build>/epm/graph.json`,
+`graph.cmake` and `steps/`, running the steps the root owns in its own process. Unless
+`NO_TEST` (or `BUILD_TESTING` is OFF) the test `AppRecipe` runs the same with `--out
+<build>/epm/test`, so that it never rewrites the build's own graph files; ctest sees it
+once the project calls `enable_testing()` (or `include(CTest)`), and it needs the
+executable built first. That `env.json` and `overrides.json` are the configure's own,
+written by a deferred call at the end of the configure even when nothing asked epm for
+a package.
+
+**Debugging `describe` and the root's steps.** Build the Debug configuration, so the
+executable has debug info, launch `AppRecipe` under the debugger with its run
+arguments and stop in `describe` or in a hook (or `build()`) of a step the root owns.
+Xcode and Visual Studio already have those arguments, and the top-level source
+directory as working directory, in the target's scheme or debugger settings; CLion can
+debug the `AppRecipe` test from its CTest integration; by hand, `lldb --
+<build>/AppRecipe configure --manifest epm.cpp --env <build>/epm/env.json --overrides
+<build>/epm/overrides.json --out <build>/epm`. `AppRecipe describe --env
+<build>/epm/env.json` prints the project alone, and `epm describe epm.cpp --exe
+<build>/AppRecipe --env <build>/epm/env.json` reads it the way the configure does. The
+executable the CMake configure runs is epm's own cached one: the same file and
+libraries, but compiled with epm's configuration flags and `-O1`.
 
 **Debugging a build step.** The configure keeps each step's input in
 `<build>/epm/steps/<name>.in.json` (§6). Launch `AppRecipe` with
@@ -447,12 +498,14 @@ the top-level source directory, and stop in the steps' `build()` or hooks: the i
 complete (request, env, cache, source, dependencies), so the step does what the
 configure's did, and an entry already in the cache is found rather than rebuilt (delete
 the entry to step through a build). A failure goes to the `--out` file and, as `--quiet`
-is not given, to stderr too. `<name>.command` holds the command the configure ran, with
-epm's cached executable, and where it ran, less the `--quiet` the configure passes, so
-running it by hand prints a failure as well. `AppRecipe` runs only
-the steps of packages whose step the root owns (`recipeName` empty in the input,
-§5 rule 9); given another recipe's input it would run its own idea of the package's
-steps, so for those use the command file, whose executable is that recipe's.
+is not given, to stderr too. `<name>.command` holds the command that runs the step,
+with the executable that ran it (for a step the root owns, epm's cached copy of the
+root's recipe after a CMake configure, `AppRecipe` after `AppRecipe-configure`), and
+where it ran, less the `--quiet` the configure passes to another executable, so
+running it by hand prints a failure as well. `AppRecipe` runs only the steps of
+packages whose step the root owns (`recipeName` empty in the input, §5 rule 9); given
+another recipe's input it would run its own idea of the package's steps, so for those
+use the command file, whose executable is that recipe's.
 
 `epm::recipe` is an `INTERFACE IMPORTED GLOBAL` target defined once per configure from
 `epm recipe-sdk --out <build>/epm/recipe-sdk.cmake`, which writes the binary's SDK
@@ -499,11 +552,11 @@ Limits:
 - macOS and Linux only. There are no recipe executables on Windows until
   `RecipeBuild` has an MSVC argument shape (`/std:`, `/Fe`, `.lib` names): an
   executable linking static archives needs no exports, so the design itself carries
-  over. On Windows `buildRecipe` fails, and so does the configure, at the first recipe.
-  The step runner is ready for a loader without recipe executables
-  (`ManifestLoader::runsSteps`, false on Windows): every step there runs the default
-  steps in epm's process, and custom steps are an error unless the package is in
-  source mode (§6).
+  over. On Windows `epm configure` runs the configure in its own process (§6), where
+  `buildRecipe` fails, and so does the configure, at the first recipe. The step runner
+  is ready for a loader without recipe executables (`ManifestLoader::runsSteps`, false
+  on Windows): every step there runs the default steps in epm's process, and custom
+  steps are an error unless the package is in source mode (§6).
 
 ## 3. Overrides `overrides.json`
 
@@ -566,7 +619,7 @@ The binary records, for every effective value, which source set it (`override`,
    source cache (or taken from `source`). If the checkout holds an `epm.cpp`, it is
    run too (§2) and its packages are added to the graph, recursively; a checkout
    without one has no dependencies. Discovery therefore happens before configure
-   continues, by running recipes in the binary, not by executing CMake.
+   continues, by running recipes, not by executing CMake.
 2. The root wins: a package declared by the root keeps the root's values whatever a
    dependency declares.
 3. Among dependencies, the first declaration in a depth-first walk of the root's
@@ -618,9 +671,31 @@ epm configure --manifest <epm.cpp> --env <env.json> --overrides <overrides.json>
               --out <dir> [--cache <dir>] [--verbose]
 ```
 
-Runs the root recipe for the `env.json` given, then every dependency's, planning the
-graph (§2, §5); then resolves the packages in dependency order, each through its build
-step; and writes into `<dir>` (`<build>/epm/` under `get_epm.cmake`):
+epm compiles the root recipe (`buildRecipe` against the SDK of the env's
+`epmExecutable`, cached, §2) and runs its `configure` command (§2, *The recipe
+executable*) in the manifest's directory, every path absolute and the cache root
+resolved:
+
+```
+<cache>/recipe/<key12>/epm-recipe configure --manifest <epm.cpp> --env <env.json>
+    --overrides <overrides.json> --out <dir> --cache <cache> [--verbose]
+```
+
+Its stdout (progress lines, the steps' output) reaches epm's as it runs, its stderr
+(the failure it reports, `epm: …`) is passed on as epm's own, and its exit code is
+epm's. A recipe executable killed by a signal reported nothing itself: epm fails with
+`the manifest <epm.cpp>: <executable> configure failed: <executable> was terminated by
+signal 6 (exit code 134)`, then the last 20 lines it printed. An env without
+`epmExecutable` (epm run by hand) is copied into a temporary directory naming this
+epm, and the copy is passed, so the recipe executable finds the SDK and nested child
+builds get their `EPM_EXECUTABLE` (§10). Where there are no recipe executables
+(`ManifestLoader::runsSteps`, Windows) epm runs the same configure, `runConfigure`, in
+its own process over a `RecipeManifestLoader`.
+
+The configure runs the root recipe for the `env.json` given, then every dependency's,
+planning the graph (§2, §5); then resolves the packages in dependency order, each
+through its build step; and writes into `<dir>` (`<build>/epm/` under
+`get_epm.cmake`):
 
 - `graph.cmake` — the response the provider reads (§7).
 - `graph.json` — the resolved graph: every package's effective request, source
@@ -638,14 +713,17 @@ For each package, in dependency order:
    7). Otherwise its request's `deps` get each direct dependency's `fingerprintHash`,
    as that dependency's step reported it, and the step gets `dependencies` and
    `dependencyGraph` (`graph.cmake` of the closure, §10).
-2. epm compiles the owner's recipe (§5 rule 9; cached, §2) and, in the `epm.cpp`'s
-   directory, runs
+2. The configure compiles the owner's recipe (§5 rule 9; cached, §2) and, in the
+   `epm.cpp`'s directory, runs
    `<recipe executable> build --package <name> --in <dir>/steps/<name>.in.json
    --out <dir>/steps/<name>.out.json --quiet`. Beforehand it writes `<name>.in.json`
    and `<name>.command` (a `# run from: <directory>` line, then the command line, shell
    quoted, without `--quiet`, so a run by hand prints a failure on stderr) and removes
    the previous `<name>.out.json`, so it cannot pass for this run's. The input carries
-   the owner's `customBuild`.
+   the owner's `customBuild`. A step the root owns runs in the configure's own
+   process instead (`SelfRecipeLoader`), with the same three files: `<name>.command`
+   names the running executable and the root's directory, and the configure writes
+   `<name>.out.json` itself.
    The three files are overwritten by the next configure and otherwise kept,
    so a step can be run again by hand, under a debugger (§2, `epm_add_recipe`).
 3. The step's stdout reaches the configure's output as it runs: its progress lines
@@ -653,10 +731,10 @@ For each package, in dependency order:
    this can take a while`, `-- epm: built eacp (Release) in 21s`), its child builds'
    output under `--verbose` (`EPM_VERBOSE`). The result travels only through `--out`.
 4. A step that failed fails the configure with its `error`, above it its `details`,
-   printed once, by epm: the recipe printed none of it (`--quiet`), and its
-   progress was already streamed. A step that wrote no output, or exited non-zero
-   while its output claims success, fails with the command, how it ended (exit code,
-   or the signal that killed it) and the last 20 lines it printed.
+   printed once, by the configure: a step in another executable printed none of it
+   (`--quiet`), and its progress was already streamed. A step that wrote no output,
+   or exited non-zero while its output claims success, fails with the command, how it
+   ended (exit code, or the signal that killed it) and the last 20 lines it printed.
 5. A prebuilt result's `fingerprintHash` goes into its dependents' `deps`; a source
    result sends them to source. A step asked for source (`spec().mode`) that recorded
    prebuilt fails the configure. The result's `options` go into `graph.json` and
@@ -665,17 +743,18 @@ For each package, in dependency order:
 A package in source mode runs its step as well, in the same executable: nothing is
 built (`cached` returns nothing), but its `configure` hook runs and the step records
 the options the provider sets before `add_subdirectory` (`useSource(build)`, §2, §8).
-The default steps run in epm's own process instead (`buildInProcess`, no recipe
-executable) only for:
+The default steps run in the configure's process without any recipe's `describe()`
+(`buildInProcess`) only for:
 
 - a package whose owner has no recipe file (a root given none, as tests do);
 - every package where there are no recipe executables (`ManifestLoader::runsSteps`:
   Windows, §2); an owner with custom steps is then an error, unless the package is in
   source mode, where the default steps record the request's options.
 
-epm holds no package lock while a step runs: the step takes the package's lock itself,
-inside `cached`, and only to build. eacp's `IPC::Lock` is not re-entrant, so a lock
-held by epm would make the step wait out the timeout.
+The configure holds no package lock while a step runs, in its own process or another:
+the step takes the package's lock itself, inside `cached`, and only to build. eacp's
+`IPC::Lock` is not re-entrant, so a lock held by the configure would make the step wait
+out the timeout.
 
 Measured with `Examples/HelloGraph` on macOS: a cold configure takes 66 s, of which
 41 s build epm itself (Debug and Release, `PoC.md` §8) and 21 s build eacp (Release),
@@ -732,7 +811,8 @@ It only drives functions of the installed module: `epm.cmake` (`epm_use_manifest
 `epm configure` runs lazily, at the provider's first call (the first `find_package`
 or `FetchContent_MakeAvailable`), not at `project()`, so a `CMAKE_CXX_STANDARD` set
 after `project()` still reaches `env.json`. That first call writes `env.json` (as
-today, plus `profile`) and `overrides.json` (§3), runs `epm configure` (its stdout,
+today, plus `profile` and `epmExecutable`, `PoC.md` §2) and `overrides.json` (§3),
+runs `epm configure` (its stdout,
 the build steps' progress included, reaching the configure output as it runs; a
 non-zero exit fails the configure with its stderr), includes `graph.cmake` and prints
 its notes once.
@@ -784,7 +864,8 @@ alias `fmt::fmt`. The facade must define the same spellings.
 ## 10. Nested child builds
 
 A package's child builds run inside its build step (`CMakeBuild`, §2), in the recipe
-executable that owns it or, for the default steps in epm's process, in epm.
+executable that owns it (the configure's own process for a step the root owns) or, for
+`buildInProcess` (§6), in the configure's process.
 `Build/ChildBuild` passes to the child configure of a package that has dependencies (a
 non-empty `dependencyGraph` in the step's input), in addition to today's flags (a
 package without dependencies gets today's flags only):
@@ -796,9 +877,10 @@ package without dependencies gets today's flags only):
 -DEPM_EXECUTABLE=<epm>
 ```
 
-`<epm>` is the epm binary running the graph (the input's `epmExecutable`), never the
-recipe executable. The step writes all three files into the child's build directory
-before it configures. `epm-graph.cmake` is §7's `graph.cmake` for the package's
+`<epm>` is the epm binary of the configure (the input's `epmExecutable`, from the
+env's: `EPM_EXECUTABLE`, as `epm_write_env` writes it, §6), never a recipe executable,
+even when the graph runs in one. The step writes all three files into the child's
+build directory before it configures. `epm-graph.cmake` is §7's `graph.cmake` for the package's
 dependency closure only (`dependencyClosure` in `Graph/Graph.h`, computed by epm and
 handed over as `dependencyGraph`), in dependency order, without notes.
 `epm-nested.cmake` is `CMake/epm-provider.cmake`, compiled into `epm-recipe`, and so

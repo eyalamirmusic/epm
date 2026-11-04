@@ -61,7 +61,9 @@ All under `${CMAKE_BINARY_DIR}/epm/`.
   "osxSysroot": "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
   "androidAbi": "",
   "cxxStandard": "20",
-  "toolchainFile": "" }
+  "toolchainFile": "",
+  "profile": "",
+  "epmExecutable": "/path/to/epm" }
 ```
 
 `osxSysroot` is `CMAKE_OSX_SYSROOT` and `androidAbi` is `CMAKE_ANDROID_ARCH_ABI` (else the
@@ -71,6 +73,9 @@ call (not at include time), once per configure. `cCompiler` is empty when the co
 not enable C; the binary must not pass an empty `-DCMAKE_C_COMPILER` to child builds.
 `makeProgram` (`CMAKE_MAKE_PROGRAM`) is passed to a child build that reuses the consumer's
 generator, so a build tool that is not on PATH (CLion's bundled ninja) is still found.
+`epmExecutable` is `EPM_EXECUTABLE`, the epm binary running the configure: the recipe SDK
+is found from its install prefix (`RecipeSdk`, §8), and a child build with dependencies
+gets it as its `EPM_EXECUTABLE`. Like `profile`, it is in no fingerprint.
 
 ### `requests/<name>.json` (one per `epm_add_package` call)
 
@@ -169,8 +174,8 @@ The build steps' files of `epm configure` (`<name>.in.json`, `<name>.out.json`,
 
 Locks: one eacp `IPC::Lock` per package name, held while fetching a snapshot and while
 building an entry (waits up to an hour for another process); the build step that builds
-the entry takes it itself (`Package::cached`, §5), and epm, which runs the step, holds
-none meanwhile. A recipe's compile holds `recipe-<key12>` the same way. `IPC::Lock` keeps its lock
+the entry takes it itself (`Package::cached`, §5), and the configure, which runs the
+step, in its own process or another, holds none meanwhile. A recipe's compile holds `recipe-<key12>` the same way. `IPC::Lock` keeps its lock
 files in its own per-user directory (`<appData>/eacp/Locks`) and takes no path, so the lock
 is named `epm-<sha256(cache root)[:12]>-<name>` to keep separate caches independent; there
 is no `locks/` directory. The cache root is resolved (`weakly_canonical`) before use so
@@ -216,11 +221,13 @@ the tools; `epm cache path` prints the cache root.
 ## 5. Binary build and harvest
 
 A package's entry is built by its build step (`Docs/Graph.md` §2): `Package::cached` and
-`CMakeBuild` (`Recipe/`), which run in the recipe executable that owns the step under
-`epm configure`, and in the epm process for `epm resolve` (`epm_add_package`), for an owner
-without a recipe file, and wherever there are no recipe executables. The default steps do what follows; custom steps may change
-the options, definitions, configs and generator, or add files after the build, through the
-same two.
+`CMakeBuild` (`Recipe/`). Under `epm configure` they run in the recipe executable that
+owns the step: the root's, which runs the configure itself, in its own process, any
+other recipe's as a process of its own (`Docs/Graph.md` §6). They run in the epm
+process for `epm resolve` (`epm_add_package`), and in the configure's process for an
+owner without a recipe file and wherever there are no recipe executables (there, epm's
+own). The default steps do what follows; custom steps may change the options,
+definitions, configs and generator, or add files after the build, through the same two.
 
 `cached` decides from the request's mode whether anything is built (`Spec/Request.h`,
 `decide`; §9 for picking). If so, under the package lock it picks the entry again (another
@@ -345,9 +352,11 @@ epm/
   CMake/get_epm.cmake       the file users vendor and include: finds the binary (§8)
   CMake/epm.cmake           consumer module (epm_add_package), installed with the binary
   CMake/epm-export.cmake    injected into child builds (see §5)
-  Lib/epm/                  static libraries `epm-recipe` (what a recipe executable links,
-                            build steps included) and `epm-core` (the driver), namespace
-                            `epm::`; CLAUDE.md has the current layout
+  Lib/epm/                  the static library `epm-recipe`, namespace `epm::`: the recipe
+                            SDK, build steps included, and the driver (the graph walk,
+                            compiling and running recipes, Recipe/RecipeConfigure), which
+                            epm and every recipe executable link; CLAUDE.md has the
+                            current layout
     Util/Sha256.{h,cpp}     lifted from /Users/eyalamir/Code/PackagesCPP/Lib/pkgcpp/Sha256.*
     Util/Git.{h,cpp}        lifted from AgentWorkspace
     Util/Command, Log, Text, Timestamp   child processes, findExecutable, --verbose, text
@@ -362,8 +371,10 @@ epm/
     Emit/Response
     Resolve/Resolve         the `epm resolve` pipeline (the default build steps, in-process)
   Apps/epm/Version.h.in     generated Version.h: epm::version from project(VERSION)
-  Apps/epm/Main.cpp         Apps::runConsole + manual subcommand dispatch (resolve,
-                            cache path, cache ls, --version)
+  Apps/epm/Main.cpp         Apps::runConsole + manual subcommand dispatch (configure,
+                            graph-cmake, describe, recipe-sdk, resolve, cache path,
+                            cache ls, --version); configure compiles the root epm.cpp
+                            and runs its executable's configure (Docs/Graph.md §6)
   Tests/                    NanoTest: Sha256 vectors, fingerprint canonicalisation and
                             matching, platform names, config mapping and selectors, entry
                             picking, response text, ref resolution, export-file
@@ -590,7 +601,11 @@ compiler does not search that directory already (`epm_shared_library_options` in
 `Lib/epm/CMakeLists.txt`, for every imported shared library); frameworks and static
 archives keep their paths. The binary finds its install at run time: `<prefix>` is two
 levels above the real executable, and every `lib/*/` holding all the archives is a
-configuration (`Docs/Graph.md` §2). A top-level single-config build of epm defaults
+configuration (`Docs/Graph.md` §2). Code linking `epm-recipe` that is not the epm binary
+(a recipe executable running the configure, which compiles the other recipes) finds it
+the same way from `env.json`'s `epmExecutable` (`recipeSdkFor`); without an install
+prefix there, the build tree's SDK baked into the library is used. A top-level
+single-config build of epm defaults
 `CMAKE_BUILD_TYPE` to Release, so it always has a configuration to install.
 `epm --version` prints `project(epm VERSION …)` through the generated `Version.h`.
 

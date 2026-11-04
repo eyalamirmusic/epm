@@ -132,10 +132,16 @@ with an `epm.cpp` of their own are walked the same way, and their own recipe
 builds them. Recipes run on macOS and Linux; Windows has only
 `epm_add_package` for now.
 
-**Debugging.** With `epm_add_recipe`, the recipe is a target of your build.
-Launch its Debug build under a debugger with `--env <build>/epm/env.json` to
-stop in `describe()` (Xcode and Visual Studio get these arguments already; the
-`HelloGraphRecipe-describe` target and the ctest run the same). Every
+**Debugging.** With `epm_add_recipe`, the recipe is a target of your build,
+and that executable can run the whole configure itself: it describes, fetches,
+finds or builds the cache entries and writes the graph files, running the
+steps it owns in its own process. Launch its Debug build under a debugger with
+its default arguments (`configure --manifest epm.cpp --env
+<build>/epm/env.json --overrides <build>/epm/overrides.json --out <build>/epm`;
+Xcode and Visual Studio get them already, and the `HelloGraphRecipe-configure`
+target runs the same) to stop in `describe()` or a hook; the ctest runs it too,
+into `<build>/epm/test`. The configure CMake runs still goes through `epm
+configure`, which compiles and runs its own cached copy of the recipe. Every
 configure keeps each build step's input in `<build>/epm/steps/<name>.in.json`,
 beside the command it ran (`<name>.command`, without the `--quiet` that keeps
 a failure off stderr), so a step runs again by

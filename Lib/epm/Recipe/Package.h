@@ -1,6 +1,7 @@
 #pragma once
 
-#include "BuildError.h"
+// Recipes include only Recipe.h, and throw what the helpers throw.
+#include "BuildError.h" // IWYU pragma: export
 #include "BuildProtocol.h"
 #include "CMakeBuild.h"
 #include "Prefix.h"

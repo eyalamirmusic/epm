@@ -83,7 +83,12 @@ const BakedRecipeSdk& bakedRecipeSdk();
 std::optional<RecipeSdk> installedRecipeSdk(const BakedRecipeSdk& baked,
                                             const eacp::FilePath& prefix);
 
-// installedRecipeSdk for the prefix this executable runs from, else the build
-// tree's. Located once per process.
+// installedRecipeSdk for the prefix of the epm binary `epmExecutable`
+// (<prefix>/bin/epm, through any symlink to it), else the build tree's. What
+// code linking epm-recipe outside epm's own process (a recipe executable)
+// finds the SDK with, from Env::epmExecutable.
+RecipeSdk recipeSdkFor(const eacp::FilePath& epmExecutable);
+
+// recipeSdkFor this executable. Located once per process.
 const RecipeSdk& recipeSdk();
 } // namespace epm

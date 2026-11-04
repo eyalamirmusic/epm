@@ -101,6 +101,32 @@ if (NOT output MATCHES "\"fmtlib/fmt\"")
     message(FATAL_ERROR "epm-install-round-trip: describe printed:\n${output}")
 endif ()
 
+# configure: compiles a recipe against the installed SDK and runs its own
+# configure command, which writes the graph files. The env names no epm, so
+# epm hands the recipe one that names itself.
+set(project_dir "${WORK_DIR}/project")
+file(WRITE "${project_dir}/epm.cpp"
+        "#include <epm/Recipe/Recipe.h>\n\n"
+        "struct Empty final : epm::Recipe\n{\n"
+        "    void describe() override {}\n};\n\nEPM_RECIPE(Empty)\n")
+file(WRITE "${WORK_DIR}/env.json" "{\"schema\": 1}\n")
+file(WRITE "${WORK_DIR}/overrides.json" "{\"schema\": 1}\n")
+run_checked("${epm}" configure --manifest "${project_dir}/epm.cpp"
+        --env "${WORK_DIR}/env.json" --overrides "${WORK_DIR}/overrides.json"
+        --out "${WORK_DIR}/configure" --cache "${WORK_DIR}/cache" --verbose)
+
+foreach (file IN ITEMS graph.cmake graph.json)
+    if (NOT EXISTS "${WORK_DIR}/configure/${file}")
+        message(FATAL_ERROR "epm-install-round-trip: configure wrote no ${file}:\n"
+                "${output}")
+    endif ()
+endforeach ()
+
+if (NOT output MATCHES "/epm-recipe configure --manifest ")
+    message(FATAL_ERROR "epm-install-round-trip: configure ran no recipe "
+            "executable:\n${output}")
+endif ()
+
 # One bin/epm per prefix: Release wins, any other configuration refreshes its
 # own and replaces one that is not Release.
 set(config_file "${prefix}/share/epm/epm-config")

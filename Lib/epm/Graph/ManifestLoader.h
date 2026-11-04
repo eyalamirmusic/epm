@@ -17,7 +17,8 @@ inline constexpr auto manifestFileName = "epm.cpp";
 
 // Reads the Project a directory's epm.cpp describes, and runs build steps in
 // a recipe's executable. The graph walk gets one, as it gets a
-// SourceFetcher: RecipeManifestLoader in the binary, a map in tests.
+// SourceFetcher: RecipeManifestLoader in the binary, SelfRecipeLoader
+// (Recipe/RecipeConfigure.h) in a recipe executable, a map in tests.
 class ManifestLoader
 {
 public:
@@ -29,6 +30,12 @@ public:
     virtual std::optional<Project> load(const eacp::FilePath& directory,
                                         const Env& env,
                                         std::string& error) = 0;
+
+    // As load, for the root's recipe file, which may have another name; a
+    // missing one is an error. By default load() of its directory, for a
+    // file named epm.cpp only.
+    virtual std::optional<Project>
+        loadFile(const eacp::FilePath& recipe, const Env& env, std::string& error);
 
     // Whether <directory> has an epm.cpp.
     virtual bool hasManifest(const eacp::FilePath& directory) const;
@@ -46,6 +53,32 @@ public:
                                              const BuildInput& input,
                                              std::string& error) = 0;
 };
+
+// The files a build step keeps in a steps directory, for running it again by
+// hand: <name>.in.json, <name>.out.json and <name>.command.
+struct StepFiles
+{
+    eacp::FilePath input;
+    eacp::FilePath output;
+    eacp::FilePath command;
+
+    // build --package <name> --in <input> --out <output>
+    eacp::Vector<std::string> arguments;
+
+    // The executable and `arguments`, shell-quoted: <name>.command's line.
+    std::string commandLine;
+};
+
+// Writes input.request.name's <name>.in.json and <name>.command into
+// `directory` and removes its previous <name>.out.json, which must not pass
+// for this run's. <name>.command is "# run from: <workingDirectory>", then
+// `executable` with the arguments; both absolute. nullopt, with `error` set,
+// when a file cannot be written or removed.
+std::optional<StepFiles> writeStepFiles(const eacp::FilePath& directory,
+                                        const BuildInput& input,
+                                        const eacp::FilePath& executable,
+                                        const eacp::FilePath& workingDirectory,
+                                        std::string& error);
 
 // Compiles each epm.cpp into an executable under <cache>/recipe/
 // (buildRecipe), runs it for `env` (runRecipe), and runs build steps in it
@@ -69,9 +102,9 @@ public:
                                 const Env& env,
                                 std::string& error) override;
 
-    // As load, for a recipe file of any name; a missing one is an error.
-    std::optional<Project>
-        loadFile(const eacp::FilePath& recipe, const Env& env, std::string& error);
+    std::optional<Project> loadFile(const eacp::FilePath& recipe,
+                                    const Env& env,
+                                    std::string& error) override;
 
     bool runsSteps() const override;
 

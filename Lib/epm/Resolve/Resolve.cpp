@@ -55,7 +55,9 @@ BuildInput buildInputFor(const Request& request,
     input.source = buildSourceFor(snapshot);
     input.dependencies = dependencies;
     input.dependencyGraph = dependencyGraph;
-    input.epmExecutable = eacp::Files::executablePath().str();
+    input.epmExecutable = env.epmExecutable.empty()
+                              ? eacp::Files::executablePath().str()
+                              : env.epmExecutable;
     input.verbose = Log::isVerbose();
     return input;
 }

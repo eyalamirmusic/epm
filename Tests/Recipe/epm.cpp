@@ -5,6 +5,7 @@
 #include <epm/Recipe/Recipe.h>
 
 #include <eacp/Core/Process/Process.h>
+#include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/FilePath.h>
 
 #include <cstdlib>
@@ -34,9 +35,13 @@ struct TestProject final : Recipe
             add("uuid", checkout.str()).mode("source").config("Release");
         }
 
-        // `epm-recipe build --package Tiny` runs Tiny's steps.
+        // `epm-recipe build --package Tiny` runs Tiny's steps; a configure
+        // fetches it from the repository RecipeTests made.
         if (env().profile == "build")
-            add<Tiny>("Tiny");
+        {
+            const auto git = eacp::getEnvValue("EPM_TEST_TINY_GIT");
+            add<Tiny>("Tiny", git, git.empty() ? "" : "v1");
+        }
 
         // A package named by what a child process prints.
         if (env().profile == "shell")

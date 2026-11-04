@@ -16,8 +16,9 @@
 #                 the checkout is used without a fetch
 #
 # Each scenario also builds the consumer's epm_add_recipe executable and checks
-# that Mid's epm_add_recipe built nothing; the default one runs its test, its
-# -describe target and the executable itself, standalone.
+# that Mid's epm_add_recipe built nothing; the default one runs its test and
+# its -configure target, each a whole configure in that executable, and its
+# describe command standalone.
 #
 #   cmake -DEPM_BINARY=<epm> [-DWORK_DIR=<dir>] [-DTEST_GENERATOR=<generator>]
 #         [-DTEST_MAKE_PROGRAM=<path>] [-DTEST_CXX_COMPILER=<path>]
@@ -247,10 +248,17 @@ endfunction()
 # The Project JSON a recipe prints names Mid.
 set(names_mid "\"name\": *\"Mid\"")
 
-# ConsumerRecipe's test and the ConsumerRecipe-describe target run the
-# executable the build made with this build's env.json; so can anyone, and
-# `epm describe --exe` runs it in place of one epm builds.
+# ConsumerRecipe's test and the ConsumerRecipe-configure target run the whole
+# configure in the executable the build made, with this build's env.json and
+# overrides.json: the test into <build>/epm/test, the target into the build's
+# own <build>/epm, finding both entries cached. Its describe command prints
+# the project, and `epm describe --exe` runs it in place of one epm builds.
 function(expect_recipe_test)
+    set(test_graph "${build}/epm/test/graph.cmake")
+    file(REMOVE_RECURSE "${build}/epm/test")
+    file(SHA256 "${build}/epm/graph.cmake" graph_before)
+    file(TIMESTAMP "${build}/epm/graph.cmake" graph_time_before "%s")
+
     execute_process(
             COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${build}" -C Release
             -R "^ConsumerRecipe$" --output-on-failure
@@ -262,31 +270,63 @@ function(expect_recipe_test)
         fail("ctest of ConsumerRecipe failed (${result}):\n${test_output}")
     endif ()
 
+    if (NOT EXISTS "${test_graph}")
+        fail("the ConsumerRecipe test wrote no ${test_graph}")
+    endif ()
+
+    file(TIMESTAMP "${build}/epm/graph.cmake" graph_time_after "%s")
+    expect_equal("the build's graph.cmake time after the test"
+            "${graph_time_after}" "${graph_time_before}")
+
+    # The target refreshes the build's own graph files, everything cached.
+    file(REMOVE "${build}/epm/graph.cmake")
     execute_process(
             COMMAND "${CMAKE_COMMAND}" --build "${build}" --config Release
-            --target ConsumerRecipe-describe
+            --target ConsumerRecipe-configure
             RESULT_VARIABLE result
-            OUTPUT_VARIABLE describe_output
-            ERROR_VARIABLE describe_output)
+            OUTPUT_VARIABLE configure_output
+            ERROR_VARIABLE configure_output)
 
-    if (NOT result EQUAL 0 OR NOT describe_output MATCHES "${names_mid}")
-        fail("ConsumerRecipe-describe failed (${result}):\n${describe_output}")
+    if (NOT result EQUAL 0 OR NOT EXISTS "${build}/epm/graph.cmake")
+        fail("ConsumerRecipe-configure failed (${result}):\n${configure_output}")
     endif ()
+
+    file(SHA256 "${build}/epm/graph.cmake" graph_after)
+    expect_equal("graph.cmake from ConsumerRecipe-configure" "${graph_after}"
+            "${graph_before}")
+
+    if (configure_output MATCHES "building (Leaf|Mid) from source")
+        fail("ConsumerRecipe-configure built again:\n${configure_output}")
+    endif ()
+
+    # The steps it ran, Mid's own and Leaf's in Mid's executable, are still
+    # epm's cached recipe executables.
+    foreach (name IN ITEMS Leaf Mid)
+        file(STRINGS "${build}/epm/steps/${name}.command" command_lines)
+        list(GET command_lines 1 command_line)
+        separate_arguments(command_line UNIX_COMMAND "${command_line}")
+        list(GET command_line 0 step_recipe)
+
+        if (NOT IS_ABSOLUTE "${step_recipe}" OR NOT step_recipe MATCHES "/epm-recipe$")
+            fail("${name}.command after ConsumerRecipe-configure: ${command_line}")
+        endif ()
+    endforeach ()
 
     consumer_recipe(recipe)
     set(env "${build}/epm/env.json")
-    execute_process(COMMAND "${recipe}" --env "${env}"
+    execute_process(COMMAND "${recipe}" describe --env "${env}"
             RESULT_VARIABLE result
             OUTPUT_VARIABLE run_output
             ERROR_VARIABLE run_error)
 
     if (NOT result EQUAL 0 OR NOT run_output MATCHES "${names_mid}")
-        fail("${recipe} --env ${env} failed (${result}):\n${run_output}${run_error}")
+        fail("${recipe} describe --env ${env} failed (${result}):\n${run_output}${run_error}")
     endif ()
 
     set(project_file "${build}/recipe-project.json")
     file(REMOVE "${project_file}")
-    execute_process(COMMAND "${recipe}" --env "${env}" --out "${project_file}"
+    execute_process(
+            COMMAND "${recipe}" describe --env "${env}" --out "${project_file}"
             RESULT_VARIABLE result
             OUTPUT_VARIABLE run_output
             ERROR_VARIABLE run_output)
@@ -301,13 +341,27 @@ function(expect_recipe_test)
         fail("${recipe} --out ${project_file} failed (${result}):\n${run_output}\n${project_file}: ${project_json}")
     endif ()
 
-    execute_process(COMMAND "${recipe}" --env "${WORK_DIR}/no-such-env.json"
+    execute_process(
+            COMMAND "${recipe}" describe --env "${WORK_DIR}/no-such-env.json"
             RESULT_VARIABLE result
             OUTPUT_VARIABLE run_output
             ERROR_VARIABLE run_error)
 
     if (NOT result EQUAL 1 OR run_error STREQUAL "")
-        fail("${recipe} with a missing env.json exited ${result} (expected 1, with a message), stderr '${run_error}'")
+        fail("${recipe} describe with a missing env.json exited ${result} (expected 1, with a message), stderr '${run_error}'")
+    endif ()
+
+    # So does its configure, the default command.
+    execute_process(
+            COMMAND "${recipe}" --env "${WORK_DIR}/no-such-env.json"
+            --overrides "${build}/epm/overrides.json" --out "${build}/epm/test"
+            WORKING_DIRECTORY "${consumer}"
+            RESULT_VARIABLE result
+            OUTPUT_VARIABLE run_output
+            ERROR_VARIABLE run_error)
+
+    if (NOT result EQUAL 1 OR NOT run_error MATCHES "cannot read the env file")
+        fail("${recipe} configuring with a missing env.json exited ${result} (expected 1, with a message), stderr '${run_error}'")
     endif ()
 
     execute_process(

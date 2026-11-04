@@ -33,9 +33,9 @@ std::string identityOf(const RecipeSdk& sdk)
 
 // <prefix>/bin/epm: the prefix is two levels up from the real executable, so a
 // symlink to it on PATH still finds the install beside it.
-FilePath installPrefix()
+FilePath installPrefix(const FilePath& epmExecutable)
 {
-    return resolvedPath(Files::executablePath()).parentDirectory().parentDirectory();
+    return resolvedPath(epmExecutable).parentDirectory().parentDirectory();
 }
 
 std::optional<Vector<std::string>>
@@ -100,17 +100,18 @@ std::optional<RecipeSdk> installedRecipeSdk(const BakedRecipeSdk& baked,
     return sdk;
 }
 
+RecipeSdk recipeSdkFor(const FilePath& epmExecutable)
+{
+    const auto& baked = bakedRecipeSdk();
+    auto located =
+        installedRecipeSdk(baked, installPrefix(epmExecutable)).value_or(baked.sdk);
+    located.identity = identityOf(located);
+    return located;
+}
+
 const RecipeSdk& recipeSdk()
 {
-    static const auto sdk = []
-    {
-        const auto& baked = bakedRecipeSdk();
-        auto located =
-            installedRecipeSdk(baked, installPrefix()).value_or(baked.sdk);
-        located.identity = identityOf(located);
-        return located;
-    }();
-
+    static const auto sdk = recipeSdkFor(Files::executablePath());
     return sdk;
 }
 } // namespace epm

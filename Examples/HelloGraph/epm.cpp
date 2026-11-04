@@ -1,6 +1,7 @@
 // HelloGraph's dependencies. epm compiles and runs this file itself at
-// configure time; epm_add_recipe in CMakeLists.txt also builds it, so that the
-// IDE and the build check it and a Debug build can step through describe().
+// configure time; epm_add_recipe in CMakeLists.txt also builds it as
+// HelloGraphRecipe, which runs the same configure, so that the IDE and the
+// build check it and a Debug build can step through describe() and the hooks.
 
 #include <epm/Recipe/Recipe.h>
 
@@ -9,7 +10,7 @@ using namespace epm;
 namespace
 {
 // How eacp is built into the cache: the default CMake flow, without its tests
-// and examples. epm runs it in this file's executable; to debug it, run
+// and examples. It runs in this file's executable; to debug it alone, run
 // HelloGraphRecipe with
 // `build --package eacp --in <build dir>/epm/steps/eacp.in.json --out <file>`.
 struct Eacp final : CMakePackage

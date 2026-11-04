@@ -48,8 +48,8 @@ RecipeRun runRecipe(const FilePath& executableToRun,
     if (!saveJsonFile(envFile, env))
         return runFailure("cannot write " + envFile.str());
 
-    const auto arguments =
-        Vector<std::string> {"--env", envFile.str(), "--out", projectFile.str()};
+    const auto arguments = Vector<std::string> {
+        "describe", "--env", envFile.str(), "--out", projectFile.str()};
     Log::step("running " + executable.str() + " " + joinList(arguments, " "));
 
     const auto result = runCommand(executable.str(), arguments, workingDirectory);

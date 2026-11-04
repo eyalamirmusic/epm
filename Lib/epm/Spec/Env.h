@@ -45,6 +45,11 @@ struct Env
     // part of any fingerprint.
     std::string profile;
 
+    // EPM_EXECUTABLE: the epm binary running this configure, whose install
+    // prefix holds the recipe SDK (RecipeSdk). Not part of any fingerprint;
+    // empty when unknown, which means the running executable.
+    std::string epmExecutable;
+
     MIRO_REFLECT(schema,
                  cmake,
                  cmakeVersion,
@@ -65,6 +70,7 @@ struct Env
                  androidAbi,
                  cxxStandard,
                  toolchainFile,
-                 profile)
+                 profile,
+                 epmExecutable)
 };
 } // namespace epm

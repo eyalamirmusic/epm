@@ -18,7 +18,7 @@ nano_add_executable(epmTests
             SourceCacheTests.cpp
             SpecTests.cpp
             TimestampTests.cpp
-        TARGETS epm-core)
+        TARGETS epm-recipe)
 
 target_compile_definitions(epmTests PRIVATE
         EPM_TEST_RECIPE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Recipe"

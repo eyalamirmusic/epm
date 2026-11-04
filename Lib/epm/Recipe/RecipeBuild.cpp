@@ -10,6 +10,9 @@
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Utils/Files.h>
 
+#include <map>
+#include <mutex>
+
 namespace epm
 {
 using namespace eacp;
@@ -20,20 +23,38 @@ constexpr auto executableFileName =
     Platform::isWindows() ? "epm-recipe.exe" : "epm-recipe";
 constexpr auto failureLines = 30;
 
-// The binary is rebuilt with whatever a recipe compiles against, so its hash
-// covers what recipeInputsHash leaves out: eacp's and Miro's headers. Hashed
-// once per process.
-const std::string& executableHash()
+// What recipes are built against for one epm binary: its SDK, the binary's
+// hash and recipeInputsHash. The binary is rebuilt with whatever a recipe
+// compiles against, so its hash covers what recipeInputsHash leaves out:
+// eacp's and Miro's headers.
+struct RecipeToolchain
 {
-    static const auto hash =
-        sha256HexOfFile(Files::executablePath()).value_or(std::string {});
-    return hash;
-}
+    FilePath epmExecutable;
+    RecipeSdk sdk;
+    std::string executableHash;
+    std::optional<std::string> inputsHash;
+};
 
-const std::optional<std::string>& inputsHash()
+// The toolchain of `epmExecutable`, this executable when empty. Located and
+// hashed once per binary and process.
+const RecipeToolchain& toolchainFor(const FilePath& epmExecutable)
 {
-    static const auto hash = recipeInputsHash(recipeSdk());
-    return hash;
+    static auto mutex = std::mutex {};
+    static auto toolchains = std::map<std::string, RecipeToolchain> {};
+
+    const auto epm = epmExecutable.empty() ? Files::executablePath() : epmExecutable;
+    const auto key = resolvedPath(epm).str();
+    const auto lock = std::lock_guard {mutex};
+
+    if (const auto found = toolchains.find(key); found != toolchains.end())
+        return found->second;
+
+    auto toolchain = RecipeToolchain {};
+    toolchain.epmExecutable = epm;
+    toolchain.sdk = recipeSdkFor(epm);
+    toolchain.executableHash = sha256HexOfFile(epm).value_or(std::string {});
+    toolchain.inputsHash = recipeInputsHash(toolchain.sdk);
+    return toolchains.emplace(key, std::move(toolchain)).first->second;
 }
 
 // epm's own headers: those under the include directory holding
@@ -93,10 +114,11 @@ void addLinkOption(Vector<std::string>& arguments, const std::string& option)
         arguments.add("-l" + option);
 }
 
-RecipeBuild
-    compile(const FilePath& source, const FilePath& executable, const FilePath& log)
+RecipeBuild compile(const RecipeSdk& sdk,
+                    const FilePath& source,
+                    const FilePath& executable,
+                    const FilePath& log)
 {
-    const auto& sdk = recipeSdk();
     const auto temporary =
         executable.sibling(executable.stem() + ".tmp" + executable.extension());
     const auto arguments = recipeCompileArguments(sdk, source, temporary);
@@ -214,7 +236,9 @@ Vector<std::string> recipeCompileArguments(const RecipeSdk& sdk,
     return arguments;
 }
 
-RecipeBuild buildRecipe(const FilePath& sourceToBuild, const CacheRoot& cache)
+RecipeBuild buildRecipe(const FilePath& sourceToBuild,
+                        const CacheRoot& cache,
+                        const FilePath& epmExecutable)
 {
     // MSVC needs its own argument shape (/std:, /Fe, .lib names), not a
     // different design: a recipe is an executable on every platform.
@@ -227,21 +251,25 @@ RecipeBuild buildRecipe(const FilePath& sourceToBuild, const CacheRoot& cache)
     if (!Files::isFile(source))
         return failure("no recipe at " + source.str());
 
-    if (executableHash().empty())
+    const auto& toolchain = toolchainFor(epmExecutable);
+    const auto& sdk = toolchain.sdk;
+
+    if (toolchain.executableHash.empty())
         return failure("cannot hash the epm executable "
-                       + Files::executablePath().str());
+                       + toolchain.epmExecutable.str());
 
-    if (recipeLibraries(recipeSdk()).empty())
+    if (recipeLibraries(sdk).empty())
         return failure("this epm has no recipe libraries for its configuration '"
-                       + recipeSdk().config + "'");
+                       + sdk.config + "'");
 
-    if (!inputsHash())
+    if (!toolchain.inputsHash)
         return failure("cannot read this epm's recipe libraries and headers");
 
-    const auto key =
-        recipeKey(
-            recipeSdk(), executableHash(), *inputsHash(), Files::readFile(source))
-            .substr(0, 12);
+    const auto key = recipeKey(sdk,
+                               toolchain.executableHash,
+                               *toolchain.inputsHash,
+                               Files::readFile(source))
+                         .substr(0, 12);
     const auto directory = cache.recipe() / key;
     const auto executable = directory / executableFileName;
     const auto log = directory / "compile.log";
@@ -255,9 +283,8 @@ RecipeBuild buildRecipe(const FilePath& sourceToBuild, const CacheRoot& cache)
     if (Files::isFile(executable))
         return cached;
 
-    if (!Files::isFile(recipeSdk().compiler))
-        return failure("the compiler that built epm is gone: "
-                       + recipeSdk().compiler);
+    if (!Files::isFile(sdk.compiler))
+        return failure("the compiler that built epm is gone: " + sdk.compiler);
 
     const auto lock = PackageLock {cache, "recipe-" + key, packageLockTimeout};
 
@@ -269,6 +296,14 @@ RecipeBuild buildRecipe(const FilePath& sourceToBuild, const CacheRoot& cache)
         return cached;
 
     Files::createDirectories(directory);
-    return compile(source, executable, log);
+    return compile(sdk, source, executable, log);
+}
+
+std::string recipeBuildError(const RecipeBuild& build)
+{
+    if (build.firstDiagnostic.empty())
+        return build.error;
+
+    return build.error + "\n  " + build.firstDiagnostic;
 }
 } // namespace epm

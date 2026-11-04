@@ -3,15 +3,15 @@
 #include <epm/Emit/GraphResponse.h>
 #include <epm/Emit/RecipeSdkCMake.h>
 #include <epm/Emit/Response.h>
-#include <epm/Graph/Graph.h>
 #include <epm/Recipe/RecipeBuild.h>
+#include <epm/Recipe/RecipeConfigure.h>
 #include <epm/Recipe/RecipeRun.h>
 #include <epm/Resolve/Resolve.h>
 #include <epm/Spec/JsonFile.h>
+#include <epm/Util/Command.h>
 #include <epm/Util/Log.h>
 #include <epm/Util/Paths.h>
-
-#include <eacp/Core/Utils/Environment.h>
+#include <epm/Util/Text.h>
 
 #include "Version.h"
 
@@ -19,6 +19,7 @@
 #include <eacp/Core/App/Args.h>
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
+#include <eacp/Core/Utils/TemporaryFile.h>
 
 #include <optional>
 
@@ -121,64 +122,122 @@ int resolve()
     return 0;
 }
 
+// The child's stderr, the failure it reports, as this process's own.
+void passOnErrors(std::string errors)
+{
+    while (!errors.empty() && errors.back() == '\n')
+        errors.pop_back();
+
+    if (!errors.empty())
+        Console::printError(errors);
+}
+
+// epm configure in the root recipe's executable, compiled into the cache: its
+// configure command (RecipeMain) drives the graph, running the steps the root
+// owns in its own process and every other recipe in an executable of its own.
+// It runs in the manifest's directory, with its stdout streamed and its
+// stderr passed on; its exit code is this one's. The env it gets names this
+// epm when env.json does not, as the recipe SDK and nested child builds need.
+int configureInRecipe(const epm::ConfigureArgs& args,
+                      epm::Env env,
+                      const epm::CacheRoot& cache)
+{
+    const auto scratch = TemporaryFile {};
+    auto envFile = epm::resolvedPath(args.env);
+
+    if (env.epmExecutable.empty())
+    {
+        env.epmExecutable = Files::executablePath().str();
+        envFile = scratch.path() / "env.json";
+
+        if (!epm::saveJsonFile(envFile, env))
+            return fail("cannot write " + envFile.str());
+    }
+
+    const auto manifest = epm::resolvedPath(args.manifest);
+    const auto build =
+        epm::buildRecipe(manifest, cache, FilePath {env.epmExecutable});
+
+    if (!build.ok)
+        return fail("the manifest " + args.manifest.str() + ": "
+                    + epm::recipeBuildError(build));
+
+    epm::Log::step((build.cached ? "cached " : "built ") + build.executable.str());
+
+    auto arguments = Vector<std::string> {"configure",
+                                          "--manifest",
+                                          manifest.str(),
+                                          "--env",
+                                          envFile.str(),
+                                          "--overrides",
+                                          epm::resolvedPath(args.overrides).str(),
+                                          "--out",
+                                          epm::resolvedPath(args.out).str(),
+                                          "--cache",
+                                          cache.path().str()};
+
+    if (args.verbose)
+        arguments.add("--verbose");
+
+    const auto program = build.executable.str();
+    epm::Log::step("running " + program + " " + epm::joinList(arguments, " "));
+
+    const auto result =
+        epm::runCommandKeepingErrors(program, arguments, manifest.parentDirectory());
+    passOnErrors(result.errorOutput);
+
+    // Above 128 it was killed (Command.h), and reported nothing itself.
+    constexpr auto signalBase = 128;
+
+    if (result.exitCode >= 0 && result.exitCode <= signalBase)
+        return result.exitCode;
+
+    auto error = "the manifest " + args.manifest.str() + ": " + program
+                 + " configure failed: " + epm::failureReason(program, result);
+
+    if (const auto tail = epm::lastLines(result.output, 20); !tail.empty())
+        error += "\n" + tail;
+
+    return fail(error);
+}
+
 int configure()
 {
-    auto manifest = FilePath {};
-    auto env = FilePath {};
-    auto overrides = FilePath {};
-    auto out = FilePath {};
-    auto cache = FilePath {};
-    auto verbose = false;
+    auto args = epm::ConfigureArgs {};
 
     auto cli = Args::Parser {"epm configure",
                              "Resolves the dependency graph of an epm.cpp."};
-    cli.option("--manifest", manifest, "the root epm.cpp").required();
-    cli.option("--env", env, "the env JSON").required();
-    cli.option("--overrides", overrides, "the overrides JSON").required();
-    cli.option("--out", out, "the directory for graph.cmake and graph.json")
+    cli.option("--manifest", args.manifest, "the root epm.cpp").required();
+    cli.option("--env", args.env, "the env JSON").required();
+    cli.option("--overrides", args.overrides, "the overrides JSON").required();
+    cli.option("--out", args.out, "the directory for graph.cmake and graph.json")
         .required();
-    cli.option("--cache", cache, "the cache root (default: $EPM_CACHE)");
-    cli.flag("--verbose", verbose, "log each step");
+    cli.option("--cache", args.cache, "the cache root (default: $EPM_CACHE)");
+    cli.flag("--verbose", args.verbose, "log each step");
 
     if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
         return *code;
 
-    epm::Log::setVerbose(verbose);
+    epm::Log::setVerbose(args.verbose);
 
     try
     {
-        auto inputs = epm::GraphInputs {};
-        inputs.environment = getEnv;
+        auto error = std::string {};
+        const auto inputs = epm::configureInputs(args, error);
 
-        if (!Files::isFile(manifest))
-            return fail("no manifest at " + manifest.str());
+        if (!inputs)
+            return fail(error);
 
-        if (auto loaded = epm::loadJsonFile<epm::Env>(env))
-            inputs.env = std::move(*loaded);
-        else
-            return fail("cannot read the env file " + env.str());
-
-        if (auto loaded = epm::loadJsonFile<epm::Overrides>(overrides))
-            inputs.overrides = std::move(*loaded);
-        else
-            return fail("cannot read the overrides file " + overrides.str());
-
-        const auto cacheRoot =
-            canonical(cache.empty() ? epm::CacheRoot::fromEnvironment()
-                                    : epm::CacheRoot {cache});
-        // Absolute: a step runs in its recipe's directory.
+        const auto cache = epm::configureCache(args);
         auto loader =
-            epm::RecipeManifestLoader {cacheRoot, epm::resolvedPath(out) / "steps"};
-        auto loadError = std::string {};
+            epm::RecipeManifestLoader {cache, epm::configureStepsDirectory(args)};
 
-        if (auto project = loader.loadFile(manifest, inputs.env, loadError))
-            inputs.project = std::move(*project);
-        else
-            return fail("the manifest " + manifest.str() + ": " + loadError);
+        if (loader.runsSteps())
+            return configureInRecipe(args, inputs->env, cache);
 
-        inputs.rootRecipe = manifest;
-
-        const auto result = epm::configureGraph(inputs, cacheRoot, loader);
+        // No recipe executables (Windows): the graph in this process, which
+        // fails at the first recipe, as buildRecipe does there.
+        const auto result = epm::runConfigure(args, loader);
 
         if (!result.ok)
         {
@@ -187,12 +246,6 @@ int configure()
 
             return fail(result.error);
         }
-
-        if (!epm::writeGraphJson(out / "graph.json", result.graph))
-            return fail("cannot write " + (out / "graph.json").str());
-
-        if (!epm::writeGraphCMake(out / "graph.cmake", result.graph))
-            return fail("cannot write " + (out / "graph.cmake").str());
     }
     catch (const std::exception& error)
     {

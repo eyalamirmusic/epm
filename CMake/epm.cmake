@@ -429,6 +429,9 @@ function(epm_write_env)
 
     epm_json_set_string(json profile "${profile}")
 
+    # Where a recipe executable finds the recipe SDK: the prefix of this epm.
+    epm_json_set_string(json epmExecutable "${EPM_EXECUTABLE}")
+
     file(WRITE "${EPM_DIR}/env.json" "${json}\n")
     set_property(GLOBAL PROPERTY EPM_ENV_WRITTEN TRUE)
 endfunction()
@@ -473,6 +476,7 @@ function(epm_configure_graph)
 
     epm_write_env()
     epm_write_overrides("${EPM_DIR}/overrides.json")
+    set_property(GLOBAL PROPERTY EPM_OVERRIDES_WRITTEN TRUE)
     file(REMOVE "${graph_file}")
 
     epm_run_binary("epm configure"
@@ -742,31 +746,57 @@ function(epm_recipe_sdk)
     endif ()
 endfunction()
 
+# The inputs of epm_add_recipe's configure, written by the end of the configure
+# even when nothing asked epm for a package: env.json, and overrides.json
+# unless epm_configure_graph wrote it already.
+function(epm_write_recipe_inputs)
+    epm_write_env()
+    get_property(written GLOBAL PROPERTY EPM_OVERRIDES_WRITTEN)
+
+    if (NOT written)
+        epm_write_overrides("${EPM_DIR}/overrides.json")
+        set_property(GLOBAL PROPERTY EPM_OVERRIDES_WRITTEN TRUE)
+    endif ()
+endfunction()
+
 # epm_add_recipe(<target> [SOURCE <file>] [NO_TEST])
 #
 # Builds an epm.cpp (by default ${CMAKE_CURRENT_SOURCE_DIR}/epm.cpp) as the
-# executable <target>, linked against epm::recipe: the same program epm builds
-# and runs at configure time to learn the dependencies, here built by this
-# build, so that IDEs index it and the build reports its errors. The configure
-# never runs this one; epm builds and runs its own.
+# executable <target>, linked against epm::recipe: the same program epm
+# configure compiles into the cache, here built by this build, so that IDEs
+# index it, the build reports its errors and a debugger can run it.
 #
-# Its command line is `<target> --env <env.json> [--out <project.json>]`;
-# without --out it prints the Project as JSON. To debug the recipe, launch
-# <target> under a debugger with `--env <build dir>/epm/env.json` (this
-# configure's env.json; Xcode and Visual Studio get it as the target's debugger
-# arguments) and stop in describe(). The custom target <target>-describe runs
-# exactly that, and unless NO_TEST (or BUILD_TESTING is OFF) so does the test
-# <target>, run only by a project that calls enable_testing().
+# The executable can run the whole configure: by default (its `configure`
+# command) it describes the recipe, fetches the packages, finds or builds
+# their cache entries and writes graph.json, graph.cmake and steps/, running
+# the build steps this recipe owns in its own process and every other
+# recipe's in that recipe's executable. The configure CMake runs still goes
+# through `epm configure`, which compiles and runs epm's cached copy of the
+# same source; this one runs only when asked:
 #
-# epm configure also runs, in its own build of this recipe, the build steps
-# this recipe owns: those of the packages it declares with add<T> (unless the
-# package has an epm.cpp of its own), and the default steps of the packages
-# it declares that no other declaration gives custom steps. It keeps each
-# step's input as ${EPM_DIR}/steps/<name>.in.json. To debug one, launch
-# <target> with `build --package <name> --in <build dir>/epm/steps/<name>.in.json
-# --out <any file>` and stop in the steps' build() or hooks. A step another
-# recipe owns (a dependency's epm.cpp) runs in that recipe's executable:
-# ${EPM_DIR}/steps/<name>.command holds the command line that runs it.
+#   <target> configure --manifest <file> --env <build dir>/epm/env.json
+#            --overrides <build dir>/epm/overrides.json --out <build dir>/epm
+#            [--cache <dir>] [--verbose]
+#
+# which is what the custom target <target>-configure runs (it refreshes the
+# build's graph files) and what Xcode and Visual Studio get as the target's
+# debugger arguments, in the top-level source directory. Unless NO_TEST (or
+# BUILD_TESTING is OFF) the test <target>, run only by a project that calls
+# enable_testing(), runs the same with --out <build dir>/epm/test, so that it
+# never rewrites the build's own graph files.
+#
+# To debug describe() or a hook, run <target> with those default arguments
+# under a debugger, from a Debug build, and stop in it. To debug one build
+# step, run <target> with `build --package <name> --in <build dir>/epm/steps/
+# <name>.in.json --out <any file>`: the steps this recipe owns are those of
+# the packages it declares with add<T> (unless the package has an epm.cpp of
+# its own) and the default steps of the packages it declares that no other
+# declaration gives custom steps. A step another recipe owns runs in that
+# recipe's executable: ${EPM_DIR}/steps/<name>.command holds the command line
+# that runs it.
+#
+# `<target> describe --env <env.json> [--out <project.json>]` prints the
+# Project describe() declares, as JSON.
 #
 # Does nothing on Windows yet (RecipeBuild does not compile recipes with MSVC's
 # command-line shape), when cross-compiling (a recipe runs on the host, against
@@ -844,19 +874,38 @@ function(epm_add_recipe target)
                 OSX_ARCHITECTURES "${CMAKE_HOST_SYSTEM_PROCESSOR}")
     endif ()
 
-    # The env.json the recipe reads is the configure's own, written by then
-    # even when nothing asked epm for a package.
-    get_property(env_deferred GLOBAL PROPERTY EPM_RECIPE_ENV_DEFERRED)
+    # The env.json and overrides.json the configure reads are the configure's
+    # own, written by then even when nothing asked epm for a package.
+    get_property(inputs_deferred GLOBAL PROPERTY EPM_RECIPE_INPUTS_DEFERRED)
 
-    if (NOT env_deferred)
-        set_property(GLOBAL PROPERTY EPM_RECIPE_ENV_DEFERRED TRUE)
-        cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL epm_write_env)
+    if (NOT inputs_deferred)
+        set_property(GLOBAL PROPERTY EPM_RECIPE_INPUTS_DEFERRED TRUE)
+        cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}"
+                CALL epm_write_recipe_inputs)
     endif ()
 
-    # This build's executable, not the one epm builds (so no cache is
-    # involved): in a Debug configuration it has debug info, and a debugger
-    # running it, the test or the target below stops in describe().
-    set(arguments --env "${EPM_DIR}/env.json")
+    # epm configure's own arguments (epm_configure_graph, epm_run_binary), for
+    # this build's executable rather than epm's cached one: in a Debug
+    # configuration it has debug info, and a debugger running it stops in
+    # describe(), a hook, or the steps of the packages this recipe owns.
+    set(inputs --manifest "${source}"
+            --env "${EPM_DIR}/env.json"
+            --overrides "${EPM_DIR}/overrides.json")
+    set(options "")
+
+    # Against the source directory, as epm_run_binary's: an IDE may start the
+    # executable elsewhere.
+    if (EPM_CACHE)
+        cmake_path(ABSOLUTE_PATH EPM_CACHE BASE_DIRECTORY "${CMAKE_SOURCE_DIR}"
+                OUTPUT_VARIABLE cache)
+        list(APPEND options --cache "${cache}")
+    endif ()
+
+    if (EPM_VERBOSE)
+        list(APPEND options --verbose)
+    endif ()
+
+    set(arguments configure ${inputs} --out "${EPM_DIR}" ${options})
     string(JOIN " " debugger_arguments ${arguments})
     set_target_properties(${target} PROPERTIES
             VS_DEBUGGER_COMMAND_ARGUMENTS "${debugger_arguments}"
@@ -864,21 +913,23 @@ function(epm_add_recipe target)
             XCODE_SCHEME_ARGUMENTS "${arguments}"
             XCODE_SCHEME_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
-    add_custom_target(${target}-describe
+    add_custom_target(${target}-configure
             COMMAND ${target} ${arguments}
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-            COMMENT "Running the recipe ${source}"
+            COMMENT "Configuring ${source} ..."
             USES_TERMINAL
             VERBATIM)
-    add_dependencies(${target}-describe ${target})
-    set_target_properties(${target}-describe PROPERTIES FOLDER epm)
+    add_dependencies(${target}-configure ${target})
+    set_target_properties(${target}-configure PROPERTIES FOLDER epm)
 
     if (EPM_ARGS_NO_TEST OR (DEFINED BUILD_TESTING AND NOT BUILD_TESTING))
         return()
     endif ()
 
+    # Into a directory of its own: a test run leaves the build's graph files
+    # and steps/ as the configure wrote them.
     add_test(NAME ${target}
-            COMMAND ${target} ${arguments}
+            COMMAND ${target} configure ${inputs} --out "${EPM_DIR}/test" ${options}
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 endfunction()
 

@@ -25,14 +25,6 @@ namespace
 {
 constexpr auto failureLines = 20;
 
-std::string buildError(const RecipeBuild& build)
-{
-    if (build.firstDiagnostic.empty())
-        return build.error;
-
-    return build.error + "\n  " + build.firstDiagnostic;
-}
-
 std::string withLastLines(std::string error, std::string_view output)
 {
     if (const auto tail = lastLines(output, failureLines); !tail.empty())
@@ -96,9 +88,74 @@ bool writeCommandFile(const FilePath& path,
 }
 } // namespace
 
+std::optional<Project> ManifestLoader::loadFile(const FilePath& recipe,
+                                                const Env& env,
+                                                std::string& error)
+{
+    if (!Files::isFile(recipe))
+    {
+        error = "no recipe at " + recipe.str();
+        return std::nullopt;
+    }
+
+    if (recipe.fileName() != manifestFileName)
+    {
+        error = "this loader reads only " + std::string {manifestFileName}
+                + " files, not " + recipe.str();
+        return std::nullopt;
+    }
+
+    return load(recipe.parentDirectory(), env, error);
+}
+
 bool ManifestLoader::hasManifest(const FilePath& directory) const
 {
     return Files::isFile(directory / manifestFileName);
+}
+
+std::optional<StepFiles> writeStepFiles(const FilePath& directory,
+                                        const BuildInput& input,
+                                        const FilePath& executable,
+                                        const FilePath& workingDirectory,
+                                        std::string& error)
+{
+    const auto& name = input.request.name;
+    const auto stepFiles = resolvedPath(directory);
+
+    auto files = StepFiles {};
+    files.input = stepFiles / (name + ".in.json");
+    files.output = stepFiles / (name + ".out.json");
+    files.command = stepFiles / (name + ".command");
+
+    if (Files::exists(files.output) && !Files::removeFile(files.output))
+    {
+        error = "cannot remove " + files.output.str();
+        return std::nullopt;
+    }
+
+    if (!saveJsonFile(files.input, input))
+    {
+        error = "cannot write " + files.input.str();
+        return std::nullopt;
+    }
+
+    files.arguments = {"build",
+                       "--package",
+                       name,
+                       "--in",
+                       files.input.str(),
+                       "--out",
+                       files.output.str()};
+    files.commandLine = shellCommand(resolvedPath(executable), files.arguments);
+
+    if (!writeCommandFile(
+            files.command, resolvedPath(workingDirectory), files.commandLine))
+    {
+        error = "cannot write " + files.command.str();
+        return std::nullopt;
+    }
+
+    return files;
 }
 
 RecipeManifestLoader::RecipeManifestLoader(CacheRoot cacheToUse,
@@ -122,11 +179,11 @@ std::optional<Project> RecipeManifestLoader::loadFile(const FilePath& recipe,
                                                       const Env& env,
                                                       std::string& error)
 {
-    const auto build = buildRecipe(recipe, cache);
+    const auto build = buildRecipe(recipe, cache, FilePath {env.epmExecutable});
 
     if (!build.ok)
     {
-        error = buildError(build);
+        error = recipeBuildError(build);
         return std::nullopt;
     }
 
@@ -150,11 +207,12 @@ std::optional<BuildOutput> RecipeManifestLoader::build(const FilePath& recipe,
                                                        const BuildInput& input,
                                                        std::string& error)
 {
-    const auto built = buildRecipe(recipe, cache);
+    const auto built =
+        buildRecipe(recipe, cache, FilePath {input.env.epmExecutable});
 
     if (!built.ok)
     {
-        error = "the recipe " + recipe.str() + ": " + buildError(built);
+        error = "the recipe " + recipe.str() + ": " + recipeBuildError(built);
         return std::nullopt;
     }
 
@@ -171,40 +229,21 @@ std::optional<BuildOutput> RecipeManifestLoader::runStep(const FilePath& executa
                                                          const BuildInput& input,
                                                          std::string& error) const
 {
-    const auto& name = input.request.name;
-    const auto stepFiles = resolvedPath(directory);
-    const auto inFile = stepFiles / (name + ".in.json");
-    const auto outFile = stepFiles / (name + ".out.json");
-    const auto commandFile = stepFiles / (name + ".command");
     const auto workingDirectory = resolvedPath(recipe).parentDirectory();
     const auto program = resolvedPath(executable);
 
-    // A previous run's output must not pass for this one's.
-    if (Files::exists(outFile) && !Files::removeFile(outFile))
-    {
-        error = "cannot remove " + outFile.str();
-        return std::nullopt;
-    }
-
-    if (!saveJsonFile(inFile, input))
-    {
-        error = "cannot write " + inFile.str();
-        return std::nullopt;
-    }
-
-    const auto arguments = Vector<std::string> {
-        "build", "--package", name, "--in", inFile.str(), "--out", outFile.str()};
-    const auto command = shellCommand(program, arguments);
-
     // The kept command has no --quiet, so a run by hand prints the failure.
-    if (!writeCommandFile(commandFile, workingDirectory, command))
-    {
-        error = "cannot write " + commandFile.str();
+    const auto files =
+        writeStepFiles(directory, input, program, workingDirectory, error);
+
+    if (!files)
         return std::nullopt;
-    }
+
+    const auto& outFile = files->output;
+    const auto& command = files->commandLine;
 
     // Its failure reaches the user once, from this process.
-    auto quietArguments = arguments;
+    auto quietArguments = files->arguments;
     quietArguments.add("--quiet");
 
     Log::step("running " + shellCommand(program, quietArguments));

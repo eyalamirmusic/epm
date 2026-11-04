@@ -32,30 +32,25 @@ std::string keptTail(std::string_view text, std::size_t limit)
 
     return std::string {tail};
 }
-} // namespace
 
-CommandResult runCommand(const std::string& executable,
-                         const Vector<std::string>& arguments,
-                         const FilePath& workingDirectory,
-                         Echo echo)
+Processes::ProcessOptions processOptions(const std::string& executable,
+                                         const Vector<std::string>& arguments,
+                                         const FilePath& workingDirectory)
 {
     auto options = Processes::ProcessOptions {};
     options.executable = executable;
     options.arguments = arguments;
     options.workingDirectory = workingDirectory.str();
-    options.mergeErrorOutput = true;
+    return options;
+}
 
-    if (echo == Echo::always)
-        options.onOutput = [](std::string_view chunk) { Log::echo(chunk); };
-    else if (Log::isVerbose())
-        options.onOutput = [](std::string_view chunk) { Log::stream(chunk); };
-
-    const auto result = Processes::run(std::move(options));
-
+CommandResult commandResultFor(const std::string& executable,
+                               const Processes::ProcessResult& result,
+                               std::string output)
+{
     auto commandResult = CommandResult {};
-    commandResult.output = echo == Echo::always
-                               ? keptTail(result.output, echoedOutputKept)
-                               : result.output;
+    commandResult.output = std::move(output);
+    commandResult.errorOutput = result.errorOutput;
     commandResult.exitCode = result.launched ? result.exitCode : -1;
 
     if (!result.launched)
@@ -67,6 +62,38 @@ CommandResult runCommand(const std::string& executable,
         commandResult.ok = true;
 
     return commandResult;
+}
+} // namespace
+
+CommandResult runCommand(const std::string& executable,
+                         const Vector<std::string>& arguments,
+                         const FilePath& workingDirectory,
+                         Echo echo)
+{
+    auto options = processOptions(executable, arguments, workingDirectory);
+    options.mergeErrorOutput = true;
+
+    if (echo == Echo::always)
+        options.onOutput = [](std::string_view chunk) { Log::echo(chunk); };
+    else if (Log::isVerbose())
+        options.onOutput = [](std::string_view chunk) { Log::stream(chunk); };
+
+    const auto result = Processes::run(std::move(options));
+    auto output = echo == Echo::always ? keptTail(result.output, echoedOutputKept)
+                                       : result.output;
+    return commandResultFor(executable, result, std::move(output));
+}
+
+CommandResult runCommandKeepingErrors(const std::string& executable,
+                                      const Vector<std::string>& arguments,
+                                      const FilePath& workingDirectory)
+{
+    auto options = processOptions(executable, arguments, workingDirectory);
+    options.onOutput = [](std::string_view chunk) { Log::echo(chunk); };
+
+    const auto result = Processes::run(std::move(options));
+    return commandResultFor(
+        executable, result, keptTail(result.output, echoedOutputKept));
 }
 
 // Above 128 is how eacp::Processes reports a signal (or a shell's 128 + N).

@@ -35,9 +35,17 @@ struct RecipeBuild
 
 // Compiles an epm.cpp into a recipe executable for runRecipe(), unless the
 // cache already holds one for the same source, SDK, libraries, headers and
-// epm binary. Fails on Windows: there are no recipes there until this has an
-// MSVC argument shape.
-RecipeBuild buildRecipe(const eacp::FilePath& source, const CacheRoot& cache);
+// epm binary. That binary is `epmExecutable` (Env::epmExecutable), whose
+// recipeSdkFor the recipe is built against, or this executable when empty.
+// Fails on Windows: there are no recipes there until this has an MSVC
+// argument shape.
+RecipeBuild buildRecipe(const eacp::FilePath& source,
+                        const CacheRoot& cache,
+                        const eacp::FilePath& epmExecutable = {});
+
+// A failed build's error, then the compiler's first diagnostic on a line of
+// its own when it printed one.
+std::string recipeBuildError(const RecipeBuild& build);
 
 // SHA-256 over the contents of what a recipe is built from beside its source:
 // the archives it links (recipeLibraries) and epm's own headers, found under

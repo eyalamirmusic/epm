@@ -3,6 +3,7 @@
 #include <epm/Resolve/Resolve.h>
 
 #include <eacp/Core/Platform/Platform.h>
+#include <eacp/Core/Utils/Files.h>
 
 #include <NanoTest/NanoTest.h>
 
@@ -145,6 +146,22 @@ auto tRequestErrors = test("Resolve/requestErrors") = []
     unknownMatch.abiMatch = "loose";
     check(requestError(unknownMatch).value_or("").find("'loose'")
           != std::string::npos);
+};
+
+auto tBuildInputEpmExecutable = test("Resolve/buildInputFor/epmExecutable") = []
+{
+    const auto cache = CacheRoot {eacp::FilePath {"/cache"}};
+    auto env = Env {};
+
+    const auto running =
+        buildInputFor(modeRequest("auto"), env, cache, SourceSnapshot {});
+    check(running.epmExecutable == eacp::Files::executablePath().str());
+
+    env.epmExecutable = "/opt/epm/bin/epm";
+    const auto given =
+        buildInputFor(modeRequest("auto"), env, cache, SourceSnapshot {});
+    check(given.epmExecutable == "/opt/epm/bin/epm");
+    check(given.env.epmExecutable == "/opt/epm/bin/epm");
 };
 
 auto tRequestSchema = test("Resolve/requestErrors/schema") = []

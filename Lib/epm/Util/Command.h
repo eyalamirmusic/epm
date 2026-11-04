@@ -13,8 +13,12 @@ struct CommandResult
 {
     bool ok = false;
 
-    // stdout and stderr, interleaved as the child wrote them.
+    // stdout and stderr, interleaved as the child wrote them (stdout alone
+    // from runCommandKeepingErrors).
     std::string output;
+
+    // stderr, from runCommandKeepingErrors only.
+    std::string errorOutput;
 
     // Why it failed, one line: could not launch, or the exit code.
     std::string error;
@@ -42,6 +46,13 @@ CommandResult runCommand(const std::string& executable,
                          const eacp::Vector<std::string>& arguments,
                          const eacp::FilePath& workingDirectory = {},
                          Echo echo = Echo::whenVerbose);
+
+// As runCommand with Echo::always, but stderr is not merged: it comes back
+// whole in errorOutput, for a child whose stderr is the failure it reports
+// (epm configure's recipe executable).
+CommandResult runCommandKeepingErrors(const std::string& executable,
+                                      const eacp::Vector<std::string>& arguments,
+                                      const eacp::FilePath& workingDirectory = {});
 
 // Why `result` failed, one line, naming the signal that killed the child.
 std::string failureReason(const std::string& executable,

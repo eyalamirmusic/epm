@@ -11,11 +11,25 @@ using RecipeFactory = std::unique_ptr<Recipe> (*)();
 
 // The main() of a recipe executable, which EPM_RECIPE writes:
 //
-//     epm-recipe [describe] [--env <env.json>] [--out <project.json>]
+//     epm-recipe [configure] [--manifest <epm.cpp>] --env <env.json>
+//                --overrides <overrides.json> --out <dir> [--cache <dir>]
+//                [--verbose]
+//     epm-recipe describe [--env <env.json>] [--out <project.json>]
 //     epm-recipe build --package <name> --in <input.json> --out <output.json>
 //                      [--quiet]
 //
-// describe (the default): reads the Env (an empty one without --env), runs
+// configure (the default): what epm configure does, which runs it in its
+// own build of the root recipe (Recipe/RecipeConfigure.h): describes this
+// recipe and runs the build steps it owns in this process, every other
+// recipe in an executable of its own, and writes graph.json, graph.cmake and
+// steps/ into --out. --manifest is this recipe's file, epm.cpp in the working
+// directory by default. The other paths are taken against the working
+// directory it starts in, then it moves to the manifest's directory, where
+// describe() and its steps run. A failure goes to stderr ("epm: <error>", its
+// details above it), with exit code 1. Without arguments, or with an unknown
+// command, it prints the usage with exit code 2.
+//
+// describe: reads the Env (an empty one without --env), runs
 // describe() on the Recipe `create` makes, and writes the Project as JSON to
 // --out, or to stdout without it. A problem (an unreadable env, a recipe
 // that throws, a project that projectError rejects) goes to stderr with exit
