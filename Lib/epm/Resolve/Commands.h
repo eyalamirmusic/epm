@@ -24,6 +24,10 @@ struct CommandOptions
     EA::Vector<std::string> packageArguments;
     Mode mode = Mode::locked;
     bool isCI = false;
+
+    // A find_package call: locked mode writes a missing entry instead of
+    // refusing it, and errors name the find_package line.
+    bool isFindPackageRequest = false;
     eacp::FilePath lock;
 
     // The root project's epm.json; a missing file overrides nothing.
@@ -67,6 +71,11 @@ int runBeginCommand(const CommandOptions& options);
 int runResolveCommand(const CommandOptions& options);
 int runConfigureCommand(const CommandOptions& options);
 int runProvideCommand(const CommandOptions& options);
+
+// find_package of a name outside the graph: added from the lock, else from a
+// requirement some package in the graph recorded; a missing lock entry is
+// written in locked mode and refused under EPM_CI.
+int runFindCommand(const CommandOptions& options);
 int runUpdateCommand(const CommandOptions& options);
 int runVerifyCommand(const CommandOptions& options);
 int runRootCommand(const CommandOptions& options);

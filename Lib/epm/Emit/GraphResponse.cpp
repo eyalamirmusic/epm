@@ -64,6 +64,7 @@ std::string graphCMakeText(const ResolvedGraph& graph)
     for (const auto& package: graph.packages)
         text += packageText(package);
 
+    text += "set(epm_SYSTEM_PACKAGES " + quotedList(graph.systemPackages) + ")\n";
     return text + "set(epm_NOTES " + quotedList(graph.notes) + ")\n";
 }
 } // namespace epm

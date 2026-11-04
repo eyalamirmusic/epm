@@ -124,8 +124,10 @@ RequestLocation getRequestLocation(const CommandOptions& options,
     if (!eacp::Files::isFile(file))
         return {getPathForUser(options, options.requestedBy), std::nullopt};
 
-    return {getPathForUser(options, file),
-            findPackageRequestLine(eacp::Files::readFile(file), name)};
+    auto text = eacp::Files::readFile(file);
+    auto line = options.isFindPackageRequest ? findFindPackageLine(text, name)
+                                             : findPackageRequestLine(text, name);
+    return {getPathForUser(options, file), line};
 }
 
 PackageRequest createRequestFromLock(const eacp::FilePath& lockPath,
@@ -337,6 +339,19 @@ CachedSource resolveLockedSource(const CommandOptions& options,
     }
 
     auto locked = lock.findPackage(spec.name);
+    auto isWritingMissingEntry = !locked && options.isFindPackageRequest
+                                 && options.mode == Mode::locked && !options.isCI;
+
+    if (isWritingMissingEntry)
+    {
+        auto resolved =
+            resolvePackage(cache, request, getPatchesForLock(options, spec));
+        lock.storePackage(resolved);
+        writeLockFile(options.lock, lock);
+        printStatus("added " + spec.name + " to "
+                    + getPathForUser(options, options.lock) + "; commit it");
+        return {cache.getSourceDirectory(resolved.hash), resolved.commit};
+    }
 
     if (!locked)
     {
@@ -635,7 +650,8 @@ std::string identifyRequester(const CommandOptions& options, const Session& sess
 
     for (const auto& package: session.packages)
     {
-        auto directory = resolveSymlinks(eacp::FilePath {package.sourceDirectory}).str();
+        auto directory =
+            resolveSymlinks(eacp::FilePath {package.sourceDirectory}).str();
 
         if (!package.sourceDirectory.empty() && directory.size() > longestMatch
             && isUnderDirectory(requesting, directory))
@@ -1055,6 +1071,49 @@ LockedSource lockGraphPackage(const CommandOptions& options,
 
 namespace
 {
+bool isSystemPackage(const CommandOptions& options, const std::string& name)
+{
+    auto isNamed = [&](const ManifestPackage& package)
+    { return package.system && package.name == name; };
+
+    auto manifest = readRootManifest(options.manifest);
+
+    if (EA::Vectors::findIf(manifest.packages, isNamed))
+        return true;
+
+    return false;
+}
+
+std::optional<Requirement> findKnownSource(const CommandOptions& options,
+                                           const std::string& name)
+{
+    if (auto locked = readLockFile(options.lock).findPackage(name);
+        locked && locked->kind != PackageKind::local)
+        return Requirement {{}, locked->url, locked->requestedRef, locked->commit};
+
+    auto known = readSession(options.buildDirectory).findRequirements(name);
+
+    if (known.empty())
+        return std::nullopt;
+
+    return known.front();
+}
+
+std::string describeUnknownFindPackage(const CommandOptions& options,
+                                       const std::string& name)
+{
+    auto location = getRequestLocation(options, name);
+    return formatUserError(
+        formatRequestLocation(location) + ": find_package(" + name
+            + ") names a package that is not in the graph, and no epm.json or "
+              "epm-lock.json in it says where "
+            + name + " comes from.",
+        "Add it to the packages in epm.json, as\n    { \"name\": \"" + name
+            + "\", \"git\": \"<owner/repo>\", \"tag\": \"<tag>\" }\n  or, for "
+              "one CMake's own search should find on this machine,\n    { \"name\": \""
+            + name + "\", \"system\": true }");
+}
+
 PackageSpec parseArgumentsFrom(const CommandOptions& options)
 {
     try
@@ -1192,6 +1251,37 @@ int runProvideCommand(const CommandOptions& options)
                + spec.name + "_SOURCE_DIR}\" BINARY_DIR \"${" + spec.name
                + "_BINARY_DIR}\")\n";
     writeSnippet(options, snippet);
+    return 0;
+}
+
+int runFindCommand(const CommandOptions& options)
+{
+    auto findOptions = options;
+    findOptions.isFindPackageRequest = true;
+    if (options.packageArguments.size() != 2
+        || options.packageArguments[0] != "NAME")
+        throw std::runtime_error("epm find takes -- NAME <name>");
+
+    auto name = options.packageArguments[1];
+
+    if (isSystemPackage(findOptions, name))
+    {
+        writeSnippet(findOptions, "set(_epm_find_is_system TRUE)\n");
+        return 0;
+    }
+    auto source = findKnownSource(findOptions, name);
+
+    if (!source)
+        throw std::runtime_error(describeUnknownFindPackage(findOptions, name));
+    findOptions.packageArguments = {"NAME",
+                                    name,
+                                    "GIT_REPOSITORY",
+                                    source->url,
+                                    "GIT_TAG",
+                                    source->requestedRef};
+
+    writeSnippet(findOptions,
+                 addPackage(findOptions, parseArgumentsFrom(findOptions)));
     return 0;
 }
 

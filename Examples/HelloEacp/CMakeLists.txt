@@ -1,8 +1,7 @@
 cmake_minimum_required(VERSION 3.31)
-project(HelloEacp CXX)
-
 set(EPM_CONFIGS Release) # only Release archives of eacp; Debug builds of hello link them on multi-config generators (missing configs map to Release)
-include(../../CMake/get_epm.cmake)
+list(APPEND CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${CMAKE_CURRENT_LIST_DIR}/../../CMake/get_epm.cmake")
+project(HelloEacp CXX)
 
 epm_add_package(
         NAME eacp

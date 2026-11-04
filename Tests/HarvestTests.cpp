@@ -125,7 +125,7 @@ auto tTargetsFile = test("Harvest/targetsFile") = []
 {
     const auto text =
         targetsFileText({"eacp-core", "Miro"}, {}, true, {"Release", "Debug"});
-    const auto threads = text.find("find_package(Threads REQUIRED)");
+    const auto threads = text.find("find_package(Threads REQUIRED BYPASS_PROVIDER)");
     const auto debug =
         text.find(R"(include("${CMAKE_CURRENT_LIST_DIR}/export-Debug.cmake"))");
     const auto release =

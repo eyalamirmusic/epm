@@ -35,6 +35,7 @@ constexpr auto usage =
     "  resolve      resolve one package for epm.cmake; its CMake arguments\n"
     "               follow --\n"
     "  provide      the same, for FetchContent_MakeAvailable\n"
+    "  find         the same, for find_package of a name outside the graph\n"
     "  lock begin   start a configure: record the overrides, note a new lock\n"
     "  lock update  re-resolve the named packages' refs (all when none are\n"
     "               named) and rewrite the lock\n"
@@ -227,6 +228,9 @@ int runPackageCommand(const std::string& command, int argumentsToSkip)
         if (command == "provide")
             return epm::runProvideCommand(options);
 
+        if (command == "find")
+            return epm::runFindCommand(options);
+
         if (command == "begin")
             return epm::runBeginCommand(options);
 
@@ -332,7 +336,8 @@ int run()
         return 0;
     }
 
-    if (command == "resolve" || command == "provide" || command == "configure")
+    if (command == "resolve" || command == "provide" || command == "find"
+        || command == "configure")
         return runPackageCommand(command, 2);
 
     if (command == "lock" && args.size() >= 3)

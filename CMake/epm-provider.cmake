@@ -23,9 +23,11 @@
 #
 # find_package then gets X_FOUND, X_SOURCE_DIR and X_MODE; FetchContent gets
 # FetchContent_SetPopulated(X). Version arguments are ignored. A name that is
-# not in epm_PACKAGES is left to CMake's own search, except that epm.cmake
-# takes a FetchContent_MakeAvailable of one through the lock
-# (epm_provide_through_the_lock). Registering twice only replaces the graph.
+# not in epm_PACKAGES goes to epm.cmake: a FetchContent_MakeAvailable of one
+# through the lock (epm_provide_through_the_lock), a find_package of one as a
+# package added (epm_find_through_the_lock), unless a manifest marks it
+# "system" (epm_SYSTEM_PACKAGES), which alone leaves it to CMake's own search.
+# Registering twice only replaces the graph.
 
 include_guard(GLOBAL)
 
@@ -269,8 +271,37 @@ function(epm_provide_dependency method name)
         if (method STREQUAL "FETCHCONTENT_MAKEAVAILABLE_SERIAL"
                 AND COMMAND epm_provide_through_the_lock)
             epm_provide_through_the_lock("${name}" ${ARGN})
+            return()
         endif ()
 
+        if (NOT method STREQUAL "FIND_PACKAGE" OR name IN_LIST epm_SYSTEM_PACKAGES
+                OR NOT COMMAND epm_find_through_the_lock)
+            return()
+        endif ()
+
+        # A Find module the project ships is its own code, not a system lookup.
+        foreach (module_dir IN LISTS CMAKE_MODULE_PATH)
+            if (EXISTS "${module_dir}/Find${name}.cmake")
+                return()
+            endif ()
+        endforeach ()
+
+        get_property(loaded GLOBAL PROPERTY EPM_PACKAGE_${name}_MODE SET)
+
+        if (loaded)
+            get_property(${name}_SOURCE_DIR GLOBAL PROPERTY EPM_PACKAGE_${name}_SOURCE_DIR)
+        else ()
+            set(_epm_find_is_system FALSE)
+            epm_find_through_the_lock("${name}")
+
+            # The root's epm.json marks it "system": CMake's own search.
+            if (_epm_find_is_system)
+                return()
+            endif ()
+        endif ()
+
+        set(${name}_FOUND TRUE PARENT_SCOPE)
+        set(${name}_SOURCE_DIR "${${name}_SOURCE_DIR}" PARENT_SCOPE)
         return()
     endif ()
 

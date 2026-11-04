@@ -31,7 +31,11 @@ struct ManifestPackage
     // "strict", "compatible" or "any".
     std::string abiMatch;
 
-    MIRO_REFLECT(name, git, tag, options, configs, mode, abiMatch)
+    // Found by CMake's own find_package search, never fetched: the explicit
+    // opt-in a find_package of a name outside the graph needs.
+    bool system = false;
+
+    MIRO_REFLECT(name, git, tag, options, configs, mode, abiMatch, system)
 };
 
 // A profile's entry for one package: everything but where it comes from.

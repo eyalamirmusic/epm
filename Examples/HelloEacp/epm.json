@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "packages": [
+    { "name": "CURL", "system": true },
+    { "name": "PkgConfig", "system": true },
+    { "name": "Threads", "system": true }
+  ]
+}

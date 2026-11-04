@@ -21,4 +21,5 @@ set(epm_Fetched_SOURCE_DIR "@PACKAGES@/Fetched")
 set(epm_Fetched_DEPS "")
 set(epm_Fetched_OPTIONS "")
 
+set(epm_SYSTEM_PACKAGES "NotEpm;Missing")
 set(epm_NOTES "Leaf: Other declares 1.0, root declares 2.0")

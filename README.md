@@ -105,6 +105,19 @@ checkout with a warning; `EPM_CI=ON` makes that an error in locked mode.
 `epm lock update [name...]`, `epm lock verify [--full]` (a locked package missing from the cache, as one only another platform asks for is, is fetched at its locked commit and checked) and `epm lock root`
 work on the lock from the command line.
 
+With epm loaded during `project()`, `find_package` never falls through to
+CMake's own search. A name outside the graph is a package added: its source is
+the lock's entry, else the one a dependency's `epm-lock.json` records, and
+locked mode writes it into the lock (`EPM_CI=ON` stops instead, naming the
+`find_package` line). When nothing records it the configure stops with the
+line to add to `epm.json`. A package the machine provides is opted in by name,
+and only then searched for as CMake would; a `Find<Name>.cmake` on
+`CMAKE_MODULE_PATH` is the project's own code and still runs:
+
+```json
+{ "packages": [ { "name": "Threads", "system": true } ] }
+```
+
 The lock holds one version of each package for the whole tree. When projects
 ask for different versions, the highest semantic version tag wins and anything
 else stops the configure until the root's `epm.json` overrides it, as Go's

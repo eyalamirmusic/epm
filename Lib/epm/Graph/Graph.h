@@ -64,6 +64,7 @@ struct GraphPlan
     // In dependency order.
     EA::Vector<PlannedPackage> packages;
     EA::Vector<std::string> notes;
+    EA::Vector<std::string> systemPackages;
     std::string error;
 };
 

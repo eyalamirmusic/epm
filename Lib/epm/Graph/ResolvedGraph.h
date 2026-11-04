@@ -75,6 +75,9 @@ struct ResolvedGraph
     EA::Vector<ResolvedPackage> packages;
     EA::Vector<std::string> notes;
 
-    MIRO_REFLECT(schema, packages, notes)
+    // Names some manifest marks "system": find_package searches for them.
+    EA::Vector<std::string> systemPackages;
+
+    MIRO_REFLECT(schema, packages, notes, systemPackages)
 };
 } // namespace epm

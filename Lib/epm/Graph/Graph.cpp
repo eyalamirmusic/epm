@@ -269,6 +269,12 @@ public:
 
         for (const auto& package: inputs.manifest.packages)
         {
+            if (package.system)
+            {
+                addSystemPackage(package.name);
+                continue;
+            }
+
             rootNames.add(package.name);
             nodes[package.name].root = package;
         }
@@ -307,6 +313,7 @@ public:
         }
 
         forceSourceDependents(plan.packages);
+        plan.systemPackages = systemPackages;
 
         for (const auto& name: order)
             for (auto& note: declarationNotes(name, nodes[name]))
@@ -447,6 +454,12 @@ private:
     // Declaring and visiting one dependency at a time keeps the walk depth
     // first: a declaration inside an earlier dependency's subtree comes
     // before a later sibling's.
+    void addSystemPackage(const std::string& name)
+    {
+        if (!systemPackages.contains(name))
+            systemPackages.add(name);
+    }
+
     bool visitDependencies(const std::string& name, Node& node)
     {
         const auto path = node.snapshot.directory / manifestFileName;
@@ -466,6 +479,12 @@ private:
 
             if (dep == name)
                 continue;
+
+            if (package.system)
+            {
+                addSystemPackage(dep);
+                continue;
+            }
 
             nodes[dep].declarations.add({name, package});
             node.deps.add(dep);
@@ -523,6 +542,7 @@ private:
     Overrides overrides;
     std::map<std::string, Node> nodes;
     EA::Vector<std::string> order;
+    EA::Vector<std::string> systemPackages;
     EA::Vector<std::string> stack;
     std::string error;
 };
@@ -669,6 +689,7 @@ GraphResult resolvePlan(const GraphPlan& plan,
     }
 
     result.graph.notes = plan.notes;
+    result.graph.systemPackages = plan.systemPackages;
     result.ok = true;
     return result;
 }

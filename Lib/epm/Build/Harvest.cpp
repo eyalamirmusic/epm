@@ -190,7 +190,7 @@ std::string targetsFileText(const EA::Vector<std::string>& targetNames,
                                "# Regenerated whenever a config is added.\n\n"};
 
     if (needsThreads)
-        text += "find_package(Threads REQUIRED)\n\n";
+        text += "find_package(Threads REQUIRED BYPASS_PROVIDER)\n\n";
 
     for (const auto& config: available)
         text +=

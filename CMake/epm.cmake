@@ -591,6 +591,16 @@ macro(epm_provide_through_the_lock name)
     cmake_language(EVAL CODE "${_epm_run}")
 endmacro()
 
+# find_package of a name the graph does not hold and no manifest marks
+# "system": a package added, from the lock or a requirement in the graph.
+macro(epm_find_through_the_lock name)
+    set(_epm_requested_by_file "${CMAKE_CURRENT_LIST_FILE}")
+    set(_epm_subcommand find)
+    set(_epm_default_mode auto)
+    set(_epm_arguments NAME ${name})
+    cmake_language(EVAL CODE "${_epm_run}")
+endmacro()
+
 # A dependency provider can only be set while the first project() runs its
 # CMAKE_PROJECT_TOP_LEVEL_INCLUDES; included any later, find_package and
 # FetchContent keep searching and fetching for themselves.

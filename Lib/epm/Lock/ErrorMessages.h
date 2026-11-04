@@ -78,4 +78,8 @@ std::string formatRequestLocation(const RequestLocation& location);
 // or nothing when no call or more than one does.
 std::optional<int> findPackageRequestLine(const std::string& cmakeText,
                                           const std::string& name);
+
+// The same for the one find_package call that names the package.
+std::optional<int> findFindPackageLine(const std::string& cmakeText,
+                                       const std::string& name);
 } // namespace epm

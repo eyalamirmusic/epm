@@ -19,6 +19,9 @@ constexpr auto packageCommands =
                                     "cpmdeclarepackage(",
                                     "fetchcontent_declare("};
 
+constexpr auto findPackageCommands =
+    EA::Array<std::string_view, 1> {"find_package("};
+
 std::string formatUpdateConfigureCommand(const std::string& buildDirectory)
 {
     return eacp::Strings::format("cmake -B {} -DEPM_LOCK_MODE=update",
@@ -51,11 +54,14 @@ bool containsNameAsWord(std::string_view text, const std::string& name)
     return false;
 }
 
-bool startsPackageCommand(std::string_view loweredText, std::size_t position)
+template <typename Commands>
+bool startsCommand(const Commands& commands,
+                   std::string_view loweredText,
+                   std::size_t position)
 {
     return std::any_of(
-        packageCommands.begin(),
-        packageCommands.end(),
+        commands.begin(),
+        commands.end(),
         [&](std::string_view command)
         { return loweredText.substr(position).starts_with(command); });
 }
@@ -173,15 +179,19 @@ std::string describeDamagedCacheEntry(const DamagedCacheEntry& entry)
         "Configure again to download a fresh copy: cmake -B <build directory>");
 }
 
-std::optional<int> findPackageRequestLine(const std::string& cmakeText,
-                                          const std::string& name)
+namespace
+{
+template <typename Commands>
+std::optional<int> findCommandLine(const Commands& commands,
+                                   const std::string& cmakeText,
+                                   const std::string& name)
 {
     auto lowered = eacp::Strings::toLower(cmakeText);
     auto foundLine = std::optional<int> {};
 
     for (auto position = std::size_t {0}; position < lowered.size(); ++position)
     {
-        if (!startsPackageCommand(lowered, position))
+        if (!startsCommand(commands, lowered, position))
             continue;
 
         auto end = cmakeText.find(')', position);
@@ -201,5 +211,18 @@ std::optional<int> findPackageRequestLine(const std::string& cmakeText,
     }
 
     return foundLine;
+}
+} // namespace
+
+std::optional<int> findPackageRequestLine(const std::string& cmakeText,
+                                          const std::string& name)
+{
+    return findCommandLine(packageCommands, cmakeText, name);
+}
+
+std::optional<int> findFindPackageLine(const std::string& cmakeText,
+                                       const std::string& name)
+{
+    return findCommandLine(findPackageCommands, cmakeText, name);
 }
 } // namespace epm

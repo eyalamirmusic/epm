@@ -692,11 +692,13 @@ auto tGraphCMake = test("GraphResponse/cmakeText") = []
         "set(epm_B_SOURCE_DIR \"/work/B\")\n"
         "set(epm_B_DEPS \"fmt\")\n"
         "set(epm_B_OPTIONS \"\")\n"
+        "set(epm_SYSTEM_PACKAGES \"\")\n"
         "set(epm_NOTES \"fmt: B declares 10.2.1, root declares 11.0.2;"
         "fmt: B declares configs Debug\\\\;Release, root leaves it unset\")\n";
 
     check(graphCMakeText(sampleGraph()) == expected);
-    check(graphCMakeText({}) == "set(epm_PACKAGES \"\")\nset(epm_NOTES \"\")\n");
+    check(graphCMakeText({})
+          == "set(epm_PACKAGES \"\")\nset(epm_SYSTEM_PACKAGES \"\")\nset(epm_NOTES \"\")\n");
 };
 
 auto tGraphJsonRoundTrip = test("GraphResponse/jsonRoundTrip") = []
