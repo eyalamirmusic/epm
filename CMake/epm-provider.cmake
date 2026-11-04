@@ -163,7 +163,7 @@ function(epm_provider_register graph_file)
     cmake_parse_arguments(arg "" "PREPARE" "" ${ARGN})
 
     if (CMAKE_VERSION VERSION_LESS 3.24)
-        message(FATAL_ERROR "epm: epm.json needs CMake 3.24 or newer (dependency "
+        message(FATAL_ERROR "epm: epm.cpp needs CMake 3.24 or newer (dependency "
                 "providers); this is ${CMAKE_VERSION}")
     endif ()
 

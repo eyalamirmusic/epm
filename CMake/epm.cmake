@@ -8,11 +8,12 @@
 #
 # Two flows, while the second replaces the first (Docs/Graph.md):
 #
-# 1. A manifest, epm.json beside the top-level CMakeLists.txt. get_epm.cmake
-#    calls epm_use_manifest, which registers the dependency provider of
-#    epm-provider.cmake. The provider's first call writes env.json and
-#    overrides.json, runs `epm configure` for the whole graph and reads the
-#    graph.cmake it writes; find_package(<name>) then loads each package.
+# 1. A manifest, the recipe epm.cpp beside the top-level CMakeLists.txt.
+#    get_epm.cmake calls epm_use_manifest, which registers the dependency
+#    provider of epm-provider.cmake. The provider's first call writes env.json
+#    and overrides.json, runs `epm configure` for the whole graph (the binary
+#    compiles and runs each epm.cpp) and reads the graph.cmake it writes;
+#    find_package(<name>) then loads each package.
 #
 # 2. epm_add_package, one package per call (Docs/PoC.md):
 #
@@ -34,6 +35,10 @@
 #
 # Either way <name>_SOURCE_DIR, <name>_ADDED and <name>_MODE are set in the
 # caller's scope (plus <name>_BINARY_DIR in source mode).
+#
+# epm_add_recipe(<target> [SOURCE <file>] [NO_TEST]) builds the project's
+# epm.cpp as a module of its own build, for IDEs and the build's diagnostics,
+# and adds a test running `epm describe` over it (see the function below).
 #
 # Variables read:
 #   EPM_EXECUTABLE              the epm binary (required; set by get_epm.cmake)
@@ -60,9 +65,10 @@
 #
 # With a manifest, EPM_CONFIGS, EPM_ABI_MATCH and EPM_BUILD_MISSING_BINARIES are
 # overrides: unset or empty, the manifest (or the binary's default) decides.
-# The manifest flow also reads EPM_PROFILE, EPM_MODE, EPM_STRICT and
-# EPM_<name>_MODE, _SOURCE, _CONFIGS and _OPTIONS (KEY=VALUE list); see
-# epm_write_overrides.
+# The manifest flow also reads EPM_MODE, EPM_STRICT and EPM_<name>_MODE,
+# _SOURCE, _CONFIGS and _OPTIONS (KEY=VALUE list); see epm_write_overrides.
+# EPM_PROFILE (variable, else environment) is no override: it goes into
+# env.json, where an epm.cpp may branch on it (env.profile).
 #
 # Files exchanged with the binary live under ${CMAKE_BINARY_DIR}/epm/:
 #   env.json                    toolchain description, written once per configure
@@ -70,6 +76,7 @@
 #   graph.cmake, graph.json     written by `epm configure` (manifest flow)
 #   requests/<name>.json        one per epm_add_package
 #   responses/<name>.cmake      written by `epm resolve`, included here
+#   recipe-sdk.cmake            written by `epm recipe-sdk` (epm_add_recipe)
 
 include_guard(GLOBAL)
 
@@ -170,7 +177,6 @@ endfunction()
 function(epm_write_overrides file)
     set(json "{}")
     string(JSON json SET "${json}" schema 1)
-    epm_json_set_string(json profile "${EPM_PROFILE}")
     epm_json_set_string(json mode "${EPM_MODE}")
     epm_json_string_array(configs ${EPM_CONFIGS})
     string(JSON json SET "${json}" configs "${configs}")
@@ -384,6 +390,15 @@ function(epm_write_env)
 
     epm_json_set_string(json androidAbi "${android_abi}")
 
+    # For epm.cpp recipes to branch on; epm itself gives it no meaning.
+    set(profile "${EPM_PROFILE}")
+
+    if (profile STREQUAL "" AND DEFINED ENV{EPM_PROFILE})
+        set(profile "$ENV{EPM_PROFILE}")
+    endif ()
+
+    epm_json_set_string(json profile "${profile}")
+
     file(WRITE "${EPM_DIR}/env.json" "${json}\n")
     set_property(GLOBAL PROPERTY EPM_ENV_WRITTEN TRUE)
 endfunction()
@@ -407,7 +422,7 @@ function(epm_run_binary what)
         set(echo_args ECHO_ERROR_VARIABLE)
     endif ()
 
-    # The project's directory, for paths given relative to it (a profile file).
+    # The project's directory, for any relative path the binary meets.
     execute_process(COMMAND ${command}
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             RESULT_VARIABLE result
@@ -449,6 +464,191 @@ endfunction()
 function(epm_use_manifest manifest)
     set_property(GLOBAL PROPERTY EPM_MANIFEST "${manifest}")
     epm_provider_register("${EPM_DIR}/graph.cmake" PREPARE epm_configure_graph)
+endfunction()
+
+# Defines epm::recipe, once per configure: an INTERFACE IMPORTED target with
+# what the epm binary compiles an epm.cpp against, read from `epm recipe-sdk`.
+# When that cannot be used here, sets the global EPM_RECIPE_SDK_PROBLEM
+# instead, for epm_add_recipe to report.
+function(epm_recipe_sdk)
+    get_property(done GLOBAL PROPERTY EPM_RECIPE_SDK_DONE)
+
+    if (done)
+        return()
+    endif ()
+
+    set_property(GLOBAL PROPERTY EPM_RECIPE_SDK_DONE TRUE)
+    set(sdk_file "${EPM_DIR}/recipe-sdk.cmake")
+    file(REMOVE "${sdk_file}")
+
+    execute_process(COMMAND "${EPM_EXECUTABLE}" recipe-sdk --out "${sdk_file}"
+            RESULT_VARIABLE result
+            ERROR_VARIABLE error)
+
+    if (NOT result EQUAL 0 OR NOT EXISTS "${sdk_file}")
+        string(STRIP "${error}" error)
+        message(FATAL_ERROR "epm: epm recipe-sdk failed (exit ${result}): ${error}")
+    endif ()
+
+    include("${sdk_file}")
+
+    # An imported target naming a missing include directory fails the generate:
+    # a binary built elsewhere (a release) cannot compile recipes here anyway.
+    foreach (directory IN LISTS EPM_RECIPE_INCLUDE_DIRS)
+        if (NOT IS_DIRECTORY "${directory}")
+            set_property(GLOBAL PROPERTY EPM_RECIPE_SDK_PROBLEM
+                    "the epm at ${EPM_EXECUTABLE} was built against headers that "
+                    "are not here (${directory})")
+            return()
+        endif ()
+    endforeach ()
+
+    add_library(epm::recipe INTERFACE IMPORTED GLOBAL)
+    set_target_properties(epm::recipe PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "${EPM_RECIPE_INCLUDE_DIRS}"
+            INTERFACE_COMPILE_DEFINITIONS "${EPM_RECIPE_COMPILE_DEFINITIONS}"
+            EPM_CXX_STANDARD "${EPM_RECIPE_CXX_STANDARD}"
+            EPM_CXX_EXTENSIONS "${EPM_RECIPE_CXX_EXTENSIONS}")
+
+    if (EPM_RECIPE_CXX_STANDARD)
+        set_property(TARGET epm::recipe PROPERTY
+                INTERFACE_COMPILE_FEATURES cxx_std_${EPM_RECIPE_CXX_STANDARD})
+    endif ()
+
+    # epm-core's warning flags, which the recipe header compiles clean under,
+    # are only meant for the compiler that built epm.
+    foreach (option IN LISTS EPM_RECIPE_COMPILE_OPTIONS)
+        set_property(TARGET epm::recipe APPEND PROPERTY INTERFACE_COMPILE_OPTIONS
+                "$<$<CXX_COMPILER_ID:${EPM_RECIPE_COMPILER_ID}>:${option}>")
+    endforeach ()
+
+    file(REAL_PATH "${CMAKE_CXX_COMPILER}" ours)
+    file(REAL_PATH "${EPM_RECIPE_CXX_COMPILER}" epms)
+
+    if (NOT ours STREQUAL epms)
+        message(STATUS "epm: recipe targets build with ${CMAKE_CXX_COMPILER}, but "
+                "epm compiles the epm.cpp it runs with ${EPM_RECIPE_CXX_COMPILER}")
+    endif ()
+endfunction()
+
+# epm_add_recipe(<target> [SOURCE <file>] [NO_TEST])
+#
+# Builds an epm.cpp (by default ${CMAKE_CURRENT_SOURCE_DIR}/epm.cpp) as the
+# MODULE library <target> (<target>.epm-recipe.<dylib|so>), compiled as epm
+# compiles it, so that IDEs index it and the build reports its errors. The
+# configure never loads this module: it compiles and runs the file itself. The
+# custom target <target>-describe runs `epm describe --module` over it with
+# this build's env.json, and unless NO_TEST (or BUILD_TESTING is OFF) the test
+# <target> runs the same, which an IDE can debug; the test is run only by a
+# project that calls enable_testing(). Does nothing on Windows, which has no
+# recipes yet,
+# and in a project that is not the top-level one (a package added from
+# source; a child build epm runs gets a stub from epm-export.cmake).
+function(epm_add_recipe target)
+    cmake_parse_arguments(EPM_ARGS "NO_TEST" "SOURCE" "" ${ARGN})
+
+    if (EPM_ARGS_UNPARSED_ARGUMENTS)
+        message(FATAL_ERROR
+                "epm_add_recipe: unknown arguments: ${EPM_ARGS_UNPARSED_ARGUMENTS}")
+    endif ()
+
+    if (WIN32 OR CMAKE_HOST_WIN32)
+        message(STATUS "epm: epm_add_recipe(${target}) does nothing: no epm.cpp "
+                "recipes on Windows yet")
+        return()
+    endif ()
+
+    if (NOT PROJECT_IS_TOP_LEVEL)
+        return()
+    endif ()
+
+    get_property(languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+
+    if (NOT CXX IN_LIST languages)
+        message(FATAL_ERROR "epm_add_recipe(${target}): the project has no CXX "
+                "language; give project() CXX")
+    endif ()
+
+    set(source "${EPM_ARGS_SOURCE}")
+
+    if (source STREQUAL "")
+        set(source epm.cpp)
+    endif ()
+
+    cmake_path(ABSOLUTE_PATH source BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            NORMALIZE)
+
+    epm_recipe_sdk()
+    get_property(problem GLOBAL PROPERTY EPM_RECIPE_SDK_PROBLEM)
+
+    if (problem)
+        message(STATUS "epm: epm_add_recipe(${target}) does nothing: ${problem}")
+        return()
+    endif ()
+
+    # As RecipeBuild.cpp compiles it: hidden visibility, no IPO, undefined
+    # symbols left for the executable that loads it, and no STB_GNU_UNIQUE.
+    add_library(${target} MODULE "${source}")
+    target_link_libraries(${target} PRIVATE epm::recipe)
+    get_target_property(standard epm::recipe EPM_CXX_STANDARD)
+    get_target_property(extensions epm::recipe EPM_CXX_EXTENSIONS)
+    set_target_properties(${target} PROPERTIES
+            CXX_EXTENSIONS ${extensions}
+            CXX_VISIBILITY_PRESET hidden
+            INTERPROCEDURAL_OPTIMIZATION OFF
+            FOLDER epm)
+
+    if (standard)
+        set_target_properties(${target} PROPERTIES
+                CXX_STANDARD ${standard}
+                CXX_STANDARD_REQUIRED ON)
+    endif ()
+
+    if (APPLE)
+        target_link_options(${target} PRIVATE "LINKER:-undefined,dynamic_lookup")
+    endif ()
+
+    target_compile_options(${target} PRIVATE
+            "$<$<CXX_COMPILER_ID:GNU>:-fno-gnu-unique>")
+
+    # A name that says what it is, the same on every generator: the module is
+    # what `epm describe --module` loads.
+    set_target_properties(${target} PROPERTIES
+            PREFIX ""
+            SUFFIX ".epm-recipe${CMAKE_SHARED_LIBRARY_SUFFIX}")
+
+    # The env.json `epm describe` reads is the configure's own, written by then
+    # even when nothing asked epm for a package.
+    get_property(env_deferred GLOBAL PROPERTY EPM_RECIPE_ENV_DEFERRED)
+
+    if (NOT env_deferred)
+        set_property(GLOBAL PROPERTY EPM_RECIPE_ENV_DEFERRED TRUE)
+        cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL epm_write_env)
+    endif ()
+
+    # This build's module, not one epm compiles (so no cache is involved): in a
+    # Debug configuration it has debug info, and a debugger running the test or
+    # the target below stops at breakpoints in describe().
+    set(describe_command "${EPM_EXECUTABLE}" describe "${source}"
+            --module "$<TARGET_FILE:${target}>"
+            --env "${EPM_DIR}/env.json")
+
+    add_custom_target(${target}-describe
+            COMMAND ${describe_command}
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            COMMENT "epm describe ${source}"
+            USES_TERMINAL
+            VERBATIM)
+    add_dependencies(${target}-describe ${target})
+    set_target_properties(${target}-describe PROPERTIES FOLDER epm)
+
+    if (EPM_ARGS_NO_TEST OR (DEFINED BUILD_TESTING AND NOT BUILD_TESTING))
+        return()
+    endif ()
+
+    add_test(NAME ${target}
+            COMMAND ${describe_command}
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 endfunction()
 
 # A function, as CPMAddPackage is: OPTIONS stay local to the add_subdirectory

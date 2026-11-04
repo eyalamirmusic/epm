@@ -11,10 +11,10 @@
 
 namespace epm
 {
-// What the root manifest calls itself as a declarer.
+// What the root project calls itself as a declarer.
 constexpr auto rootDeclarer = "root";
 
-// One package entry of one manifest: the root's, or a dependency's.
+// One package entry of one project's epm.cpp: the root's, or a dependency's.
 struct Declaration
 {
     std::string declarer;
@@ -26,17 +26,15 @@ struct MergeLayers
 {
     PackageOverride packageOverride;
     Overrides overrides;
-    std::string profileName;
-    Profile profile;
     std::optional<ManifestPackage> root;
 
     // The winning dependency declaration (first in the walk), if any.
     std::optional<Declaration> dependency;
 };
 
-// Which source set each value: "override", "override:package",
-// "profile:<name>", "profile:<name>:package", "root", "manifest:<declarer>",
-// "default", or why it was forced ("source dependency <name>").
+// Which source set each value: "override", "override:package", "root",
+// "manifest:<declarer>", "default", or why it was forced
+// ("source dependency <name>").
 // Keys: git, tag, mode, configs, abiMatch, buildMissingBinaries, source and
 // options.<KEY>.
 using Provenance = std::map<std::string, std::string>;

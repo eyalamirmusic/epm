@@ -1,8 +1,11 @@
 #include <epm/Cache/CacheListing.h>
 #include <epm/Cache/CacheRoot.h>
 #include <epm/Emit/GraphResponse.h>
+#include <epm/Emit/RecipeSdkCMake.h>
 #include <epm/Emit/Response.h>
 #include <epm/Graph/Graph.h>
+#include <epm/Recipe/RecipeBuild.h>
+#include <epm/Recipe/RecipeLoader.h>
 #include <epm/Resolve/Resolve.h>
 #include <epm/Spec/JsonFile.h>
 #include <epm/Util/Log.h>
@@ -18,20 +21,24 @@
 #include <eacp/Core/Utils/StdPath.h>
 
 #include <filesystem>
+#include <optional>
 
 using namespace eacp;
 
 namespace
 {
-constexpr auto usage = "usage: epm <command>\n"
-                       "\n"
-                       "commands:\n"
-                       "  configure    resolve an epm.json graph for get_epm.cmake\n"
-                       "  graph-cmake  write graph.cmake from a graph.json\n"
-                       "  resolve      resolve one package request for epm.cmake\n"
-                       "  cache path   print the cache root\n"
-                       "  cache ls     list the cached binaries, sources and tools\n"
-                       "  --version    print the version";
+constexpr auto usage =
+    "usage: epm <command>\n"
+    "\n"
+    "commands:\n"
+    "  configure    resolve an epm.cpp graph for get_epm.cmake\n"
+    "  graph-cmake  write graph.cmake from a graph.json\n"
+    "  describe     print the project an epm.cpp describes\n"
+    "  recipe-sdk   write how epm compiles an epm.cpp, for CMake\n"
+    "  resolve      resolve one package request for epm.cmake\n"
+    "  cache path   print the cache root\n"
+    "  cache ls     list the cached binaries, sources and tools\n"
+    "  --version    print the version";
 
 Vector<std::string> argumentsAfter(int count)
 {
@@ -129,8 +136,8 @@ int configure()
     auto verbose = false;
 
     auto cli = Args::Parser {"epm configure",
-                             "Resolves the dependency graph of an epm.json."};
-    cli.option("--manifest", manifest, "the root epm.json").required();
+                             "Resolves the dependency graph of an epm.cpp."};
+    cli.option("--manifest", manifest, "the root epm.cpp").required();
     cli.option("--env", env, "the env JSON").required();
     cli.option("--overrides", overrides, "the overrides JSON").required();
     cli.option("--out", out, "the directory for graph.cmake and graph.json")
@@ -147,15 +154,9 @@ int configure()
     {
         auto inputs = epm::GraphInputs {};
         inputs.environment = getEnv;
-        inputs.manifestDirectory = manifest.parentDirectory();
 
         if (!Files::isFile(manifest))
             return fail("no manifest at " + manifest.str());
-
-        if (auto loaded = epm::loadManifest(manifest); loaded.ok)
-            inputs.manifest = std::move(loaded.manifest);
-        else
-            return fail("the manifest " + manifest.str() + ": " + loaded.error);
 
         if (auto loaded = epm::loadJsonFile<epm::Env>(env))
             inputs.env = std::move(*loaded);
@@ -167,9 +168,18 @@ int configure()
         else
             return fail("cannot read the overrides file " + overrides.str());
 
-        const auto cacheRoot = cache.empty() ? epm::CacheRoot::fromEnvironment()
-                                             : epm::CacheRoot {cache};
-        const auto result = epm::configureGraph(inputs, canonical(cacheRoot));
+        const auto cacheRoot =
+            canonical(cache.empty() ? epm::CacheRoot::fromEnvironment()
+                                    : epm::CacheRoot {cache});
+        auto loader = epm::RecipeManifestLoader {cacheRoot};
+        auto loadError = std::string {};
+
+        if (auto project = loader.loadFile(manifest, inputs.env, loadError))
+            inputs.project = std::move(*project);
+        else
+            return fail("the manifest " + manifest.str() + ": " + loadError);
+
+        const auto result = epm::configureGraph(inputs, cacheRoot, loader);
 
         if (!result.ok)
         {
@@ -220,6 +230,127 @@ int graphCMake()
     {
         return fail(error.what());
     }
+
+    return 0;
+}
+
+// The module epm_add_recipe built: the project's compiler and flags, which
+// need only be close enough to epm's for the Recipe ABI to match.
+epm::RecipeLoad loadProjectModule(const FilePath& module, const FilePath& recipe)
+{
+    epm::Log::step("loading " + module.str()
+                   + (recipe.empty() ? "" : " (built from " + recipe.str() + ")"));
+    auto load = epm::loadRecipe(module);
+
+    if (!load.recipe)
+        load.error += "\n(was " + module.str()
+                      + " built with another compiler than epm's, "
+                      + epm::recipeSdk().compiler + "?)";
+
+    return load;
+}
+
+std::optional<epm::RecipeLoad> loadCachedModule(const FilePath& recipe,
+                                                const FilePath& cache)
+{
+    const auto cacheRoot =
+        cache.empty() ? epm::CacheRoot::fromEnvironment() : epm::CacheRoot {cache};
+    const auto build = epm::buildRecipe(recipe, canonical(cacheRoot));
+
+    if (!build.ok)
+    {
+        if (!build.details.empty())
+            Console::printError(build.details);
+
+        fail(build.error);
+        return std::nullopt;
+    }
+
+    epm::Log::step((build.cached ? "cached " : "built ") + build.module.str());
+    return epm::loadRecipe(build.module);
+}
+
+int describe()
+{
+    auto recipe = FilePath {};
+    auto module = FilePath {};
+    auto env = FilePath {};
+    auto cache = FilePath {};
+    auto verbose = false;
+
+    auto cli = Args::Parser {"epm describe",
+                             "Compiles an epm.cpp (or takes a --module built from "
+                             "one), loads it and prints the project it "
+                             "describes."};
+    cli.positional(recipe,
+                   "epm.cpp",
+                   "the recipe to describe (only informational with --module)");
+    cli.option("--module",
+               module,
+               "load this module instead of compiling the epm.cpp, such as "
+               "epm_add_recipe's Debug build, to debug it");
+    cli.option("--env", env, "the env JSON (default: an empty env)");
+    cli.option("--cache", cache, "the cache root (default: $EPM_CACHE)");
+    cli.flag("--verbose", verbose, "log each step");
+
+    if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
+        return *code;
+
+    if (recipe.empty() && module.empty())
+        return cli.fail("give an epm.cpp, a --module, or both");
+
+    if (!module.empty() && !Files::isFile(module))
+        return fail("no recipe module at " + module.str()
+                    + ": build its epm_add_recipe target first");
+
+    epm::Log::setVerbose(verbose);
+
+    try
+    {
+        auto envSpec = epm::Env {};
+
+        if (!env.empty())
+        {
+            if (auto loaded = epm::loadJsonFile<epm::Env>(env))
+                envSpec = std::move(*loaded);
+            else
+                return fail("cannot read the env file " + env.str());
+        }
+
+        auto load = module.empty() ? loadCachedModule(recipe, cache)
+                                   : loadProjectModule(module, recipe);
+
+        if (!load)
+            return 1;
+
+        if (!load->recipe)
+            return fail(load->error);
+
+        Console::print(Miro::toJSONString(load->recipe->describe(envSpec), 2));
+    }
+    catch (const std::exception& error)
+    {
+        return fail(error.what());
+    }
+
+    return 0;
+}
+
+int recipeSdk()
+{
+    auto out = FilePath {};
+
+    auto cli = Args::Parser {"epm recipe-sdk",
+                             "Writes the compiler, standard, include directories, "
+                             "definitions and options epm compiles an epm.cpp "
+                             "with, as CMake variables (epm.cmake's epm::recipe)."};
+    cli.option("--out", out, "the CMake file to write").required();
+
+    if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
+        return *code;
+
+    if (!epm::writeRecipeSdkCMake(out, epm::recipeSdk()))
+        return fail("cannot write " + out.str());
 
     return 0;
 }
@@ -286,6 +417,12 @@ int run()
 
     if (command == "resolve")
         return resolve();
+
+    if (command == "describe")
+        return describe();
+
+    if (command == "recipe-sdk")
+        return recipeSdk();
 
     if (command == "cache")
         return cache();

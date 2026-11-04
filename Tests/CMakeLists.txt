@@ -11,12 +11,18 @@ nano_add_executable(epmTests
             HarvestTests.cpp
             ManifestTests.cpp
             PlatformTests.cpp
+            RecipeTests.cpp
             ResolveTests.cpp
             Sha256Tests.cpp
             SourceCacheTests.cpp
             SpecTests.cpp
             TimestampTests.cpp
         TARGETS epm-core)
+
+# RecipeTests loads recipe modules into the test executable itself.
+epm_export_recipe_api(epmTests)
+target_compile_definitions(epmTests PRIVATE
+        EPM_TEST_RECIPE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Recipe")
 
 add_test(NAME get_epm_ranges
         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/GetEpmRanges.cmake)

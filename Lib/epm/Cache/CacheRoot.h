@@ -22,6 +22,9 @@ public:
     eacp::FilePath tmp() const;
     eacp::FilePath locks() const;
 
+    // Compiled epm.cpp modules, by RecipeBuild's key.
+    eacp::FilePath recipe() const;
+
 private:
     eacp::FilePath subdirectory(std::string_view name) const;
 

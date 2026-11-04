@@ -1,7 +1,7 @@
 # epm proof of concept — scope and contract
 
 > The per-call `epm_add_package` flow of §1–§3 is superseded by `Docs/Graph.md` (an
-> `epm.json` manifest, CMake's dependency provider, `epm configure`) and kept for
+> `epm.cpp` manifest, CMake's dependency provider, `epm configure`) and kept for
 > migration. The cache, fingerprint, config mapping and child build described here
 > still hold except where `Docs/Graph.md` says otherwise.
 

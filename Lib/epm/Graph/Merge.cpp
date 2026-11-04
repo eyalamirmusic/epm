@@ -36,12 +36,10 @@ Layer manifestLayer(std::string label, const ManifestPackage& package)
             package.options};
 }
 
-Vector<Layer> layersOf(const std::string& name, const MergeLayers& layers)
+Vector<Layer> layersOf(const MergeLayers& layers)
 {
     const auto& package = layers.packageOverride;
     const auto& overrides = layers.overrides;
-    const auto& profile = layers.profile;
-    const auto profileLabel = "profile:" + layers.profileName;
 
     auto result = Vector<Layer> {};
     result.add({"override:package",
@@ -58,18 +56,6 @@ Vector<Layer> layersOf(const std::string& name, const MergeLayers& layers)
                 overrides.abiMatch,
                 overrides.configs,
                 {}});
-
-    if (const auto* found = findPackage(profile.packages, name))
-        result.add({profileLabel + ":package",
-                    {},
-                    {},
-                    found->mode,
-                    found->abiMatch,
-                    found->configs,
-                    found->options});
-
-    result.add(
-        {profileLabel, {}, {}, profile.mode, profile.abiMatch, profile.configs, {}});
 
     if (layers.root)
         result.add(manifestLayer(rootDeclarer, *layers.root));
@@ -144,7 +130,7 @@ std::optional<Vector<std::string>> resolveConfigs(const Vector<std::string>& con
 MergeResult
     mergeRequest(const std::string& name, const MergeLayers& layers, const Env& env)
 {
-    const auto all = layersOf(name, layers);
+    const auto all = layersOf(layers);
     auto result = MergeResult {};
     auto& effective = result.effective;
     auto& request = effective.request;

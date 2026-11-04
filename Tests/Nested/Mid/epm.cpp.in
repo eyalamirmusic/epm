@@ -1,0 +1,18 @@
+// Mid's dependencies. Tests/GraphNested.cmake fills in @LEAF_URL@.
+
+#include <epm/Recipe/Recipe.h>
+
+using namespace epm;
+
+namespace
+{
+struct Mid final : Recipe
+{
+    void describe(Project& project, const Env&) override
+    {
+        project.add("Leaf", "@LEAF_URL@", "v1");
+    }
+};
+} // namespace
+
+EPM_RECIPE(Mid)

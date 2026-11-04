@@ -1,12 +1,13 @@
 #pragma once
 
+#include "ManifestLoader.h"
 #include "Merge.h"
 #include "ResolvedGraph.h"
 
 #include <epm/Cache/CacheRoot.h>
 #include <epm/Cache/SourceCache.h>
+#include <epm/Recipe/Project.h>
 #include <epm/Spec/Env.h>
-#include <epm/Spec/Manifest.h>
 #include <epm/Spec/Overrides.h>
 
 #include <functional>
@@ -21,10 +22,10 @@ using SourceFetcher = std::function<SourceResult(
 
 struct GraphInputs
 {
-    Manifest manifest;
+    // What the root epm.cpp described for `env`.
+    Project project;
 
-    // Where path-valued profiles are looked up.
-    eacp::FilePath manifestDirectory;
+    // Also what every dependency's epm.cpp is described for.
     Env env;
 
     // As read from overrides.json; the environment fills what it leaves
@@ -39,7 +40,7 @@ struct PlannedPackage
     EffectiveRequest effective;
     SourceSnapshot snapshot;
 
-    // Direct dependencies: the packages its own epm.json declares.
+    // Direct dependencies: the packages its own epm.cpp declares.
     eacp::Vector<std::string> deps;
     eacp::Vector<std::string> declaredBy;
 };
@@ -59,13 +60,16 @@ struct GraphPlan
 // "host/path", lower case (local paths keep their case).
 std::string repositoryKey(std::string_view url);
 
-// Rules 1-6 of Docs/Graph.md §5: walks the root manifest depth first in
-// manifest order, fetching every package (or taking its EPM_<Name>_SOURCE)
-// and reading its epm.json, merges each package's effective request (§4),
-// forces the dependents of source packages into source, and collects the
-// notes (strict makes them an error). Fails on a root manifest that
-// manifestError rejects. Nothing is built.
-GraphPlan planGraph(const GraphInputs& inputs, const SourceFetcher& fetch);
+// Rules 1-6 of Docs/Graph.md §5: walks the root project depth first in
+// declaration order, fetching every package (or taking its
+// EPM_<Name>_SOURCE) and loading its epm.cpp through `loader`, merges each
+// package's effective request (§4), forces the dependents of source packages
+// into source, and collects the notes (strict makes them an error). Fails on
+// a project that projectError rejects and on a recipe the loader cannot
+// load, naming the package. Nothing is built.
+GraphPlan planGraph(const GraphInputs& inputs,
+                    const SourceFetcher& fetch,
+                    ManifestLoader& loader);
 
 // The packages of `graph` that `deps` reach, directly or through their own
 // deps, in the graph's order and without notes: what a nested child build
@@ -91,5 +95,7 @@ GraphResult
     resolvePlan(const GraphPlan& plan, const Env& env, const CacheRoot& cache);
 
 // `epm configure`: planGraph fetching into `cache`, then resolvePlan.
-GraphResult configureGraph(const GraphInputs& inputs, const CacheRoot& cache);
+GraphResult configureGraph(const GraphInputs& inputs,
+                           const CacheRoot& cache,
+                           ManifestLoader& loader);
 } // namespace epm

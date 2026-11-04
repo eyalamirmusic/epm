@@ -40,6 +40,11 @@ struct Env
     std::string cxxStandard;
     std::string toolchainFile;
 
+    // EPM_PROFILE (CMake variable, else environment): a name for epm.cpp
+    // recipes to branch on. epm itself gives it no meaning, and it is not
+    // part of any fingerprint.
+    std::string profile;
+
     MIRO_REFLECT(schema,
                  cmake,
                  cmakeVersion,
@@ -59,6 +64,7 @@ struct Env
                  osxSysroot,
                  androidAbi,
                  cxxStandard,
-                 toolchainFile)
+                 toolchainFile,
+                 profile)
 };
 } // namespace epm

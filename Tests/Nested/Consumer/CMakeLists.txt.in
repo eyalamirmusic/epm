@@ -1,5 +1,5 @@
 # The consumer of Tests/GraphNested.cmake: declares only Mid, and reaches Leaf
-# through it.
+# through it. Its epm.cpp is also built as ConsumerRecipe, with a test.
 cmake_minimum_required(VERSION 3.25)
 list(APPEND CMAKE_PROJECT_TOP_LEVEL_INCLUDES "@GET_EPM@")
 project(NestedConsumer CXX)
@@ -8,3 +8,6 @@ find_package(Mid REQUIRED)
 
 add_executable(app Main.cpp)
 target_link_libraries(app PRIVATE Mid::Mid)
+
+enable_testing()
+epm_add_recipe(ConsumerRecipe)

@@ -13,34 +13,60 @@ using namespace epm;
 
 namespace
 {
-// Not checked, so planGraph's own check of the root can be tested.
-Manifest manifestFrom(std::string_view json)
+// A project declaring only `name` at `tag`, from org/<name>.
+Project declaring(const std::string& name, const std::string& tag)
 {
-    return Miro::createFromJSON<Manifest>(Miro::Json::parse(json));
+    auto project = Project {};
+    project.add(name, "org/" + name, tag);
+    return project;
 }
 
-// A manifest declaring only `name` at `tag`, from org/<name>.
-std::string declaring(const std::string& name, const std::string& tag)
-{
-    return R"({ "packages": [ { "name": ")" + name + R"(", "git": "org/)" + name
-           + R"(", "tag": ")" + tag + R"(" } ] })";
-}
+// What a recipe's describe() makes of an Env.
+using Describe = std::function<Project(const Env&)>;
 
-// Checkouts on disk standing in for the source cache: name@ref holds the
-// epm.json given for it.
-struct FakeSources
+// Checkouts on disk standing in for the source cache (name@ref), and an
+// in-memory ManifestLoader standing in for their epm.cpp files: a directory
+// describes the project given for it, or nothing.
+struct FakeSources final : ManifestLoader
 {
     FakeSources() { eacp::Files::createDirectories(root.path()); }
 
-    void add(const std::string& name,
-             const std::string& ref,
-             std::string_view manifest = {})
+    void add(const std::string& name, const std::string& ref, Project project = {})
+    {
+        add(name, ref, [project](const Env&) { return project; });
+    }
+
+    void add(const std::string& name, const std::string& ref, Describe describe)
     {
         const auto directory = root.path() / (name + "@" + ref);
         eacp::Files::createDirectories(directory);
+        describeAt(directory, std::move(describe));
+    }
 
-        if (!manifest.empty())
-            writeTextFile(directory / "epm.json", manifest);
+    void describeAt(const eacp::FilePath& directory, Describe describe)
+    {
+        recipes[directory.str()] = std::move(describe);
+    }
+
+    void failAt(const std::string& name, const std::string& ref, std::string error)
+    {
+        add(name, ref);
+        failures[(root.path() / (name + "@" + ref)).str()] = std::move(error);
+    }
+
+    std::optional<Project> load(const eacp::FilePath& directory,
+                                const Env& env,
+                                std::string& error) override
+    {
+        if (const auto failure = failures.find(directory.str());
+            failure != failures.end())
+        {
+            error = failure->second;
+            return std::nullopt;
+        }
+
+        const auto found = recipes.find(directory.str());
+        return found == recipes.end() ? Project {} : found->second(env);
     }
 
     SourceFetcher fetcher()
@@ -62,15 +88,23 @@ struct FakeSources
         };
     }
 
+    // A plan of `inputs` over these sources.
+    GraphPlan plan(const GraphInputs& inputs)
+    {
+        return planGraph(inputs, fetcher(), *this);
+    }
+
     eacp::TemporaryFile root;
     eacp::Vector<std::string> fetched;
     std::map<std::string, std::string> urls;
+    std::map<std::string, Describe> recipes;
+    std::map<std::string, std::string> failures;
 };
 
-GraphInputs inputsFor(std::string_view rootManifest)
+GraphInputs inputsFor(Project rootProject)
 {
     auto inputs = GraphInputs {};
-    inputs.manifest = manifestFrom(rootManifest);
+    inputs.project = std::move(rootProject);
     inputs.env.generator = "Ninja";
     inputs.env.buildType = "Debug";
     return inputs;
@@ -108,17 +142,6 @@ MergeLayers everyLayer()
     layers.overrides.mode = "prebuilt";
     layers.overrides.abiMatch = "any";
     layers.overrides.configs = {"Release"};
-    layers.profileName = "ci";
-    layers.profile.mode = "binary-only";
-    layers.profile.abiMatch = "strict";
-    layers.profile.configs = {"Debug"};
-    layers.profile.packages.add(
-        ProfilePackage {"other", {{"A", "other"}}, {}, "source", {}});
-
-    auto& fmt = layers.profile.packages.create();
-    fmt.name = "fmt";
-    fmt.options = {{"A", "profile"}, {"B", "profile"}};
-    fmt.abiMatch = "compatible";
 
     auto root = ManifestPackage {};
     root.git = "fmtlib/fmt";
@@ -153,8 +176,8 @@ auto tMergeOrder = test("Graph/merge/precedenceAndProvenance") = []
 
     check(request.options.at("A") == "override");
     check(provenance.at("options.A") == "override:package");
-    check(request.options.at("B") == "profile");
-    check(provenance.at("options.B") == "profile:ci:package");
+    check(request.options.at("B") == "root");
+    check(provenance.at("options.B") == "root");
     check(request.options.at("C") == "root");
     check(provenance.at("options.C") == "root");
     check(request.options.at("D") == "dep");
@@ -162,14 +185,12 @@ auto tMergeOrder = test("Graph/merge/precedenceAndProvenance") = []
 
     layers.packageOverride = {};
     layers.overrides = {};
-    const auto profiled = mergeRequest("fmt", layers, Env {});
-    check(profiled.effective.request.mode == "binary-only");
-    check(profiled.effective.provenance.at("mode") == "profile:ci");
-    check(profiled.effective.request.abiMatch == "compatible");
-    check(profiled.effective.provenance.at("abiMatch") == "profile:ci:package");
-    check(profiled.effective.request.configs[0] == "Debug");
+    const auto rooted = mergeRequest("fmt", layers, Env {});
+    check(rooted.effective.request.abiMatch == "compatible");
+    check(rooted.effective.provenance.at("abiMatch") == "default");
+    check(rooted.effective.request.configs[0] == "Release");
+    check(rooted.effective.provenance.at("configs") == "default");
 
-    layers.profile = {};
     layers.root->git.clear();
     const auto declared = mergeRequest("fmt", layers, Env {});
     check(declared.effective.request.mode == "auto");
@@ -240,15 +261,15 @@ auto tMergeConfigs = test("Graph/merge/configs") = []
 auto tGraphRootWins = test("Graph/walk/rootWinsAndNotes") = []
 {
     auto sources = FakeSources {};
-    sources.add("A", "v1", R"({ "packages": [ { "name": "C", "git": "org/C",
-        "tag": "v2", "options": { "X": "dep" }, "mode": "source" } ] })");
+    auto a = Project {};
+    setMode(setOption(a.add("C", "org/C", "v2"), "X", "dep"), "source");
+    sources.add("A", "v1", a);
     sources.add("C", "v1");
 
-    const auto plan = planGraph(inputsFor(R"({ "packages": [
-            { "name": "A", "git": "org/A", "tag": "v1" },
-            { "name": "C", "git": "org/C", "tag": "v1",
-              "options": { "X": "root" } } ] })"),
-                                sources.fetcher());
+    auto root = Project {};
+    root.add("A", "org/A", "v1");
+    setOption(root.add("C", "org/C", "v1"), "X", "root");
+    const auto plan = sources.plan(inputsFor(root));
 
     check(plan.ok);
     check(planned(plan, "C")->effective.request.gitRef == "v1");
@@ -267,23 +288,18 @@ auto tGraphRootWins = test("Graph/walk/rootWinsAndNotes") = []
 auto tGraphFirstWins = test("Graph/walk/firstDeclarationDepthFirst") = []
 {
     auto sources = FakeSources {};
-    sources.add("A", "v1", R"({ "packages": [
-        { "name": "D", "git": "org/D", "tag": "v1" },
-        { "name": "E", "git": "org/E", "tag": "fromA" } ] })");
-    sources.add(
-        "B",
-        "v1",
-        R"({ "packages": [ { "name": "E", "git": "org/E", "tag": "fromB" } ] })");
-    sources.add(
-        "D",
-        "v1",
-        R"({ "packages": [ { "name": "E", "git": "org/E", "tag": "fromD" } ] })");
+    auto a = Project {};
+    a.add("D", "org/D", "v1");
+    a.add("E", "org/E", "fromA");
+    sources.add("A", "v1", a);
+    sources.add("B", "v1", declaring("E", "fromB"));
+    sources.add("D", "v1", declaring("E", "fromD"));
     sources.add("E", "fromD");
 
-    const auto plan = planGraph(inputsFor(R"({ "packages": [
-            { "name": "A", "git": "org/A", "tag": "v1" },
-            { "name": "B", "git": "org/B", "tag": "v1" } ] })"),
-                                sources.fetcher());
+    auto root = Project {};
+    root.add("A", "org/A", "v1");
+    root.add("B", "org/B", "v1");
+    const auto plan = sources.plan(inputsFor(root));
 
     check(plan.ok);
     check(planned(plan, "E")->effective.request.gitRef == "fromD");
@@ -302,14 +318,15 @@ auto tGraphStrict = test("Graph/walk/strictTurnsNotesIntoAnError") = []
     sources.add("A", "v1", declaring("C", "v2"));
     sources.add("C", "v1");
 
-    auto inputs = inputsFor(R"({ "packages": [
-        { "name": "A", "git": "org/A", "tag": "v1" },
-        { "name": "C", "git": "org/C", "tag": "v1" } ] })");
+    auto root = Project {};
+    root.add("A", "org/A", "v1");
+    root.add("C", "org/C", "v1");
+    auto inputs = inputsFor(root);
 
-    check(planGraph(inputs, sources.fetcher()).ok);
+    check(sources.plan(inputs).ok);
 
     inputs.overrides.strict = true;
-    const auto strict = planGraph(inputs, sources.fetcher());
+    const auto strict = sources.plan(inputs);
 
     check(!strict.ok);
     check(strict.error.find("C: A declares v2, root declares v1")
@@ -321,7 +338,7 @@ auto tGraphStrict = test("Graph/walk/strictTurnsNotesIntoAnError") = []
         return name == "EPM_STRICT" ? std::optional<std::string> {"1"}
                                     : std::optional<std::string> {};
     };
-    check(!planGraph(inputs, sources.fetcher()).ok);
+    check(!sources.plan(inputs).ok);
 };
 
 auto tGraphSameRepository = test("Graph/walk/sameRepositoryUnderTwoNames") = []
@@ -331,11 +348,11 @@ auto tGraphSameRepository = test("Graph/walk/sameRepositoryUnderTwoNames") = []
     sources.add("fmtlib", "v1");
     sources.add("other", "v1");
 
-    const auto plan = planGraph(inputsFor(R"({ "packages": [
-            { "name": "fmt", "git": "fmtlib/fmt", "tag": "v1" },
-            { "name": "fmtlib", "git": "git@github.com:FmtLib/fmt.git", "tag": "v1" },
-            { "name": "other", "git": "fmtlib/other", "tag": "v1" } ] })"),
-                                sources.fetcher());
+    auto root = Project {};
+    root.add("fmt", "fmtlib/fmt", "v1");
+    root.add("fmtlib", "git@github.com:FmtLib/fmt.git", "v1");
+    root.add("other", "fmtlib/other", "v1");
+    const auto plan = sources.plan(inputsFor(root));
 
     check(plan.ok);
     check(plan.notes.size() == 1);
@@ -362,12 +379,13 @@ auto tGraphSourcePropagates = test("Graph/walk/sourceForcesDependents") = []
     sources.add("B", "v1");
     sources.add("C", "v1");
 
-    auto inputs = inputsFor(R"({ "packages": [
-        { "name": "B", "git": "org/B", "tag": "v1" },
-        { "name": "Top", "git": "org/Top", "tag": "v1" } ] })");
+    auto root = Project {};
+    root.add("B", "org/B", "v1");
+    root.add("Top", "org/Top", "v1");
+    auto inputs = inputsFor(root);
     inputs.overrides.packages["C"].mode = "source";
 
-    const auto plan = planGraph(inputs, sources.fetcher());
+    const auto plan = sources.plan(inputs);
 
     check(plan.ok);
     check(planned(plan, "C")->effective.request.mode == "source");
@@ -386,7 +404,9 @@ auto tGraphSourceOverride = test("Graph/walk/sourceOverrideIsReadNotFetched") = 
     sources.add("C", "v1");
 
     auto checkout = eacp::TemporaryFile {};
-    writeTextFile(checkout.path() / "epm.json", declaring("C", "v1"));
+    eacp::Files::createDirectories(checkout.path());
+    sources.describeAt(checkout.path(),
+                       [](const Env&) { return declaring("C", "v1"); });
 
     auto inputs = inputsFor(declaring("A", "v9"));
     inputs.environment = [&checkout](std::string_view name)
@@ -395,7 +415,7 @@ auto tGraphSourceOverride = test("Graph/walk/sourceOverrideIsReadNotFetched") = 
                                       : std::optional<std::string> {};
     };
 
-    const auto plan = planGraph(inputs, sources.fetcher());
+    const auto plan = sources.plan(inputs);
 
     check(plan.ok);
     check(sources.fetched == eacp::Vector<std::string> {"C@v1"});
@@ -409,14 +429,15 @@ auto tGraphSourceOverride = test("Graph/walk/sourceOverrideIsReadNotFetched") = 
 auto tGraphRootOptionsOnly = test("Graph/walk/rootMayOnlyAddOptions") = []
 {
     auto sources = FakeSources {};
-    sources.add("A", "v1", R"({ "packages": [ { "name": "C", "git": "org/C",
-        "tag": "v3", "options": { "Y": "dep" } } ] })");
+    auto a = Project {};
+    setOption(a.add("C", "org/C", "v3"), "Y", "dep");
+    sources.add("A", "v1", a);
     sources.add("C", "v3");
 
-    const auto plan = planGraph(inputsFor(R"({ "packages": [
-            { "name": "A", "git": "org/A", "tag": "v1" },
-            { "name": "C", "options": { "X": "root" } } ] })"),
-                                sources.fetcher());
+    auto root = Project {};
+    root.add("A", "org/A", "v1");
+    setOption(root.add("C"), "X", "root");
+    const auto plan = sources.plan(inputsFor(root));
 
     check(plan.ok);
     const auto& request = planned(plan, "C")->effective.request;
@@ -427,10 +448,9 @@ auto tGraphRootOptionsOnly = test("Graph/walk/rootMayOnlyAddOptions") = []
     check(request.options.at("Y") == "dep");
     check(plan.notes.empty());
 
-    const auto orphan = planGraph(
-        inputsFor(
-            R"({ "packages": [ { "name": "C", "options": { "X": "root" } } ] })"),
-        sources.fetcher());
+    auto orphanRoot = Project {};
+    setOption(orphanRoot.add("C"), "X", "root");
+    const auto orphan = sources.plan(inputsFor(orphanRoot));
     check(!orphan.ok);
     check(orphan.error.find("C:") == 0);
 };
@@ -441,7 +461,7 @@ auto tGraphCycle = test("Graph/walk/cycleIsAnError") = []
     sources.add("A", "v1", declaring("B", "v1"));
     sources.add("B", "v1", declaring("A", "v1"));
 
-    const auto plan = planGraph(inputsFor(declaring("A", "v1")), sources.fetcher());
+    const auto plan = sources.plan(inputsFor(declaring("A", "v1")));
 
     check(!plan.ok);
     check(plan.error == "dependency cycle: A -> B -> A");
@@ -450,47 +470,44 @@ auto tGraphCycle = test("Graph/walk/cycleIsAnError") = []
 auto tGraphBadInputs = test("Graph/walk/reportsBadInputs") = []
 {
     auto sources = FakeSources {};
-    sources.add("A", "v1", R"({ "packages": [ { "name": "C", "git": "org/C" } ] })");
+    auto a = Project {};
+    a.add("C", "org/C");
+    sources.add("A", "v1", a);
 
-    const auto noTag = planGraph(inputsFor(declaring("A", "v1")), sources.fetcher());
+    const auto noTag = sources.plan(inputsFor(declaring("A", "v1")));
     check(!noTag.ok);
     check(noTag.error == "C has no tag (declared by A)");
 
-    const auto missing =
-        planGraph(inputsFor(declaring("A", "v7")), sources.fetcher());
+    const auto missing = sources.plan(inputsFor(declaring("A", "v7")));
     check(!missing.ok);
     check(missing.error.find("no v7") != std::string::npos);
 
-    auto badMode = inputsFor(R"({ "packages": [ { "name": "B", "git": "org/B",
-        "tag": "v1", "mode": "sometimes" } ] })");
+    auto badMode = Project {};
+    setMode(badMode.add("B", "org/B", "v1"), "sometimes");
     sources.add("B", "v1");
-    const auto unknownMode = planGraph(badMode, sources.fetcher());
+    const auto unknownMode = sources.plan(inputsFor(badMode));
     check(!unknownMode.ok);
     check(unknownMode.error.find("sometimes") != std::string::npos);
-
-    auto badProfile = inputsFor(R"({ "packages": [] })");
-    badProfile.overrides.profile = "ci";
-    check(!planGraph(badProfile, sources.fetcher()).ok);
 };
 
 auto tGraphDuplicateName = test("Graph/walk/duplicateNameIsAnError") = []
 {
     auto sources = FakeSources {};
-    sources.add("A", "v1", R"({ "packages": [
-        { "name": "C", "git": "org/C", "tag": "v1" },
-        { "name": "C", "git": "org/C", "tag": "v2" } ] })");
+    auto a = Project {};
+    a.add("C", "org/C", "v1");
+    a.add("C", "org/C", "v2");
+    sources.add("A", "v1", a);
     sources.add("C", "v1");
 
-    const auto nested =
-        planGraph(inputsFor(declaring("A", "v1")), sources.fetcher());
+    const auto nested = sources.plan(inputsFor(declaring("A", "v1")));
     check(!nested.ok);
     check(nested.error.starts_with("the manifest of A ("));
     check(nested.error.ends_with("): C is declared twice in packages"));
 
-    const auto root = planGraph(inputsFor(R"({ "packages": [
-        { "name": "C", "git": "org/C", "tag": "v1" },
-        { "name": "C", "git": "org/C", "tag": "v1" } ] })"),
-                                sources.fetcher());
+    auto twice = Project {};
+    twice.add("C", "org/C", "v1");
+    twice.add("C", "org/C", "v1");
+    const auto root = sources.plan(inputsFor(twice));
     check(!root.ok);
     check(root.error == "the root manifest: C is declared twice in packages");
     check(sources.fetched == eacp::Vector<std::string> {"A@v1"});
@@ -504,12 +521,13 @@ auto tGraphDeclarationOrder = test("Graph/walk/declarationOrderNotNameOrder") = 
     sources.add("P", "fromZeta");
 
     // Name order would visit alpha first and let its P win.
-    auto inputs = inputsFor(R"({ "packages": [
-            { "name": "zeta", "git": "org/zeta", "tag": "v1" },
-            { "name": "alpha", "git": "org/alpha", "tag": "v1" } ] })");
+    auto root = Project {};
+    root.add("zeta", "org/zeta", "v1");
+    root.add("alpha", "org/alpha", "v1");
+    auto inputs = inputsFor(root);
     inputs.overrides.buildMissingBinaries = false;
 
-    const auto plan = planGraph(inputs, sources.fetcher());
+    const auto plan = sources.plan(inputs);
 
     check(plan.ok);
     check(planned(plan, "P")->effective.request.gitRef == "fromZeta");
@@ -530,26 +548,69 @@ auto tGraphDeclarationOrder = test("Graph/walk/declarationOrderNotNameOrder") = 
               .starts_with("set(epm_PACKAGES \"P;zeta;alpha\")\n"));
 };
 
-auto tGraphProfile = test("Graph/walk/profileApplies") = []
+auto tGraphProfile = test("Graph/walk/profileReachesRecipes") = []
 {
+    // A recipe branching on EPM_PROFILE, as a profile is written now.
+    const auto rootRecipe = [](const Env& env)
+    {
+        auto project = Project {};
+        auto& a = project.add("A", "org/A", "v1");
+
+        if (env.profile == "ci")
+            addConfig(setMode(a, "binary-only"), "Release");
+
+        return project;
+    };
+
     auto sources = FakeSources {};
-    sources.add("A", "v1", declaring("C", "v1"));
+    sources.add("A",
+                "v1",
+                [](const Env& env)
+                {
+                    auto project = declaring("C", "v1");
+
+                    if (env.profile == "ci")
+                        setMode(project.packages[0], "prebuilt");
+
+                    return project;
+                });
     sources.add("C", "v1");
 
-    auto inputs = inputsFor(R"({
-        "packages": [ { "name": "A", "git": "org/A", "tag": "v1" } ],
-        "profiles": { "ci": { "mode": "binary-only", "configs": ["Release"],
-            "packages": [ { "name": "C", "mode": "prebuilt" } ] } } })");
-    inputs.overrides.profile = "ci";
+    auto inputs = inputsFor({});
+    inputs.env.profile = "ci";
+    inputs.project = rootRecipe(inputs.env);
 
-    const auto plan = planGraph(inputs, sources.fetcher());
+    const auto plan = sources.plan(inputs);
 
     check(plan.ok);
     check(planned(plan, "A")->effective.request.mode == "binary-only");
     check(planned(plan, "A")->effective.request.configs[0] == "Release");
     check(planned(plan, "C")->effective.request.mode == "prebuilt");
-    check(planned(plan, "C")->effective.provenance.at("mode")
-          == "profile:ci:package");
+    check(planned(plan, "C")->effective.provenance.at("mode") == "manifest:A");
+
+    inputs.env.profile.clear();
+    inputs.project = rootRecipe(inputs.env);
+
+    const auto plain = sources.plan(inputs);
+
+    check(plain.ok);
+    check(planned(plain, "A")->effective.request.mode == "auto");
+    check(planned(plain, "C")->effective.request.mode == "auto");
+};
+
+auto tGraphLoaderFails = test("Graph/walk/recipeFailureNamesThePackage") = []
+{
+    auto sources = FakeSources {};
+    sources.add("A", "v1", declaring("B", "v1"));
+    sources.failAt("B", "v1", "the recipe did not compile; see compile.log");
+
+    const auto plan = sources.plan(inputsFor(declaring("A", "v1")));
+
+    check(!plan.ok);
+    check(plan.error.starts_with("the manifest of B ("));
+    check(plan.error.find("B@v1/epm.cpp): ") != std::string::npos);
+    check(plan.error.ends_with("the recipe did not compile; see compile.log"));
+    check(sources.fetched == eacp::Vector<std::string> {"A@v1", "B@v1"});
 };
 
 auto tGraphFallbackForcesSource =
@@ -562,7 +623,7 @@ auto tGraphFallbackForcesSource =
     auto inputs = inputsFor(declaring("A", "v1"));
     inputs.overrides.buildMissingBinaries = false;
 
-    const auto plan = planGraph(inputs, sources.fetcher());
+    const auto plan = sources.plan(inputs);
     check(plan.ok);
     check(planned(plan, "A")->effective.request.mode == "auto");
 
@@ -589,9 +650,10 @@ auto tGraphBinaryOnlyMiss = test("Graph/resolve/binaryOnlyFailsOnAMiss") = []
     auto sources = FakeSources {};
     sources.add("A", "v1");
 
-    auto inputs = inputsFor(R"({ "packages": [ { "name": "A", "git": "org/A",
-        "tag": "v1", "mode": "binary-only" } ] })");
-    const auto plan = planGraph(inputs, sources.fetcher());
+    auto root = Project {};
+    setMode(root.add("A", "org/A", "v1"), "binary-only");
+    auto inputs = inputsFor(root);
+    const auto plan = sources.plan(inputs);
 
     auto cacheDirectory = eacp::TemporaryFile {};
     const auto resolved =

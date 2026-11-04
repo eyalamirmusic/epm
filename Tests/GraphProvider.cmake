@@ -114,7 +114,7 @@ if [ \"$1\" = --version ]; then echo 0.2.0; exit 0; fi
 if [ \"$1\" != configure ]; then echo \"fake epm: unknown command $1\" >&2; exit 2; fi
 if [ -n \"$EPM_TEST_FAIL\" ]; then
     echo 'fake epm: resolving the graph'
-    echo 'fake epm: epm.json is broken' >&2
+    echo 'fake epm: epm.cpp is broken' >&2
     exit 3
 fi
 out=''
@@ -151,7 +151,7 @@ set(EPM_Leaf_OPTIONS "LEAF_X=1;LEAF_Y=a \"b\"" CACHE STRING "")
     file(READ "${epm_dir}/configure-args.txt" args)
     string(REPLACE "\n" ";" args "${args}")
     set(expected_args configure
-            --manifest "${graph_dir}/Consumer/epm.json"
+            --manifest "${graph_dir}/Consumer/epm.cpp"
             --env "${epm_dir}/env.json"
             --overrides "${epm_dir}/overrides.json"
             --out "${epm_dir}")
@@ -168,9 +168,16 @@ set(EPM_Leaf_OPTIONS "LEAF_X=1;LEAF_Y=a \"b\"" CACHE STRING "")
                 "project())")
     endif ()
 
+    # EPM_PROFILE reaches the recipe through env.json, not as an override.
+    string(JSON profile GET "${env}" profile)
+
+    if (NOT profile STREQUAL "ci")
+        fail("env.json has profile '${profile}', expected ci")
+    endif ()
+
     file(READ "${epm_dir}/overrides.json" overrides)
     set(expected_overrides [=[{
-        "schema": 1, "profile": "ci", "mode": "", "configs": ["Debug", "Release"],
+        "schema": 1, "mode": "", "configs": ["Debug", "Release"],
         "abiMatch": "", "strict": true,
         "packages": {
             "Fetched": {"mode": "", "source": "", "configs": ["Release"], "options": {}},
@@ -194,12 +201,20 @@ set(EPM_Leaf_OPTIONS "LEAF_X=1;LEAF_Y=a \"b\"" CACHE STRING "")
         fail("overrides.json was written")
     endif ()
 
-    # 4. A failing `epm configure` fails the configure, with its output.
-    set(env_prefix "${CMAKE_COMMAND}" -E env EPM_TEST_FAIL=1)
+    # 4. A failing `epm configure` fails the configure, with its output. The
+    # env.json written before it takes EPM_PROFILE from the environment.
+    set(env_prefix "${CMAKE_COMMAND}" -E env EPM_TEST_FAIL=1 EPM_PROFILE=nightly)
     configure_consumer(failing ${get_epm_args})
     expect_failure("epm: epm configure failed (exit 3)")
     expect_failure("fake epm: resolving the graph")
-    expect_failure("fake epm: epm.json is broken")
+    expect_failure("fake epm: epm.cpp is broken")
+
+    file(READ "${WORK_DIR}/failing/epm/env.json" env)
+    string(JSON profile GET "${env}" profile)
+
+    if (NOT profile STREQUAL "nightly")
+        fail("env.json has profile '${profile}', expected nightly (environment)")
+    endif ()
 
     # 5. include() after project() cannot register a provider: a clear error.
     configure_consumer(included "-DEPM_EXECUTABLE=${fake_epm}"

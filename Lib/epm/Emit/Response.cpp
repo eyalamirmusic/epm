@@ -19,6 +19,16 @@ std::string cmakeQuoted(std::string_view text)
     return quoted + "\"";
 }
 
+std::string cmakeQuotedList(const eacp::Vector<std::string>& items)
+{
+    auto escaped = eacp::Vector<std::string> {};
+
+    for (const auto& item: items)
+        escaped.add(replaceAll(item, ";", "\\;"));
+
+    return cmakeQuoted(joinList(escaped, ";"));
+}
+
 std::string responseText(const Response& response)
 {
     const auto variable = "epm_" + response.name + "_";
