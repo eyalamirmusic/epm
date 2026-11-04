@@ -1,0 +1,188 @@
+{
+  "packages": [
+    {
+      "commit": "9f26b4a120ef7e97a5f6d430c1bd9010d23e3709",
+      "hash": "efc3c23665509c858b1cf7da9aaa41ba1423fb3c89b6381a98da6a2cbff3d06c",
+      "isOverridden": false,
+      "kind": "git",
+      "name": "EADataStructures",
+      "patches": [],
+      "recipeHash": "",
+      "requestedRef": "main",
+      "requirements": [
+        {
+          "commit": "9f26b4a120ef7e97a5f6d430c1bd9010d23e3709",
+          "requestedBy": "eacp",
+          "requestedRef": "main",
+          "url": "https://github.com/eyalamirmusic/cpp_data_structures.git"
+        }
+      ],
+      "submoduleSelection": {
+        "isRecursive": true,
+        "isRestricted": false,
+        "paths": []
+      },
+      "submodules": [],
+      "url": "https://github.com/eyalamirmusic/cpp_data_structures.git",
+      "usesGitLfs": false
+    },
+    {
+      "commit": "1712e729e6c292f7e73abf817bf511f35dcffe4c",
+      "hash": "99fe605149acc78215762e7f398a78f27057873450a473c51a9e9b13ea9455e3",
+      "isOverridden": false,
+      "kind": "git",
+      "name": "ESIMD",
+      "patches": [],
+      "recipeHash": "",
+      "requestedRef": "main",
+      "requirements": [
+        {
+          "commit": "1712e729e6c292f7e73abf817bf511f35dcffe4c",
+          "requestedBy": "eacp",
+          "requestedRef": "main",
+          "url": "https://github.com/eyalamirmusic/ESIMD.git"
+        }
+      ],
+      "submoduleSelection": {
+        "isRecursive": true,
+        "isRestricted": false,
+        "paths": []
+      },
+      "submodules": [],
+      "url": "https://github.com/eyalamirmusic/ESIMD.git",
+      "usesGitLfs": false
+    },
+    {
+      "commit": "e6fc9b9acd899fbafc9431637a98198d484f6fd5",
+      "hash": "3128bcecc5b61f1e9af0b788a09221c7fd90333ce3dafd38438a5431f603ed5a",
+      "isOverridden": false,
+      "kind": "git",
+      "name": "Miro",
+      "patches": [],
+      "recipeHash": "",
+      "requestedRef": "main",
+      "requirements": [
+        {
+          "commit": "e6fc9b9acd899fbafc9431637a98198d484f6fd5",
+          "requestedBy": "root",
+          "requestedRef": "main",
+          "url": "https://github.com/eyalamirmusic/Miro.git"
+        }
+      ],
+      "submoduleSelection": {
+        "isRecursive": true,
+        "isRestricted": false,
+        "paths": []
+      },
+      "submodules": [],
+      "url": "https://github.com/eyalamirmusic/Miro.git",
+      "usesGitLfs": false
+    },
+    {
+      "commit": "1b193ebc095338c967af3d658e74b0d6f870bf9b",
+      "hash": "20700974bc778c949a252560f33f72275cfcc58a68904d98fabcb4e47d44bdf9",
+      "isOverridden": false,
+      "kind": "git",
+      "name": "NanoTest",
+      "patches": [],
+      "recipeHash": "",
+      "requestedRef": "main",
+      "requirements": [
+        {
+          "commit": "1b193ebc095338c967af3d658e74b0d6f870bf9b",
+          "requestedBy": "root",
+          "requestedRef": "main",
+          "url": "https://github.com/eyalamirmusic/NanoTest.git"
+        }
+      ],
+      "submoduleSelection": {
+        "isRecursive": true,
+        "isRestricted": false,
+        "paths": []
+      },
+      "submodules": [],
+      "url": "https://github.com/eyalamirmusic/NanoTest.git",
+      "usesGitLfs": false
+    },
+    {
+      "commit": "8cfcbfa7bdf2214c8939502a349b7d4fb4ac73bb",
+      "hash": "1fb0ce608fe41c1ed15b0800fce2932c7ce63c4ad08e09d53e32a3c265fb231c",
+      "isOverridden": false,
+      "kind": "git",
+      "name": "ResEmbed",
+      "patches": [],
+      "recipeHash": "",
+      "requestedRef": "main",
+      "requirements": [
+        {
+          "commit": "8cfcbfa7bdf2214c8939502a349b7d4fb4ac73bb",
+          "requestedBy": "eacp",
+          "requestedRef": "main",
+          "url": "https://github.com/eyalamirmusic/ResEmbed.git"
+        }
+      ],
+      "submoduleSelection": {
+        "isRecursive": true,
+        "isRestricted": false,
+        "paths": []
+      },
+      "submodules": [],
+      "url": "https://github.com/eyalamirmusic/ResEmbed.git",
+      "usesGitLfs": false
+    },
+    {
+      "commit": "ed141b0ca8fae3ba2dcec7741fc399b5f01a1daf",
+      "hash": "57f94a18fc06d7e8d87ffdb87ce160574e55414fb52934cbd5f5001bd0edbca6",
+      "isOverridden": false,
+      "kind": "git",
+      "name": "eacp",
+      "patches": [],
+      "recipeHash": "",
+      "requestedRef": "develop",
+      "requirements": [
+        {
+          "commit": "ed141b0ca8fae3ba2dcec7741fc399b5f01a1daf",
+          "requestedBy": "root",
+          "requestedRef": "develop",
+          "url": "https://github.com/eyalamirmusic/eacp.git"
+        }
+      ],
+      "submoduleSelection": {
+        "isRecursive": true,
+        "isRestricted": false,
+        "paths": []
+      },
+      "submodules": [],
+      "url": "https://github.com/eyalamirmusic/eacp.git",
+      "usesGitLfs": false
+    },
+    {
+      "commit": "a8d28bd082bff18ffbe80996e922b012f915cf07",
+      "hash": "3f41212a26fa42c9a22279d049ebeff03f90a25786285da20ef7e753e4ed584d",
+      "isOverridden": false,
+      "kind": "git",
+      "name": "glslang",
+      "patches": [],
+      "recipeHash": "",
+      "requestedRef": "16.5.0",
+      "requirements": [
+        {
+          "commit": "a8d28bd082bff18ffbe80996e922b012f915cf07",
+          "requestedBy": "eacp",
+          "requestedRef": "16.5.0",
+          "url": "https://github.com/KhronosGroup/glslang.git"
+        }
+      ],
+      "submoduleSelection": {
+        "isRecursive": true,
+        "isRestricted": false,
+        "paths": []
+      },
+      "submodules": [],
+      "url": "https://github.com/KhronosGroup/glslang.git",
+      "usesGitLfs": false
+    }
+  ],
+  "root": "f40569be89893d8ea37631b7be4b1fb6286cfa85dbdfefdcb8109ec85a990d17",
+  "version": 1
+}

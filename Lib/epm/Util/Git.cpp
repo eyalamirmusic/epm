@@ -1,7 +1,10 @@
 #include "Git.h"
 #include "Text.h"
 
-#include <eacp/Core/Process/Process.h>
+#include <eacp/Core/Platform/Platform.h>
+#include <eacp/Core/Utils/Strings.h>
+
+#include <stdexcept>
 
 namespace epm::Git
 {
@@ -11,11 +14,11 @@ namespace
 {
 // No terminal prompt, no GUI askpass, ssh in batch mode: git runs with nobody
 // to answer, so anything that would ask must fail instead.
-Vector<Processes::EnvironmentVariable> nonInteractiveEnvironment()
+EA::Vector<Processes::EnvironmentVariable> nonInteractiveEnvironment()
 {
     using Variable = Processes::EnvironmentVariable;
 
-    auto environment = Vector<Variable> {};
+    auto environment = EA::Vector<Variable> {};
 
     // Spelled out rather than braced: `{"a", "b"}` is ambiguous between one
     // variable and an initializer_list of two.
@@ -32,19 +35,33 @@ std::string firstLine(const std::string& text)
 {
     return text.substr(0, text.find('\n'));
 }
+
+// Git for Windows refuses checkouts past MAX_PATH unless core.longpaths is set.
+EA::Vector<std::string> platformArguments(const EA::Vector<std::string>& arguments)
+{
+    if (!Platform::isWindows())
+        return arguments;
+
+    auto withLongPaths = EA::Vector<std::string> {"-c", "core.longpaths=true"};
+    withLongPaths.addFrom(arguments);
+    return withLongPaths;
+}
 } // namespace
 
-Result run(const FilePath& workingDirectory, const Vector<std::string>& arguments)
+Result run(const EA::Vector<std::string>& arguments,
+           const EA::Vector<Processes::EnvironmentVariable>& environment)
 {
     auto options = Processes::ProcessOptions {};
 
     options.executable = "git";
-    options.workingDirectory = workingDirectory.str();
     options.environment = nonInteractiveEnvironment();
-    options.arguments.add("--no-optional-locks");
+    options.environment.addFrom(environment);
 
-    for (const auto& argument: arguments)
-        options.arguments.add(argument);
+    // Never the project's own directory: git would read its .git first, and a
+    // worktree whose .git points somewhere missing stops every command.
+    options.workingDirectory = FilePath::tempDirectory().str();
+    options.arguments.add("--no-optional-locks");
+    options.arguments.addFrom(platformArguments(arguments));
 
     const auto result = Processes::run(std::move(options));
 
@@ -54,50 +71,38 @@ Result run(const FilePath& workingDirectory, const Vector<std::string>& argument
                             : std::string {"could not run git - is it installed?"}};
 }
 
-bool isAvailable()
+std::string runOrThrow(const Vector<std::string>& arguments,
+                       const Vector<Processes::EnvironmentVariable>& environment)
 {
-    static const auto available = run({}, {"--version"}).ok;
-    return available;
-}
-
-Vector<RemoteRef> parseLsRemote(std::string_view output)
-{
-    auto refs = Vector<RemoteRef> {};
-
-    for (const auto line: splitLines(output))
-    {
-        const auto tab = line.find('\t');
-
-        if (tab == std::string_view::npos || tab == 0)
-            continue;
-
-        refs.add(
-            {std::string {line.substr(tab + 1)}, std::string {line.substr(0, tab)}});
-    }
-
-    return refs;
-}
-
-RemoteRefs lsRemote(const std::string& url)
-{
-    auto refs = RemoteRefs {};
-
-    // No working directory: a checkout's config must not rewrite the URL asked.
-    const auto result = run({}, {"ls-remote", url});
+    auto result = run(arguments, environment);
 
     if (!result.ok)
-    {
-        refs.error = firstLine(result.message());
+        throw std::runtime_error("git " + Strings::join(arguments, " ")
+                                 + " failed:\n" + Strings::trim(result.error));
 
-        if (refs.error.empty())
-            refs.error = "git ls-remote failed for " + url;
+    return Strings::trim(result.output);
+}
 
-        return refs;
-    }
+bool isLfsInstalled()
+{
+    return run({"lfs", "version"}).ok;
+}
 
-    refs.refs = parseLsRemote(result.output);
-    refs.ok = true;
+FilePath findPatchBesideGit()
+{
+    // Git for Windows ships patch.exe in usr/bin beside libexec/git-core, which
+    // is where CPM looks too.
+    constexpr auto levelsAboveGitInstall = 3;
+    auto execPath = run({"--exec-path"});
 
-    return refs;
+    if (!execPath.ok)
+        return {};
+
+    auto install = FilePath {Strings::trim(execPath.output)};
+
+    for (auto level = 0; level < levelsAboveGitInstall; ++level)
+        install = install.parentDirectory();
+
+    return install / "usr" / "bin" / "patch.exe";
 }
 } // namespace epm::Git

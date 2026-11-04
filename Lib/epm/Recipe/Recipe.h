@@ -28,7 +28,7 @@ namespace epm
 // Bumped whenever Recipe, Project or RecipeEntry change in a way an already
 // compiled recipe would misread. A recipe is rebuilt per epm binary anyway;
 // this catches a module built against another epm's headers.
-constexpr int recipeApiVersion = 1;
+constexpr int recipeApiVersion = 2;
 
 struct Recipe
 {

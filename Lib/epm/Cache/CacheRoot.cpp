@@ -30,6 +30,16 @@ FilePath CacheRoot::src() const
     return subdirectory("src");
 }
 
+FilePath CacheRoot::git() const
+{
+    return subdirectory("git");
+}
+
+FilePath CacheRoot::downloads() const
+{
+    return subdirectory("downloads");
+}
+
 FilePath CacheRoot::bin() const
 {
     return subdirectory("bin");
@@ -38,11 +48,6 @@ FilePath CacheRoot::bin() const
 FilePath CacheRoot::build() const
 {
     return subdirectory("build");
-}
-
-FilePath CacheRoot::cpm() const
-{
-    return subdirectory("cpm");
 }
 
 FilePath CacheRoot::tmp() const

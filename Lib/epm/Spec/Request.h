@@ -9,13 +9,9 @@
 
 namespace epm
 {
-// The request schema this binary reads; epm.cmake writes the same number.
-constexpr auto requestSchema = 2;
-
-// requests/<name>.json: one epm_add_package call.
+// One package to resolve: what a package call or an epm.cpp graph asks for.
 struct Request
 {
-    int schema = requestSchema;
     std::string name;
     std::string gitUrl;
     std::string gitRef;
@@ -30,7 +26,7 @@ struct Request
 
     // EPM_CONFIGS as epm.cmake resolved it: the configurations the consumer
     // needs, e.g. ["Release"] or ["Debug", "Release"].
-    eacp::Vector<std::string> configs;
+    EA::Vector<std::string> configs;
 
     // EPM_ABI_MATCH: "compatible", "strict" or "any".
     std::string abiMatch = "compatible";
@@ -40,8 +36,7 @@ struct Request
     // dependency changes the entry of everything linking it.
     std::map<std::string, std::string> deps;
 
-    MIRO_REFLECT(schema,
-                 name,
+    MIRO_REFLECT(name,
                  gitUrl,
                  gitRef,
                  mode,

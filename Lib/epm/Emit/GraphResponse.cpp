@@ -12,7 +12,7 @@ namespace
 {
 Vector<std::string> optionList(const std::map<std::string, std::string>& options)
 {
-    auto list = Vector<std::string> {};
+    auto list = EA::Vector<std::string> {};
 
     for (const auto& [key, value]: options)
         list.add(key + "=" + value);
@@ -44,7 +44,7 @@ std::string packageText(const ResolvedPackage& package)
 
 std::string graphCMakeText(const ResolvedGraph& graph)
 {
-    auto names = Vector<std::string> {};
+    auto names = EA::Vector<std::string> {};
 
     for (const auto& package: graph.packages)
         names.add(package.name);
@@ -54,21 +54,8 @@ std::string graphCMakeText(const ResolvedGraph& graph)
     for (const auto& package: graph.packages)
         text += packageText(package);
 
+    text +=
+        "set(epm_SYSTEM_PACKAGES " + cmakeQuotedList(graph.systemPackages) + ")\n";
     return text + "set(epm_NOTES " + cmakeQuotedList(graph.notes) + ")\n";
-}
-
-bool writeGraphCMake(const FilePath& path, const ResolvedGraph& graph)
-{
-    return writeTextFile(path, graphCMakeText(graph));
-}
-
-bool writeGraphJson(const FilePath& path, const ResolvedGraph& graph)
-{
-    return saveJsonFile(path, graph);
-}
-
-std::optional<ResolvedGraph> loadGraphJson(const FilePath& path)
-{
-    return loadJsonFile<ResolvedGraph>(path);
 }
 } // namespace epm

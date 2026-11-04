@@ -8,7 +8,7 @@
 
 namespace epm
 {
-// What responses/<name>.cmake tells epm.cmake.
+// Which way a package was resolved.
 struct Response
 {
     std::string name;
@@ -23,7 +23,7 @@ struct Response
 
     // Prebuilt only: the entry's platform and the configs it holds.
     std::string platform;
-    eacp::Vector<std::string> configs;
+    EA::Vector<std::string> configs;
 
     // Prebuilt only: set when the entry was built with a toolchain that only
     // matches the current one under the request's abiMatch (abiNote).
@@ -37,7 +37,8 @@ std::string cmakeQuoted(std::string_view text);
 // so that it stays one element.
 std::string cmakeQuotedList(const eacp::Vector<std::string>& items);
 
-std::string responseText(const Response& response);
-
-bool writeResponse(const eacp::FilePath& path, const Response& response);
+// The epm_load_package call (epm-provider.cmake) that includes a prebuilt
+// entry's targets file, makes its imported targets global and prints the
+// package's status line.
+std::string prebuiltLoadText(const Response& response);
 } // namespace epm

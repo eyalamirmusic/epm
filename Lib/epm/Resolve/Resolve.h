@@ -1,7 +1,8 @@
 #pragma once
 
+#include <epm/Build/ChildBuild.h>
 #include <epm/Cache/CacheRoot.h>
-#include <epm/Cache/SourceCache.h>
+#include <epm/Source/SourceSnapshot.h>
 #include <epm/Emit/Response.h>
 #include <epm/Spec/Env.h>
 #include <epm/Spec/Request.h>
@@ -41,16 +42,15 @@ struct ResolveResult
     std::string details;
 };
 
-// Finds, builds or skips the binary entry for a source already in hand, as
-// the mode decides. The request is assumed well formed (requestError).
-// `dependencyGraph` goes to the child build (ChildBuild::dependencyGraph).
+// Finds, builds or skips the binary entry for a source already in the cache,
+// as the mode decides. The request is assumed well formed (requestError). An
+// entry's configs built against dependencies the lock no longer holds at the
+// same hashes count as missing. `childLock` and `dependencyGraph` go to the
+// child build.
 ResolveResult resolveSnapshot(const Request& request,
                               const Env& env,
                               const CacheRoot& cache,
                               const SourceSnapshot& snapshot,
+                              const LockForChildBuilds& childLock,
                               const std::string& dependencyGraph = {});
-
-// The whole `epm resolve` pipeline: fetch the source, then resolveSnapshot.
-ResolveResult
-    resolvePackage(const Request& request, const Env& env, const CacheRoot& cache);
 } // namespace epm

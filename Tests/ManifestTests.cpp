@@ -101,6 +101,35 @@ auto tProjectJson = test("Manifest/project/printsAsJson") = []
     check(back.packages[0].mode == "source");
 };
 
+auto tProjectSystem = test("Manifest/project/addSystemMarksASystemPackage") = []
+{
+    auto project = Project {};
+    project.addSystem("Threads");
+
+    check(project.packages.size() == 1);
+    check(project.packages[0].name == "Threads");
+    check(project.packages[0].system);
+    check(project.packages[0].git.empty());
+};
+
+auto tProjectOverride = test("Manifest/project/overridePackageIsFoundByName") = []
+{
+    auto project = Project {};
+    project.overridePackage("fmt").commit = "abc";
+    project.overridePackage("fmt").url = "https://example.com/fmt.git";
+
+    const auto found = project.findOverride("fmt");
+
+    check(found.has_value());
+    check(found->commit == "abc");
+    check(found->url == "https://example.com/fmt.git");
+    check(!project.findOverride("other").has_value());
+
+    const auto back = Miro::createFromJSON<Project>(
+        Miro::Json::parse(Miro::toJSONString(project)));
+    check(back.findOverride("fmt")->commit == "abc");
+};
+
 auto tManifestShorthand = test("Manifest/expandGitUrl") = []
 {
     check(expandGitUrl("fmtlib/fmt") == "https://github.com/fmtlib/fmt.git");
@@ -115,7 +144,7 @@ auto tManifestShorthand = test("Manifest/expandGitUrl") = []
 auto tOverridesParse = test("Overrides/parsesContractFixture") = []
 {
     auto file = eacp::TemporaryFile {".json"};
-    writeTextFile(file.path(), R"({
+    eacp::Files::writeFile(file.path(), R"({
       "schema": 1, "mode": "", "configs": [], "abiMatch": "", "strict": true,
       "packages": { "fmt": { "mode": "source", "source": "/abs/fmt",
                              "configs": ["Debug"], "options": { "A": "1" } } } })");

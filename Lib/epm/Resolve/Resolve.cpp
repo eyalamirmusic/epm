@@ -71,21 +71,11 @@ Decision decide(const Request& request, bool binaryExists)
 
 std::optional<std::string> requestError(const Request& request)
 {
-    if (request.schema != requestSchema)
-        return "the request" + (request.name.empty() ? "" : " for " + request.name)
-               + " has schema " + std::to_string(request.schema)
-               + ", but this epm reads schema " + std::to_string(requestSchema)
-               + ": epm.cmake and the epm binary come from different versions "
-                 "(include get_epm.cmake, which takes both from one install)";
-
     if (request.name.empty())
         return "the request has no name";
 
     if (request.gitUrl.empty())
         return "the request for " + request.name + " has no gitUrl";
-
-    if (request.gitRef.empty())
-        return "the request for " + request.name + " has no gitRef";
 
     if (!isKnownMode(request.mode))
         return "the request for " + request.name + " has an unknown mode '"
@@ -110,15 +100,21 @@ ResolveResult resolveSnapshot(const Request& request,
                               const Env& env,
                               const CacheRoot& cache,
                               const SourceSnapshot& snapshot,
+                              const LockForChildBuilds& childLock,
                               const std::string& dependencyGraph)
 {
     if (request.mode == "source")
         return sourceResult(request, snapshot);
 
-    const auto wanted = makeFingerprint(request, env, snapshot.sourceId);
+    const auto wanted = makeFingerprint(request, env, snapshot.hash);
     const auto configs = buildConfigsFor(request.configs);
+    auto entries = EA::Vector<BinaryEntry> {};
+
+    for (const auto& found: findEntries(cache, request.name, wanted.platform))
+        entries.add(withConfigsMatchingTheLock(found, childLock.lock));
+
     const auto existing =
-        pickEntry(findEntries(cache, request.name, wanted.platform),
+        pickEntry(entries,
                   wanted,
                   parseAbiMatch(request.abiMatch).value_or(AbiMatch::compatible),
                   configs);
@@ -128,7 +124,9 @@ ResolveResult resolveSnapshot(const Request& request,
     Log::step("epm: " + request.name + " " + wanted.platform + " "
               + fingerprintId(wanted).substr(0, 12) + ": "
               + (existing ? "entry " + existing->prefix.fileName() : "no entry")
-              + (missing.empty() ? "" : ", missing " + joinList(missing, ", ")));
+              + (missing.empty()
+                     ? ""
+                     : ", missing " + eacp::Strings::join(missing, ", ")));
 
     switch (decide(request, existing && missing.empty()))
     {
@@ -141,17 +139,19 @@ ResolveResult resolveSnapshot(const Request& request,
         case Decision::missingBinary:
             return failure(
                 request.name + " is binary-only, but the cache has no "
-                + wanted.platform + " entry holding " + joinList(configs, ", ")
-                + " for " + fingerprintId(wanted).substr(0, 12)
+                + wanted.platform + " entry holding "
+                + eacp::Strings::join(configs, ", ") + " for "
+                + fingerprintId(wanted).substr(0, 12)
                 + (existing ? " (entry " + existing->prefix.fileName() + " lacks "
-                                  + joinList(missing, ", ") + ")"
+                                  + eacp::Strings::join(missing, ", ") + ")"
                             : ""));
 
         case Decision::buildBinary:
             break;
     }
 
-    const auto built = buildBinary(cache, request, env, snapshot, dependencyGraph);
+    const auto built =
+        buildBinary(cache, request, env, snapshot, childLock, dependencyGraph);
 
     if (!built.ok)
         return failure(built.error, built.details);
@@ -159,18 +159,4 @@ ResolveResult resolveSnapshot(const Request& request,
     return binaryResult(request, snapshot, built.entry, wanted);
 }
 
-ResolveResult
-    resolvePackage(const Request& request, const Env& env, const CacheRoot& cache)
-{
-    if (auto error = requestError(request))
-        return failure(*error);
-
-    const auto source =
-        fetchSource(cache, request.name, request.gitUrl, request.gitRef);
-
-    if (!source.ok)
-        return failure(source.error);
-
-    return resolveSnapshot(request, env, cache, source.snapshot);
-}
 } // namespace epm

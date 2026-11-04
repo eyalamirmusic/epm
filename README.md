@@ -11,8 +11,7 @@ consumer's CMake does not change.
 
 The longer-term design (remote binary caches, lockfiles, transitive
 dependencies, a CPM compatibility shim) is in [PLAN.md](PLAN.md). What exists
-today, including the files exchanged between `epm.cmake` and the binary and the
-cache layout, is described in [Docs/PoC.md](Docs/PoC.md).
+today is described below.
 
 ## Status
 
@@ -25,10 +24,9 @@ interface may all change.
 
 ```cmake
 cmake_minimum_required(VERSION 3.31)
-project(HelloEacp CXX)
-
 set(EPM_CONFIGS Release) # only Release archives of eacp; Debug builds of hello link them on multi-config generators (missing configs map to Release)
-include(cmake/get_epm.cmake)        # vendored from this repository's CMake/
+list(APPEND CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${CMAKE_CURRENT_LIST_DIR}/cmake/get_epm.cmake")  # vendored from this repository's CMake/
+project(HelloEacp CXX)
 
 epm_add_package(
         NAME eacp
@@ -43,7 +41,8 @@ target_compile_features(hello PRIVATE cxx_std_20)
 target_link_libraries(hello PRIVATE eacp-core)
 ```
 
-This is `Examples/HelloEacp` in this repository. From the repository root:
+This is `Examples/HelloEacp` in this repository, with its `epm.cpp` beside it.
+From the repository root:
 
 ```bash
 cmake -S Examples/HelloEacp -B build-hello
@@ -56,6 +55,39 @@ Release configuration into the cache. Later configures, in any build directory
 and any build type, reuse it and take about a second. Without the
 `EPM_CONFIGS` line, epm builds the build type you configured instead, and a
 configure in another build type adds just that configuration.
+
+## Declaring dependencies in epm.cpp
+
+A project can instead list its dependencies in `epm.cpp` beside the top-level
+`CMakeLists.txt`. epm compiles the file with the configure's own C++ compiler,
+against headers embedded in the epm binary and written to
+`<cache>/recipe-sdk/` on first use, loads it into its own process and calls
+`describe`, so the list is C++ (macOS and Linux only; Windows has no recipes
+yet):
+
+```cpp
+#include <epm/Recipe/Recipe.h>
+
+using namespace epm;
+
+struct App : Recipe
+{
+    void describe(Project& project, const Env& env) override
+    {
+        setMode(project.add("fmt", "fmtlib/fmt", "11.0.2"), "source");
+        project.addSystem("Threads");
+        project.overridePackage("shared").commit = "<commit>";
+    }
+};
+
+EPM_RECIPE(App)
+```
+
+`find_package(fmt)` then loads it. A dependency's own `epm.cpp` is compiled
+and run in the same way at configure time, from the checkout the lock pins,
+so its Merkle hash covers the recipe code that runs. `epm_add_recipe(<target>)`
+builds the recipe as a module of the project's own build, so an IDE indexes it
+and a debugger can step through `describe`.
 
 ## Configuring what gets built
 
@@ -77,9 +109,53 @@ Two cache variables, set with `-D` or before the first `epm_add_package`:
   the configure line:
   `-- epm: eacp (prebuilt, macos-arm64, 1a2b3c4d5e6f, built with AppleClang 17.0.0.17000013, current 17.0.0.17000319)`.
 
-`epm cache ls` lists what the cache holds. Docs/PoC.md §9 has the details.
-Builds cached by epm 0.1.2 and older use another layout and are ignored;
-delete the cache's `bin/` directory once to reclaim the space.
+`epm cache ls` lists what the cache holds.
+
+## Locking the dependency tree
+
+Every package is pinned in `epm-lock.json`, beside the top-level `CMakeLists.txt`
+(`EPM_LOCK_FILE` moves it), to a commit and a Merkle hash of its files (path,
+type and SHA-256 of each entry, `.git` and execute bits left out), with one
+root hash over all of them. epm never builds unless the lock is satisfied. To
+capture `FetchContent_MakeAvailable` too, load epm during `project()`:
+
+```cmake
+cmake_minimum_required(VERSION 3.31)
+set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${CMAKE_CURRENT_LIST_DIR}/cmake/get_epm.cmake")
+project(HelloEacp CXX)
+```
+
+`CPMAddPackage`, `CPMFindPackage`, `CPMDeclarePackage` and
+`CPMGetPackage` are epm's, `include(CPM)` finds an empty stub, and a
+dependency's own CPM.cmake returns before defining anything, so the packages
+dependencies ask for land in the same lock. Child builds of prebuilt packages
+load epm too. The lock is an input of the configure, so a build after it is
+edited, pulled or deleted reconfigures. `EPM_LOCK_MODE` is `locked` (the default: a missing lock is
+written on the first configure, a lock that disagrees with the CMake stops the
+configure), `update` (re-resolve every ref and rewrite the lock) or `offline`
+(the cache only); with `EPM_CI=ON` a missing lock is an error. `EPM_<Name>_SOURCE` or `CPM_<Name>_SOURCE` uses a local
+checkout with a warning; `EPM_CI=ON` makes that an error in locked mode.
+`epm lock update [name...]`, `epm lock verify [--full]` (a locked package missing from the cache, as one only another platform asks for is, is fetched at its locked commit and checked) and `epm lock root`
+work on the lock from the command line.
+
+With epm loaded during `project()`, `find_package` never falls through to
+CMake's own search. A name outside the graph is a package added: its source is
+the lock's entry, else the one a dependency's `epm-lock.json` records, and
+locked mode writes it into the lock (`EPM_CI=ON` stops instead, naming the
+`find_package` line). When nothing records it the configure stops with the
+line to add to the root `epm.cpp`. A package the machine provides is opted in
+by name with `project.addSystem("Threads")`, and only then searched for as
+CMake would; a `Find<Name>.cmake` on `CMAKE_MODULE_PATH` is the project's own
+code and still runs.
+
+The lock holds one version of each package for the whole tree. When projects
+ask for different versions, the highest semantic version tag wins and anything
+else stops the configure until the root's `epm.cpp` overrides it, as Go's
+minimal version selection and `replace` do.
+
+A binary cache entry's key includes the package's Merkle hash, and the entry
+records the hashes of the packages its child build added, so a cached library
+is only used with exactly the sources in the lock.
 
 ## Getting the epm binary
 
@@ -129,17 +205,21 @@ The cache is `~/Library/Caches/epm` on macOS, `$XDG_CACHE_HOME/epm` or
 from source instead of downloading, `EPM_SOURCE_REF` (or `EPM_SOURCE_URL`)
 builds another tag, branch or commit from source, `EPM_SOURCE_DIR` (CMake or
 environment variable) builds a local epm checkout incrementally at every
-configure and uses it (for working on epm; `EPM_BOOTSTRAP_SOURCE_DIR` is its
-deprecated name), and `EPM_VERBOSE=ON` shows what is tried. A `get_epm.cmake`
+configure and uses it (for working on epm), and `EPM_VERBOSE=ON` shows what is tried. A `get_epm.cmake`
 that is itself part of an epm checkout (the examples in this repository use
 `../../CMake/get_epm.cmake`) builds that checkout unless `EPM_EXECUTABLE`,
 `EPM_SOURCE_DIR`, `EPM_SOURCE_REF` or `EPM_SOURCE_URL` says otherwise; a vendored
-copy never does. Details are in Docs/PoC.md §8.
+copy never does.
 
 ## Building and installing epm
 
-epm needs CMake 3.31 and a C++20 compiler. Its own dependencies (eacp, Miro) are
-fetched with CPM and linked statically.
+epm needs CMake 3.31 and a C++20 compiler. It builds itself with epm, as a
+compiler builds with its previous release: `CMakeLists.txt` pins a released
+epm (`EPM_VERSION`, `EPM_RELEASE_REPOSITORY`), `CMake/get_epm.cmake` downloads
+it during `project()`, and it resolves eacp, Miro and NanoTest from `epm.cpp`
+and the committed `epm-lock.json`; `find_package` reaches them through the
+provider. `-DEPM_EXECUTABLE=<an epm>` uses another. Everything is linked
+statically.
 
 ```bash
 cmake -S . -B build && cmake --build build && cmake --install build --prefix ~/.local
@@ -166,14 +246,10 @@ Release builds with Ninja:
 | `linux-arm64`     | `ubuntu-24.04-arm` | clang, lld                          |
 
 Each job builds epm, runs `ctest`, then configures, builds and runs
-`Examples/HelloEacp` through `get_epm.cmake` four ways: (a) with the binary it
-just built (`MODE auto`, so eacp is fetched and built, Release only, into a
-cache inside the workspace); (b) with nothing set and no epm on `PATH`, which
-must download the latest release; (c) with the epm 0.1.1 release unpacked onto
-`PATH`, which must be used; (d) with that same `PATH` and `EPM_VERSION=0.1.2`,
-which must skip it and download the latest release. (b) and (d) are skipped
-while the latest release has no `manifest.json`. The package is uploaded as a
-workflow artifact.
+`Examples/HelloEacp` with the binary it just built (`MODE auto`, so eacp is
+fetched and built, Release only, into a cache inside the workspace), and
+configures it again to check that eacp comes from the binary cache. The
+package is uploaded as a workflow artifact.
 
 `.github/workflows/release.yml` builds the same packages on pushes to `main` and
 `release/**` and on `v*` tags (the list is at the top of the file):

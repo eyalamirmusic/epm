@@ -21,7 +21,7 @@ void fillString(std::string& value,
         value = *text;
 }
 
-void fillList(Vector<std::string>& value,
+void fillList(EA::Vector<std::string>& value,
               const EnvironmentLookup& lookup,
               std::string_view variable)
 {
@@ -75,7 +75,7 @@ std::map<std::string, std::string> parseOptionList(std::string_view text)
 }
 
 Overrides withEnvironment(Overrides fromCMake,
-                          const Vector<std::string>& names,
+                          const EA::Vector<std::string>& names,
                           const EnvironmentLookup& lookup)
 {
     auto overrides = std::move(fromCMake);

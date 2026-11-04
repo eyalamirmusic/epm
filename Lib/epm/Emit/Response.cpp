@@ -26,34 +26,21 @@ std::string cmakeQuotedList(const eacp::Vector<std::string>& items)
     for (const auto& item: items)
         escaped.add(replaceAll(item, ";", "\\;"));
 
-    return cmakeQuoted(joinList(escaped, ";"));
+    return cmakeQuoted(eacp::Strings::join(escaped, ";"));
 }
 
-std::string responseText(const Response& response)
+std::string prebuiltLoadText(const Response& response)
 {
-    const auto variable = "epm_" + response.name + "_";
-    const auto set = [&](std::string_view suffix, const std::string& quotedValue)
-    { return "set(" + variable + std::string {suffix} + " " + quotedValue + ")\n"; };
-
-    auto text = set("MODE", cmakeQuoted(response.mode))
-                + set("SOURCE_DIR", cmakeQuoted(response.sourceDirectory.str()));
-
-    if (response.mode != "prebuilt")
-        return text;
-
-    text += set("PREFIX", cmakeQuoted(response.prefix.str()))
-            + set("TARGETS_FILE", "\"${" + variable + "PREFIX}/epm-targets.cmake\"")
-            + set("PLATFORM", cmakeQuoted(response.platform))
-            + set("CONFIGS", cmakeQuoted(joinList(response.configs, ";")));
+    auto text = "epm_load_package(" + cmakeQuoted(response.name)
+                + " MODE prebuilt SOURCE_DIR "
+                + cmakeQuoted(response.sourceDirectory.str()) + " TARGETS_FILE "
+                + cmakeQuoted((response.prefix / "epm-targets.cmake").str())
+                + " PREFIX " + cmakeQuoted(response.prefix.str()) + " PLATFORM "
+                + cmakeQuoted(response.platform);
 
     if (!response.note.empty())
-        text += set("NOTE", cmakeQuoted(response.note));
+        text += " NOTE " + cmakeQuoted(response.note);
 
-    return text;
-}
-
-bool writeResponse(const eacp::FilePath& path, const Response& response)
-{
-    return writeTextFile(path, responseText(response));
+    return text + ")\n";
 }
 } // namespace epm

@@ -23,7 +23,7 @@ struct CommandResult
 // Runs a child to completion with stdout and stderr merged. Its output is
 // streamed live when Log::isVerbose(), and always kept in the result.
 CommandResult runCommand(const std::string& executable,
-                         const eacp::Vector<std::string>& arguments);
+                         const EA::Vector<std::string>& arguments);
 
 // The last `count` lines of `text`, for a failure report that stays readable.
 std::string lastLines(std::string_view text, int count);

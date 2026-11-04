@@ -1,0 +1,11 @@
+diff --git a/source.h b/source.h
+--- a/source.h
++++ b/source.h
+@@ -3,6 +3,6 @@
+ #include <bit>
+ #include <execution>
+ 
+-#ifndef NDEBUG
++#if 0
+ #include <iostream>
+ #endif

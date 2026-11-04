@@ -11,7 +11,6 @@ using namespace epm;
 
 namespace
 {
-// Verbatim from Docs/PoC.md §2.
 constexpr auto envFixture = R"({ "schema": 1,
   "cmake": "/path/to/cmake", "cmakeVersion": "3.31.6", "generator": "Ninja",
   "isMultiConfig": false,
@@ -25,7 +24,7 @@ constexpr auto envFixture = R"({ "schema": 1,
   "cxxStandard": "20",
   "toolchainFile": "" })";
 
-constexpr auto requestFixture = R"({ "schema": 2,
+constexpr auto requestFixture = R"({
   "name": "eacp",
   "gitUrl": "https://github.com/eyalamirmusic/eacp.git",
   "gitRef": "main",
@@ -72,7 +71,7 @@ auto tEnvRoundTrip = test("Spec/env/roundTrip") = []
     env.cxxCompiler = "/usr/bin/c++";
 
     auto file = eacp::TemporaryFile {".json"};
-    check(saveJsonFile(file.path(), env));
+    eacp::Files::writeFile(file.path(), Miro::toJSONString(env, 2));
 
     const auto loaded = loadJsonFile<Env>(file.path());
 
@@ -99,7 +98,6 @@ auto tRequestParses = test("Spec/request/parsesPoCFixture") = []
     check(request->options.size() == 2);
     check(request->options.at("EACP_BUILD_GRAPHICS") == "OFF");
     check(request->buildMissingBinaries);
-    check(request->schema == 2);
     check(request->configs.size() == 1 && request->configs[0] == "Debug");
     check(request->abiMatch == "compatible");
 };
@@ -115,7 +113,7 @@ auto tRequestRoundTrip = test("Spec/request/roundTrip") = []
     request.buildMissingBinaries = false;
 
     auto file = eacp::TemporaryFile {".json"};
-    check(saveJsonFile(file.path(), request));
+    eacp::Files::writeFile(file.path(), Miro::toJSONString(request, 2));
 
     const auto text = eacp::Files::readFile(file.path());
     check(text.find("\"gitUrl\"") != std::string::npos);

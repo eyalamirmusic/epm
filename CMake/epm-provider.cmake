@@ -7,7 +7,7 @@
 # registers epm_provide_dependency for find_package() and
 # FetchContent_MakeAvailable(). It must be called while the first project()
 # processes CMAKE_PROJECT_TOP_LEVEL_INCLUDES (a CMake rule for every dependency
-# provider). The graph file (Docs/Graph.md §7) is read at the first call the
+# provider). The graph file is read at the first call the
 # provider receives, after running PREPARE once when one is given, so a
 # PREPARE command that writes the graph sees the variables the project set
 # between project() and its first find_package (CMAKE_CXX_STANDARD, say).
@@ -23,7 +23,11 @@
 #
 # find_package then gets X_FOUND, X_SOURCE_DIR and X_MODE; FetchContent gets
 # FetchContent_SetPopulated(X). Version arguments are ignored. A name that is
-# not in epm_PACKAGES is left to CMake's own search.
+# not in epm_PACKAGES goes to epm.cmake: a FetchContent_MakeAvailable of one
+# through the lock (epm_provide_through_the_lock), a find_package of one as a
+# package added (epm_find_through_the_lock), unless an epm.cpp marks it
+# system (Project::addSystem, epm_SYSTEM_PACKAGES), which alone leaves it to CMake's own search.
+# Registering twice only replaces the graph.
 
 include_guard(GLOBAL)
 
@@ -144,7 +148,8 @@ function(epm_load_package name)
         epm_set_options(${arg_OPTIONS})
 
         set(binary_dir "${CMAKE_BINARY_DIR}/_deps/${name}-build")
-        add_subdirectory("${arg_SOURCE_DIR}" "${binary_dir}")
+        # As a prebuilt entry would, a source package builds only what links it.
+        add_subdirectory("${arg_SOURCE_DIR}" "${binary_dir}" EXCLUDE_FROM_ALL)
 
         get_filename_component(id "${arg_SOURCE_DIR}" NAME)
     else ()
@@ -173,9 +178,13 @@ function(epm_provider_register graph_file)
 
     set_property(GLOBAL PROPERTY EPM_PROVIDER_GRAPH "${graph_file}")
     set_property(GLOBAL PROPERTY EPM_PROVIDER_PREPARE "${arg_PREPARE}")
+    get_property(registered GLOBAL PROPERTY EPM_PROVIDER_REGISTERED)
 
-    cmake_language(SET_DEPENDENCY_PROVIDER epm_provide_dependency
-            SUPPORTED_METHODS FIND_PACKAGE FETCHCONTENT_MAKEAVAILABLE_SERIAL)
+    if (NOT registered)
+        set_property(GLOBAL PROPERTY EPM_PROVIDER_REGISTERED TRUE)
+        cmake_language(SET_DEPENDENCY_PROVIDER epm_provide_dependency
+                SUPPORTED_METHODS FIND_PACKAGE FETCHCONTENT_MAKEAVAILABLE_SERIAL)
+    endif ()
 endfunction()
 
 # Runs the PREPARE command once, then includes the graph file into the
@@ -189,12 +198,17 @@ macro(epm_provider_read_graph)
     endif ()
 
     get_property(_epm_graph GLOBAL PROPERTY EPM_PROVIDER_GRAPH)
+    set(epm_PACKAGES "")
 
-    if (NOT EXISTS "${_epm_graph}")
-        message(FATAL_ERROR "epm: the dependency graph '${_epm_graph}' does not exist")
+    if (NOT "${_epm_graph}" STREQUAL "")
+        if (NOT EXISTS "${_epm_graph}")
+            message(FATAL_ERROR
+                    "epm: the dependency graph '${_epm_graph}' does not exist")
+        endif ()
+
+        include("${_epm_graph}")
     endif ()
 
-    include("${_epm_graph}")
     get_property(_epm_notes_shown GLOBAL PROPERTY EPM_PROVIDER_NOTES_SHOWN)
 
     if (NOT _epm_notes_shown)
@@ -254,6 +268,40 @@ function(epm_provide_dependency method name)
     epm_provider_read_graph()
 
     if (NOT name IN_LIST epm_PACKAGES)
+        if (method STREQUAL "FETCHCONTENT_MAKEAVAILABLE_SERIAL"
+                AND COMMAND epm_provide_through_the_lock)
+            epm_provide_through_the_lock("${name}" ${ARGN})
+            return()
+        endif ()
+
+        if (NOT method STREQUAL "FIND_PACKAGE" OR name IN_LIST epm_SYSTEM_PACKAGES
+                OR NOT COMMAND epm_find_through_the_lock)
+            return()
+        endif ()
+
+        # A Find module the project ships is its own code, not a system lookup.
+        foreach (module_dir IN LISTS CMAKE_MODULE_PATH)
+            if (EXISTS "${module_dir}/Find${name}.cmake")
+                return()
+            endif ()
+        endforeach ()
+
+        get_property(loaded GLOBAL PROPERTY EPM_PACKAGE_${name}_MODE SET)
+
+        if (loaded)
+            get_property(${name}_SOURCE_DIR GLOBAL PROPERTY EPM_PACKAGE_${name}_SOURCE_DIR)
+        else ()
+            set(_epm_find_is_system FALSE)
+            epm_find_through_the_lock("${name}")
+
+            # The root's epm.cpp marks it system: CMake's own search.
+            if (_epm_find_is_system)
+                return()
+            endif ()
+        endif ()
+
+        set(${name}_FOUND TRUE PARENT_SCOPE)
+        set(${name}_SOURCE_DIR "${${name}_SOURCE_DIR}" PARENT_SCOPE)
         return()
     endif ()
 

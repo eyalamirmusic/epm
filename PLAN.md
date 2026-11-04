@@ -5,8 +5,8 @@ CMake through a thin module, inspired by cpm.cmake for the user-facing shape, an
 what CPM deliberately leaves out: resolved pins, a sound source cache, prebuilt binaries,
 and local/remote cache repositories.
 
-Status: the local-cache proof of concept is implemented (`Docs/PoC.md`), and so is the
-manifest and dependency-graph stage that supersedes its per-call flow (`Docs/Graph.md`).
+Status: the local-cache proof of concept is implemented, and so are the manifest and
+dependency-graph stage and the lock (README.md).
 
 ---
 
@@ -101,7 +101,7 @@ names. These become first-class epm features.
  │ Source    git snapshot / archive download → source cache                  │
  │ Binary    toolchain probe, binary key, isolated build, package, unpack    │
  │ Store     CAS blobs + index; local dir, file://, http(s), GitHub Releases │
- │ Lock      epm.lock read/write, prefetch manifest, frozen mode             │
+ │ Lock      epm-lock.json read/write, prefetch manifest, frozen mode             │
  │ Emit      response .cmake (vars, mode, prefix, imported-target shim)      │
  └───────────────────────────────────────────────────────────────────────────┘
           │
@@ -121,10 +121,10 @@ calls are only seen once it is added. So the primitive has to be a per-call reso
 spawn is cheap; a cache hit is a lock-free read of a small JSON marker.
 
 The slow part (network) is moved out of the per-call path with the **lockfile as prefetch
-manifest**: on configure, before the first add, the module runs `epm prefetch epm.lock` once.
+manifest**: on configure, before the first add, the module runs `epm prefetch epm-lock.json` once.
 It fetches every locked source and every binary matching the current build-config-id, in
 parallel. Per-call resolves then all hit. First configure of a brand-new project is serial
-like CPM; every configure after `epm.lock` exists, and every CI run, is parallel.
+like CPM; every configure after `epm-lock.json` exists, and every CI run, is parallel.
 
 ---
 
@@ -134,7 +134,7 @@ like CPM; every configure after `epm.lock` exists, and every CI run, is parallel
 
 ```cmake
 include(CMake/epm.cmake)                       # bootstraps the epm binary (see 4.4)
-epm_use_lock(${CMAKE_SOURCE_DIR}/epm.lock)      # optional; enables prefetch + frozen mode
+epm_use_lock(${CMAKE_SOURCE_DIR}/epm-lock.json)      # optional; enables prefetch + frozen mode
 epm_add_stores(...)                             # optional; project-level cache repositories
 
 epm_add_package("gh:fmtlib/fmt@11.0.2")          # shorthand, like CPM
@@ -220,7 +220,7 @@ generator, CMake version, toolchain-file path. The tool turns this into a `build
 spelling the same source differently share one checkout.
 
 Tags and branches are resolved to a commit with `git ls-remote` at lock time and recorded in
-`epm.lock`. `epm update [name]` re-resolves. In frozen mode nothing is ever re-resolved.
+`epm-lock.json`. `epm update [name]` re-resolves. In frozen mode nothing is ever re-resolved.
 
 ### 5.2 Fetching
 
@@ -302,7 +302,7 @@ same platform, compiler id and major version, deployment target, C++ standard, o
 source and toolchain-file contents, so Xcode's and the command-line tools' clang share
 entries), `strict` (every recorded field) or `any` (platform, options, source). An exact
 match is preferred; a non-exact one is reported on the configure line. In the PoC the
-recorded fingerprint is the env-derived subset of 6.1 (`Docs/PoC.md` §3, §9).
+recorded fingerprint is the env-derived subset of 6.1.
 
 ### 6.3 Building a package in isolation
 
@@ -384,7 +384,7 @@ current config).
 
 ## 8. Lockfile
 
-`epm.lock` (JSON via Miro reflection), committed with the project:
+`epm-lock.json` (JSON via Miro reflection), committed with the project:
 
 ```json
 { "schema": 1,
@@ -408,7 +408,7 @@ current config).
   configure in "collect only" mode); `epm update [name…]` re-resolves tags/branches.
 - Added to `CMAKE_CONFIGURE_DEPENDS` so editing it reconfigures.
 
-AgentWorkspace can later read `epm.lock` to know which repos a project needs, replacing
+AgentWorkspace can later read `epm-lock.json` to know which repos a project needs, replacing
 hand-written `cpmNames`.
 
 ---
@@ -484,7 +484,7 @@ eacp upstream PRs epm needs first: `Hash::sha256` (promoting the private SHA-1 a
 **Phase 1 — source parity with CPM + correctness (2–3 weeks)**
 `epm_add_package` with the full CPM argument set and shorthand; request/response protocol;
 git and URL fetchers; content-addressed source cache with completeness markers and locks;
-patches hashed by content; tag/branch pinning; `epm.lock` read/write; prefetch; local
+patches hashed by content; tag/branch pinning; `epm-lock.json` read/write; prefetch; local
 overrides (`EPM_`/`CPM_<Name>_SOURCE`, case-insensitive); CPM shim for transitive deps;
 find_package redirect; OPTIONS/policies as CPM. Dogfood: EACPExamples, then eacp itself.
 Exit criterion: a CPM project switches by renaming `CPMAddPackage` → `epm_add_package` and
@@ -509,15 +509,15 @@ the same configure with `EPM_eacp_FROM_SOURCE=ON` produces identical target name
 
 **Phase 5 — polish and reach**
 Dependency provider mode; signatures and trusted keys; `why`/`why-miss`; GC policies;
-AgentWorkspace reads `epm.lock`; OCI/S3 stores; optional `.git`-keeping checkouts.
+AgentWorkspace reads `epm-lock.json`; OCI/S3 stores; optional `.git`-keeping checkouts.
 
 ---
 
 ## 12. Decisions (confirmed 2026-11-02)
 
-1. **No separate manifest file.** The CMakeLists is the manifest and `epm.lock` is the only
+1. **No separate manifest file.** The CMakeLists is the manifest and `epm-lock.json` is the only
    extra file (unlike pkgcpp's `pkgcpp.json`). May be revisited later. *Revisited: the
-   graph stage declares dependencies in an `epm.cpp` recipe (`Docs/Graph.md` §2).*
+   graph stage declares dependencies in an `epm.cpp` recipe.*
 2. **Cached sources are clean snapshots without `.git`**, with `epm checkout` / workspace
    overrides for development (see 5.2).
 3. **Artifact format `tar.zst`** via `cmake -E tar`; zip stays for vendor archives.

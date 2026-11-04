@@ -22,12 +22,39 @@ struct Node
     std::optional<ManifestPackage> root;
 
     // Declarations by dependencies, in walk order: the first one wins.
-    Vector<Declaration> declarations;
+    EA::Vector<Declaration> declarations;
     bool visiting = false;
     bool done = false;
     SourceSnapshot snapshot;
-    Vector<std::string> deps;
+    EA::Vector<std::string> deps;
+
+    // The requirement minimal version selection chose, and how many
+    // declarations the choice was made from.
+    Requirement selected;
+    int selectedFromDeclarations = 0;
 };
+
+// Every declaration of the node that names a source: the root's, then the
+// dependencies' in walk order.
+EA::Vector<Requirement> requirementsOf(const Node& node)
+{
+    auto requirements = EA::Vector<Requirement> {};
+
+    if (node.root && !node.root->git.empty() && !node.root->tag.empty())
+        requirements.add(
+            {rootDeclarer, expandGitUrl(node.root->git), node.root->tag, {}});
+
+    for (const auto& declaration: node.declarations)
+    {
+        const auto& package = declaration.package;
+
+        if (!package.git.empty() && !package.tag.empty())
+            requirements.add(
+                {declaration.declarer, expandGitUrl(package.git), package.tag, {}});
+    }
+
+    return requirements;
+}
 
 std::optional<Declaration> firstDependency(const Node& node)
 {
@@ -37,9 +64,9 @@ std::optional<Declaration> firstDependency(const Node& node)
     return node.declarations.front();
 }
 
-Vector<std::string> declarersOf(const Node& node)
+EA::Vector<std::string> declarersOf(const Node& node)
 {
-    auto declarers = Vector<std::string> {};
+    auto declarers = EA::Vector<std::string> {};
 
     if (node.root)
         declarers.add(rootDeclarer);
@@ -51,8 +78,9 @@ Vector<std::string> declarersOf(const Node& node)
 }
 
 // The dependency in `sourceNames` that forces a package into source.
-std::optional<std::string> sourceDependency(const Vector<std::string>& deps,
-                                            const Vector<std::string>& sourceNames)
+std::optional<std::string>
+    sourceDependency(const EA::Vector<std::string>& deps,
+                     const EA::Vector<std::string>& sourceNames)
 {
     for (const auto& dep: deps)
         if (sourceNames.contains(dep))
@@ -61,9 +89,9 @@ std::optional<std::string> sourceDependency(const Vector<std::string>& deps,
     return std::nullopt;
 }
 
-void forceSourceDependents(Vector<PlannedPackage>& packages)
+void forceSourceDependents(EA::Vector<PlannedPackage>& packages)
 {
-    auto sourceNames = Vector<std::string> {};
+    auto sourceNames = EA::Vector<std::string> {};
 
     for (auto& package: packages)
     {
@@ -83,7 +111,7 @@ void forceSourceDependents(Vector<PlannedPackage>& packages)
     }
 }
 
-std::string configsText(const Vector<std::string>& configs)
+std::string configsText(const EA::Vector<std::string>& configs)
 {
     if (configs.empty())
         return {};
@@ -92,7 +120,7 @@ std::string configsText(const Vector<std::string>& configs)
         return "auto";
 
     const auto built = buildConfigsFor(configs);
-    return joinList(built.empty() ? configs : built, ";");
+    return eacp::Strings::join(built.empty() ? configs : built, ";");
 }
 
 // A field of the winning declaration and who declared it.
@@ -134,9 +162,9 @@ std::string noteText(const std::string& name,
 
 // Rule 4: every later declaration asking for something the winning one does
 // not give, field by field (only the fields the later one sets).
-Vector<std::string> declarationNotes(const std::string& name, const Node& node)
+EA::Vector<std::string> declarationNotes(const std::string& name, const Node& node)
 {
-    auto notes = Vector<std::string> {};
+    auto notes = EA::Vector<std::string> {};
     const auto& declarations = node.declarations;
 
     struct Field
@@ -148,12 +176,8 @@ Vector<std::string> declarationNotes(const std::string& name, const Node& node)
 
     const auto equal = [](const std::string& a, const std::string& b)
     { return a == b; };
-    const auto fields = Vector<Field> {
-        {"git",
-         [](const ManifestPackage& p) { return expandGitUrl(p.git); },
-         [](const std::string& a, const std::string& b)
-         { return repositoryKey(a) == repositoryKey(b); }},
-        {"", [](const ManifestPackage& p) { return p.tag; }, equal},
+    // Git and tag are selected, not merged, so they make no note.
+    const auto fields = EA::Vector<Field> {
         {"configs",
          [](const ManifestPackage& p) { return configsText(p.configs); },
          equal},
@@ -195,10 +219,11 @@ Vector<std::string> declarationNotes(const std::string& name, const Node& node)
 }
 
 // Rule 5.
-Vector<std::string> sameRepositoryNotes(const Vector<PlannedPackage>& packages)
+EA::Vector<std::string>
+    sameRepositoryNotes(const EA::Vector<PlannedPackage>& packages)
 {
-    auto keys = Vector<std::string> {};
-    auto names = std::map<std::string, Vector<std::string>> {};
+    auto keys = EA::Vector<std::string> {};
+    auto names = std::map<std::string, EA::Vector<std::string>> {};
 
     for (const auto& package: packages)
     {
@@ -212,12 +237,12 @@ Vector<std::string> sameRepositoryNotes(const Vector<PlannedPackage>& packages)
         names[key].add(request.name);
     }
 
-    auto notes = Vector<std::string> {};
+    auto notes = EA::Vector<std::string> {};
 
     for (const auto& key: keys)
         if (names[key].size() > 1)
-            notes.add(joinList(names[key], " and ") + " are the same repository ("
-                      + key + ")");
+            notes.add(eacp::Strings::join(names[key], " and ")
+                      + " are the same repository (" + key + ")");
 
     return notes;
 }
@@ -241,10 +266,16 @@ public:
         if (auto problem = projectError(inputs.project))
             return failed(plan, "the root manifest: " + *problem);
 
-        auto rootNames = Vector<std::string> {};
+        auto rootNames = EA::Vector<std::string> {};
 
         for (const auto& package: inputs.project.packages)
         {
+            if (package.system)
+            {
+                addSystemPackage(package.name);
+                continue;
+            }
+
             rootNames.add(package.name);
             nodes[package.name].root = package;
         }
@@ -253,6 +284,10 @@ public:
 
         for (const auto& name: rootNames)
             if (startsAtRoot(name) && !visit(name))
+                return failed(plan, error);
+
+        for (const auto& name: order)
+            if (!reselect(name))
                 return failed(plan, error);
 
         for (const auto& name: rootNames)
@@ -273,6 +308,7 @@ public:
         }
 
         forceSourceDependents(plan.packages);
+        plan.systemPackages = systemPackages;
 
         for (const auto& name: order)
             for (auto& note: declarationNotes(name, nodes[name]))
@@ -284,7 +320,7 @@ public:
         if (overrides.strict && !plan.notes.empty())
             return failed(plan,
                           "EPM_STRICT is on and the graph has notes:\n  "
-                              + joinList(plan.notes, "\n  "));
+                              + eacp::Strings::join(plan.notes, "\n  "));
 
         plan.ok = true;
         return plan;
@@ -336,8 +372,8 @@ private:
             return true;
 
         if (node.visiting)
-            return fail("dependency cycle: " + joinList(stack, " -> ") + " -> "
-                        + name);
+            return fail("dependency cycle: " + eacp::Strings::join(stack, " -> ")
+                        + " -> " + name);
 
         node.visiting = true;
         stack.add(name);
@@ -367,21 +403,53 @@ private:
             return true;
         }
 
-        const auto git = winningValue(node, [](auto& p) { return p.git; }).value;
-        const auto tag = winningValue(node, [](auto& p) { return p.tag; }).value;
+        const auto requirements = requirementsOf(node);
 
-        if (git.empty() || tag.empty())
-            return fail(name + " has no " + (git.empty() ? "git" : "tag")
-                        + " (declared by " + joinList(declarersOf(node), ", ")
-                        + ")");
+        if (requirements.empty())
+            return fail(name + " has no git and tag (declared by "
+                        + eacp::Strings::join(declarersOf(node), ", ") + ")");
 
-        const auto fetched = fetch(name, expandGitUrl(git), tag);
+        const auto fetched = fetch(name, requirements);
 
         if (!fetched.ok)
             return fail(fetched.error);
 
         node.snapshot = fetched.snapshot;
+        node.selected = fetched.selected;
+        node.selectedFromDeclarations = node.declarations.size();
         return true;
+    }
+
+    // A declaration met after the package was fetched takes part in the
+    // selection too. When it changes the choice, the lock now records it, and
+    // the next configure fetches the new choice from the start.
+    bool reselect(const std::string& name)
+    {
+        auto& node = nodes[name];
+
+        if (!sourceOverride(name).empty()
+            || node.declarations.size() == node.selectedFromDeclarations)
+            return true;
+
+        const auto fetched = fetch(name, requirementsOf(node));
+
+        if (!fetched.ok)
+            return fail(fetched.error);
+
+        if (fetched.snapshot.hash != node.snapshot.hash)
+            return fail(name + " was fetched at '" + node.selected.requestedRef
+                        + "', and then " + fetched.selected.requestedBy
+                        + " asked for '" + fetched.selected.requestedRef
+                        + "', which minimal version selection takes instead. The "
+                          "lock now holds it; configure again.");
+
+        return true;
+    }
+
+    void addSystemPackage(const std::string& name)
+    {
+        if (!systemPackages.contains(name))
+            systemPackages.add(name);
     }
 
     // Declaring and visiting one dependency at a time keeps the walk depth
@@ -411,6 +479,12 @@ private:
 
             if (dep == name)
                 continue;
+
+            if (package.system)
+            {
+                addSystemPackage(dep);
+                continue;
+            }
 
             nodes[dep].declarations.add({name, package});
             node.deps.add(dep);
@@ -442,6 +516,11 @@ private:
 
         if (merged.effective.source.empty())
         {
+            merged.effective.request.gitUrl = node.selected.url;
+            merged.effective.request.gitRef = node.selected.requestedRef;
+            merged.effective.provenance["git"] = node.selected.requestedBy;
+            merged.effective.provenance["tag"] = node.selected.requestedBy;
+
             if (auto requestProblem = requestError(merged.effective.request))
             {
                 fail(*requestProblem);
@@ -460,8 +539,9 @@ private:
     ManifestLoader& loader;
     Overrides overrides;
     std::map<std::string, Node> nodes;
-    Vector<std::string> order;
-    Vector<std::string> stack;
+    EA::Vector<std::string> order;
+    EA::Vector<std::string> systemPackages;
+    EA::Vector<std::string> stack;
     std::string error;
 };
 
@@ -528,7 +608,7 @@ GraphPlan planGraph(const GraphInputs& inputs,
 }
 
 ResolvedGraph dependencyClosure(const ResolvedGraph& graph,
-                                const Vector<std::string>& deps)
+                                const EA::Vector<std::string>& deps)
 {
     auto closure = std::set<std::string> {};
     auto pending = deps;
@@ -555,12 +635,14 @@ ResolvedGraph dependencyClosure(const ResolvedGraph& graph,
     return result;
 }
 
-GraphResult
-    resolvePlan(const GraphPlan& plan, const Env& env, const CacheRoot& cache)
+GraphResult resolvePlan(const GraphPlan& plan,
+                        const Env& env,
+                        const CacheRoot& cache,
+                        const LockForChildBuilds& childLock)
 {
     auto result = GraphResult {};
     auto fingerprints = std::map<std::string, std::string> {};
-    auto sourceNames = Vector<std::string> {};
+    auto sourceNames = EA::Vector<std::string> {};
 
     for (const auto& planned: plan.packages)
     {
@@ -587,8 +669,8 @@ GraphResult
                 graphCMakeText(dependencyClosure(result.graph, planned.deps));
         }
 
-        const auto resolved =
-            resolveSnapshot(request, env, cache, planned.snapshot, dependencyGraph);
+        const auto resolved = resolveSnapshot(
+            request, env, cache, planned.snapshot, childLock, dependencyGraph);
 
         if (!resolved.ok)
         {
@@ -607,19 +689,17 @@ GraphResult
     }
 
     result.graph.notes = plan.notes;
+    result.graph.systemPackages = plan.systemPackages;
     result.ok = true;
     return result;
 }
 
 GraphResult configureGraph(const GraphInputs& inputs,
                            const CacheRoot& cache,
-                           ManifestLoader& loader)
+                           const SourceFetcher& fetch,
+                           ManifestLoader& loader,
+                           const LockForChildBuilds& childLock)
 {
-    const auto fetch = [&cache](const std::string& name,
-                                const std::string& url,
-                                const std::string& ref)
-    { return fetchSource(cache, name, url, ref); };
-
     const auto plan = planGraph(inputs, fetch, loader);
 
     if (!plan.ok)
@@ -629,6 +709,6 @@ GraphResult configureGraph(const GraphInputs& inputs,
         return result;
     }
 
-    return resolvePlan(plan, inputs.env, cache);
+    return resolvePlan(plan, inputs.env, cache, childLock);
 }
 } // namespace epm

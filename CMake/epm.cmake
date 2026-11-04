@@ -4,9 +4,13 @@
 # CMAKE_PROJECT_TOP_LEVEL_INCLUDES (or include it), and it finds (or downloads,
 # or builds) an epm binary, sets EPM_EXECUTABLE and then includes the epm.cmake
 # installed with that binary, so the two always match. epm-provider.cmake must
-# sit beside this file.
+# sit beside this file. The binary writes both into every child build it runs
+# (EPM_NESTED), so a dependency's own package calls go through the same lock.
 #
-# Two flows, while the second replaces the first (Docs/Graph.md):
+# Every package is pinned in the lock (EPM_LOCK_FILE, default
+# ${CMAKE_SOURCE_DIR}/epm-lock.json) to a commit and a Merkle hash of its files,
+# whichever way it is declared, and epm never builds what the lock cannot
+# satisfy:
 #
 # 1. A manifest, the recipe epm.cpp beside the top-level CMakeLists.txt.
 #    get_epm.cmake calls epm_use_manifest, which registers the dependency
@@ -15,23 +19,11 @@
 #    compiles and runs each epm.cpp) and reads the graph.cmake it writes;
 #    find_package(<name>) then loads each package.
 #
-# 2. epm_add_package, one package per call (Docs/PoC.md):
-#
-#   epm_add_package(
-#       NAME eacp
-#       GITHUB_REPOSITORY eyalamirmusic/eacp      # or GIT_REPOSITORY <url>
-#       GIT_TAG main                              # resolved to a commit by epm
-#       MODE auto                                 # auto | prebuilt | source
-#       OPTIONS "EACP_BUILD_GRAPHICS OFF" "EACP_ENABLE_TESTS OFF")
-#
-# Every call hands a request to the epm binary (`epm resolve`), which fetches the
-# source and, unless the mode is `source`, builds or reuses cached binaries. The
-# binary answers with a small CMake file saying which way the package went:
-#
-#   prebuilt  the cached targets file is included: imported targets under the
-#             package's own names, pointing at cached archives. No add_subdirectory.
-#   source    the OPTIONS are set as plain variables and the snapshot is added with
-#             add_subdirectory, as CPM would.
+# 2. epm_add_package, CPMAddPackage, CPMFindPackage, CPMDeclarePackage,
+#    CPMGetPackage and (through the provider) FetchContent_MakeAvailable, one
+#    package per call. epm_add_package takes CPMAddPackage's arguments plus
+#    MODE (auto, prebuilt, binary-only or source; the CPM commands are always
+#    source). A name the graph holds is loaded from the graph instead.
 #
 # Either way <name>_SOURCE_DIR, <name>_ADDED and <name>_MODE are set in the
 # caller's scope (plus <name>_BINARY_DIR in source mode).
@@ -42,12 +34,20 @@
 #
 # Variables read:
 #   EPM_EXECUTABLE              the epm binary (required; set by get_epm.cmake)
+#   EPM_LOCK_FILE               the lock (default ${CMAKE_SOURCE_DIR}/epm-lock.json)
+#   EPM_LOCK_MODE               locked (default; writes a missing lock), update
+#                               (re-resolve every ref and rewrite the lock) or
+#                               offline (the cache only, never the network)
+#   EPM_MANIFEST_FILE           the root's epm.cpp, whose overrides replace
+#                               every requirement on a package (default
+#                               ${CMAKE_SOURCE_DIR}/epm.cpp; a dependency's
+#                               own epm.cpp overrides nothing)
+#   EPM_CI                      ON refuses <Name>_SOURCE overrides and a missing
+#                               lock in locked mode
 #   EPM_BUILD_MISSING_BINARIES  ON (the default when unset): `auto` builds a
 #                               missing binary entry; OFF: `auto` falls back to
 #                               source instead
 #   EPM_CACHE                   cache root handed to the binary as --cache
-#                               (else the EPM_CACHE environment variable, else the
-#                               platform cache directory, as the binary does)
 #   EPM_VERBOSE                 pass --verbose and echo the binary's output
 #   EPM_CONFIGS                 auto (the default): a single-config generator
 #                               gets CMAKE_BUILD_TYPE (empty, RelWithDebInfo and
@@ -57,11 +57,8 @@
 #                               built as Release). A cache entry gains configs
 #                               as they are asked for; it never rebuilds one.
 #   EPM_ABI_MATCH               which cached build may be used: compatible
-#                               (default: same platform, compiler id and major
-#                               version, deployment target, C++ standard,
-#                               options, source, toolchain file), strict (every
-#                               recorded detail, compiler path and full version
-#                               included) or any (platform, options, source)
+#                               (default), strict or any
+#   EPM_<Name>_SOURCE, CPM_<Name>_SOURCE   a local checkout to use instead
 #
 # With a manifest, EPM_CONFIGS, EPM_ABI_MATCH and EPM_BUILD_MISSING_BINARIES are
 # overrides: unset or empty, the manifest (or the binary's default) decides.
@@ -74,8 +71,8 @@
 #   env.json                    toolchain description, written once per configure
 #   overrides.json              the overrides above (manifest flow)
 #   graph.cmake, graph.json     written by `epm configure` (manifest flow)
-#   requests/<name>.json        one per epm_add_package
-#   responses/<name>.cmake      written by `epm resolve`, included here
+#   session.json                the packages this configure has added
+#   add.cmake                   written by the binary for each package call
 #   recipe-sdk.cmake            written by `epm recipe-sdk` (epm_add_recipe)
 
 include_guard(GLOBAL)
@@ -170,7 +167,7 @@ function(epm_json_string_array out_var)
     set(${out_var} "${array}" PARENT_SCOPE)
 endfunction()
 
-# Writes overrides.json (Docs/Graph.md §3) from the EPM_* variables visible
+# Writes overrides.json from the EPM_* variables visible
 # here, normal or cache, a normal one winning as ${} has it. Empty values are
 # left out; EPM_<name>_SOURCE is made absolute against CMAKE_SOURCE_DIR.
 # buildMissingBinaries (EPM_BUILD_MISSING_BINARIES) is written only when set.
@@ -207,7 +204,9 @@ function(epm_write_overrides file)
 
     foreach (var IN LISTS names)
         # Only matching names are read: reading some others warns (CMP0218).
-        if (NOT var MATCHES "^EPM_(.+)_(MODE|SOURCE|CONFIGS|OPTIONS)$")
+        # EPM_LOCK_MODE is the lock's mode, not a package's.
+        if (NOT var MATCHES "^EPM_(.+)_(MODE|SOURCE|CONFIGS|OPTIONS)$"
+                OR var STREQUAL "EPM_LOCK_MODE")
             continue()
         endif ()
 
@@ -235,6 +234,8 @@ function(epm_write_overrides file)
                     set(home "$ENV{USERPROFILE}")
                 endif ()
 
+                # A Windows home's backslashes would be escapes in the replacement.
+                file(TO_CMAKE_PATH "${home}" home)
                 string(REGEX REPLACE "^~" "${home}" value "${value}")
             endif ()
 
@@ -307,24 +308,6 @@ set_property(CACHE EPM_ABI_MATCH PROPERTY STRINGS compatible strict any)
 
 set(EPM_DIR "${CMAKE_BINARY_DIR}/epm")
 
-# Splits a CPM-style option, "KEY VALUE" (or a bare "KEY", meaning ON). The value
-# keeps any spaces after the first one.
-function(epm_parse_option option)
-    string(REGEX MATCH "^[^ ]+" key "${option}")
-    string(LENGTH "${option}" option_length)
-    string(LENGTH "${key}" key_length)
-
-    if (key_length EQUAL option_length)
-        set(value "ON")
-    else ()
-        math(EXPR key_length "${key_length} + 1")
-        string(SUBSTRING "${option}" ${key_length} -1 value)
-    endif ()
-
-    set(EPM_OPTION_KEY "${key}" PARENT_SCOPE)
-    set(EPM_OPTION_VALUE "${value}" PARENT_SCOPE)
-endfunction()
-
 # Writes ${EPM_DIR}/env.json, once per configure, as late as it can: on the
 # first epm_add_package or the provider's first call, so a CMAKE_CXX_STANDARD
 # set after the include is still seen.
@@ -373,7 +356,8 @@ function(epm_write_env)
             "osxDeploymentTarget=CMAKE_OSX_DEPLOYMENT_TARGET"
             "osxSysroot=CMAKE_OSX_SYSROOT"
             "cxxStandard=CMAKE_CXX_STANDARD"
-            "toolchainFile=CMAKE_TOOLCHAIN_FILE")
+            "toolchainFile=CMAKE_TOOLCHAIN_FILE"
+            "prefixPath=CMAKE_PREFIX_PATH")
         string(REPLACE "=" ";" pair "${pair}")
         list(GET pair 0 key)
         list(GET pair 1 var)
@@ -399,6 +383,22 @@ function(epm_write_env)
 
     epm_json_set_string(json profile "${profile}")
 
+    # What epm.cpp recipes compile with, found even when the project has no CXX.
+    set(recipe_compiler "${CMAKE_CXX_COMPILER}")
+
+    if (recipe_compiler STREQUAL "")
+        include(CheckLanguage)
+        check_language(CXX)
+        set(recipe_compiler "${CMAKE_CXX_COMPILER}")
+    endif ()
+
+    if (NOT recipe_compiler STREQUAL "" AND NOT IS_ABSOLUTE "${recipe_compiler}")
+        find_program(recipe_compiler_path "${recipe_compiler}" NO_CACHE)
+        set(recipe_compiler "${recipe_compiler_path}")
+    endif ()
+
+    epm_json_set_string(json recipeCompiler "${recipe_compiler}")
+
     file(WRITE "${EPM_DIR}/env.json" "${json}\n")
     set_property(GLOBAL PROPERTY EPM_ENV_WRITTEN TRUE)
 endfunction()
@@ -410,15 +410,9 @@ endfunction()
 # EPM_VERBOSE). Fails the configure with `what` and stderr on a non-zero exit.
 function(epm_run_binary what)
     set(command "${EPM_EXECUTABLE}" ${ARGN})
-
-    if (EPM_CACHE)
-        list(APPEND command --cache "${EPM_CACHE}")
-    endif ()
-
     set(echo_args "")
 
     if (EPM_VERBOSE)
-        list(APPEND command --verbose)
         set(echo_args ECHO_ERROR_VARIABLE)
     endif ()
 
@@ -446,11 +440,10 @@ function(epm_configure_graph)
     file(REMOVE "${graph_file}")
 
     epm_run_binary("epm configure"
-            configure
-            --manifest "${manifest}"
-            --env "${EPM_DIR}/env.json"
-            --overrides "${EPM_DIR}/overrides.json"
-            --out "${EPM_DIR}")
+            configure ${_EPM_OPTIONS}
+            "--env=${EPM_DIR}/env.json"
+            "--overrides=${EPM_DIR}/overrides.json"
+            "--out=${EPM_DIR}")
 
     if (NOT EXISTS "${graph_file}")
         message(FATAL_ERROR "epm: epm configure succeeded but wrote no "
@@ -465,6 +458,9 @@ function(epm_use_manifest manifest)
     set_property(GLOBAL PROPERTY EPM_MANIFEST "${manifest}")
     epm_provider_register("${EPM_DIR}/graph.cmake" PREPARE epm_configure_graph)
 endfunction()
+
+set(EPM_LOCK_MODE locked CACHE STRING "locked, update or offline")
+option(EPM_CI "Refuse <Name>_SOURCE overrides and a missing lock in locked mode" OFF)
 
 # Defines epm::recipe, once per configure: an INTERFACE IMPORTED target with
 # what the epm binary compiles an epm.cpp against, read from `epm recipe-sdk`.
@@ -481,7 +477,14 @@ function(epm_recipe_sdk)
     set(sdk_file "${EPM_DIR}/recipe-sdk.cmake")
     file(REMOVE "${sdk_file}")
 
+    set(cache_argument "")
+
+    if (EPM_CACHE)
+        set(cache_argument "--cache=${EPM_CACHE}")
+    endif ()
+
     execute_process(COMMAND "${EPM_EXECUTABLE}" recipe-sdk --out "${sdk_file}"
+            ${cache_argument}
             RESULT_VARIABLE result
             ERROR_VARIABLE error)
 
@@ -492,13 +495,12 @@ function(epm_recipe_sdk)
 
     include("${sdk_file}")
 
-    # An imported target naming a missing include directory fails the generate:
-    # a binary built elsewhere (a release) cannot compile recipes here anyway.
+    # An imported target naming a missing include directory fails the generate.
     foreach (directory IN LISTS EPM_RECIPE_INCLUDE_DIRS)
         if (NOT IS_DIRECTORY "${directory}")
             set_property(GLOBAL PROPERTY EPM_RECIPE_SDK_PROBLEM
-                    "the epm at ${EPM_EXECUTABLE} was built against headers that "
-                    "are not here (${directory})")
+                    "the epm at ${EPM_EXECUTABLE} wrote no recipe headers to "
+                    "${directory}")
             return()
         endif ()
     endforeach ()
@@ -521,14 +523,6 @@ function(epm_recipe_sdk)
         set_property(TARGET epm::recipe APPEND PROPERTY INTERFACE_COMPILE_OPTIONS
                 "$<$<CXX_COMPILER_ID:${EPM_RECIPE_COMPILER_ID}>:${option}>")
     endforeach ()
-
-    file(REAL_PATH "${CMAKE_CXX_COMPILER}" ours)
-    file(REAL_PATH "${EPM_RECIPE_CXX_COMPILER}" epms)
-
-    if (NOT ours STREQUAL epms)
-        message(STATUS "epm: recipe targets build with ${CMAKE_CXX_COMPILER}, but "
-                "epm compiles the epm.cpp it runs with ${EPM_RECIPE_CXX_COMPILER}")
-    endif ()
 endfunction()
 
 # epm_add_recipe(<target> [SOURCE <file>] [NO_TEST])
@@ -558,7 +552,8 @@ function(epm_add_recipe target)
         return()
     endif ()
 
-    if (NOT PROJECT_IS_TOP_LEVEL)
+    # A child build epm runs builds the package, not its recipe.
+    if (NOT PROJECT_IS_TOP_LEVEL OR EPM_NESTED)
         return()
     endif ()
 
@@ -651,88 +646,79 @@ function(epm_add_recipe target)
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 endfunction()
 
-# A function, as CPMAddPackage is: OPTIONS stay local to the add_subdirectory
-# they configure, and the results are handed to the caller with PARENT_SCOPE.
-function(epm_add_package)
-    epm_set_policies()
 
-    cmake_parse_arguments(EPM_ARGS ""
-            "NAME;GITHUB_REPOSITORY;GIT_REPOSITORY;GIT_TAG;MODE"
-            "OPTIONS" ${ARGN})
+if (NOT EPM_LOCK_FILE)
+    set(EPM_LOCK_FILE "${CMAKE_SOURCE_DIR}/epm-lock.json")
+endif ()
 
-    if (EPM_ARGS_UNPARSED_ARGUMENTS)
-        message(FATAL_ERROR
-                "epm_add_package: unknown arguments: ${EPM_ARGS_UNPARSED_ARGUMENTS}")
+if (NOT EPM_MANIFEST_FILE)
+    set(EPM_MANIFEST_FILE "${CMAKE_SOURCE_DIR}/epm.cpp")
+endif ()
+
+set(_EPM_OPTIONS
+        "--cmake=${CMAKE_COMMAND}"
+        "--source-dir=${CMAKE_SOURCE_DIR}" "--build-dir=${CMAKE_BINARY_DIR}"
+        "--lock=${EPM_LOCK_FILE}" "--mode=${EPM_LOCK_MODE}" "--ci=${EPM_CI}"
+        "--manifest=${EPM_MANIFEST_FILE}")
+
+if (EPM_CACHE)
+    list(APPEND _EPM_OPTIONS "--cache=${EPM_CACHE}")
+endif ()
+
+if (NOT "${EPM_BUILD_MISSING_BINARIES}" STREQUAL "")
+    list(APPEND _EPM_OPTIONS
+            "--build-missing-binaries=${EPM_BUILD_MISSING_BINARIES}")
+endif ()
+
+if (EPM_ROOT_NAME)
+    list(APPEND _EPM_OPTIONS "--root-name=${EPM_ROOT_NAME}")
+endif ()
+
+if (EPM_VERBOSE)
+    list(APPEND _EPM_OPTIONS --verbose)
+endif ()
+
+# The next build reconfigures when the lock or epm.cpp is edited, pulled or
+# deleted, so a missing lock is written again and a changed one is checked.
+set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY
+        CMAKE_CONFIGURE_DEPENDS "${EPM_LOCK_FILE}" "${EPM_MANIFEST_FILE}")
+
+macro(_epm_report)
+    string(STRIP "${_epm_error}" _epm_error)
+
+    if (_epm_error)
+        message("${_epm_error}")
     endif ()
 
-    if (EPM_ARGS_GITHUB_REPOSITORY AND EPM_ARGS_GIT_REPOSITORY)
-        message(FATAL_ERROR
-                "epm_add_package: give GITHUB_REPOSITORY or GIT_REPOSITORY, not both")
+    if (NOT _epm_result EQUAL 0)
+        message(FATAL_ERROR "epm stopped the configure; its message is above.")
     endif ()
+endmacro()
 
-    if (EPM_ARGS_GITHUB_REPOSITORY)
-        if (NOT EPM_ARGS_GITHUB_REPOSITORY MATCHES "^[^/ ]+/[^/ ]+$")
-            message(FATAL_ERROR
-                    "epm_add_package: GITHUB_REPOSITORY must be <user>/<repo>, "
-                    "got '${EPM_ARGS_GITHUB_REPOSITORY}'")
-        endif ()
+# The overrides and whether this configure writes a new lock, for every
+# later call of this configure.
+get_cmake_property(_epm_variables VARIABLES)
+list(FILTER _epm_variables INCLUDE REGEX "^(EPM|CPM)_.+_SOURCE$")
+set(_epm_overrides)
 
-        set(git_url "https://github.com/${EPM_ARGS_GITHUB_REPOSITORY}.git")
-    elseif (EPM_ARGS_GIT_REPOSITORY)
-        set(git_url "${EPM_ARGS_GIT_REPOSITORY}")
-    else ()
-        message(FATAL_ERROR
-                "epm_add_package: GITHUB_REPOSITORY or GIT_REPOSITORY is required")
-    endif ()
+foreach (variable IN LISTS _epm_variables)
+    list(APPEND _epm_overrides "--override=${variable}=${${variable}}")
+endforeach ()
 
-    set(name "${EPM_ARGS_NAME}")
+execute_process(COMMAND "${EPM_EXECUTABLE}" lock begin ${_EPM_OPTIONS} ${_epm_overrides}
+        RESULT_VARIABLE _epm_result ERROR_VARIABLE _epm_error)
+_epm_report()
 
-    if (NOT name)
-        # As CPM does: the repository's name, without a trailing .git.
-        string(REGEX REPLACE "^.*/([^/]+)$" "\\1" name "${git_url}")
-        string(REGEX REPLACE "\\.git$" "" name "${name}")
-    endif ()
-
-    if (NOT EPM_ARGS_GIT_TAG)
-        message(FATAL_ERROR "epm_add_package(${name}): GIT_TAG is required")
-    endif ()
-
-    set(mode "${EPM_ARGS_MODE}")
-
-    if (NOT mode)
-        set(mode "auto")
-    endif ()
-
-    if (NOT mode MATCHES "^(auto|prebuilt|source)$")
-        message(FATAL_ERROR
-                "epm_add_package(${name}): MODE must be auto, prebuilt or source, "
-                "got '${mode}'")
-    endif ()
-
-    if ("${EPM_BUILD_MISSING_BINARIES}" STREQUAL "" OR EPM_BUILD_MISSING_BINARIES)
-        set(build_missing true)
-    else ()
-        set(build_missing false)
-    endif ()
-
-    set(options_json "{}")
-    set(options "")
-
-    foreach (option IN LISTS EPM_ARGS_OPTIONS)
-        epm_parse_option("${option}")
-        epm_json_set_string(options_json "${EPM_OPTION_KEY}" "${EPM_OPTION_VALUE}")
-        list(APPEND options "${EPM_OPTION_KEY}=${EPM_OPTION_VALUE}")
-    endforeach ()
-
+# The configs and ABI policy of a package call, as epm_add_package always took
+# them: EPM_CONFIGS through epm_resolve_configs, EPM_ABI_MATCH or compatible.
+function(epm_package_call_options out_var)
     get_property(is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
     epm_resolve_configs("${EPM_CONFIGS}" "${is_multi_config}" "${CMAKE_BUILD_TYPE}"
             configs configs_error)
 
     if (configs_error)
-        message(FATAL_ERROR "epm_add_package(${name}): ${configs_error}")
+        message(FATAL_ERROR "epm: ${configs_error}")
     endif ()
-
-    epm_json_string_array(configs_json ${configs})
 
     set(abi_match "${EPM_ABI_MATCH}")
 
@@ -740,92 +726,122 @@ function(epm_add_package)
         set(abi_match "compatible")
     endif ()
 
-    if (NOT abi_match MATCHES "^(compatible|strict|any)$")
-        message(FATAL_ERROR
-                "epm_add_package(${name}): EPM_ABI_MATCH must be compatible, "
-                "strict or any, got '${abi_match}'")
-    endif ()
-
-    set(request "{}")
-    string(JSON request SET "${request}" schema 2)
-    epm_json_set_string(request name "${name}")
-    epm_json_set_string(request gitUrl "${git_url}")
-    epm_json_set_string(request gitRef "${EPM_ARGS_GIT_TAG}")
-    epm_json_set_string(request mode "${mode}")
-    string(JSON request SET "${request}" options "${options_json}")
-    string(JSON request SET "${request}" buildMissingBinaries ${build_missing})
-    string(JSON request SET "${request}" configs "${configs_json}")
-    epm_json_set_string(request abiMatch "${abi_match}")
-
-    # A package already added in this configure: hand back the first result.
-    get_property(previous_request GLOBAL PROPERTY EPM_PACKAGE_${name}_REQUEST)
-
-    if (DEFINED previous_request AND NOT previous_request STREQUAL "")
-        if (NOT previous_request STREQUAL request)
-            message(WARNING
-                    "epm: ${name} was already added with a different request; "
-                    "using the first one.\n  first:  ${previous_request}\n"
-                    "  this:   ${request}")
-        endif ()
-
-        get_property(first_mode GLOBAL PROPERTY EPM_PACKAGE_${name}_MODE)
-        get_property(first_source_dir GLOBAL PROPERTY EPM_PACKAGE_${name}_SOURCE_DIR)
-        get_property(first_binary_dir GLOBAL PROPERTY EPM_PACKAGE_${name}_BINARY_DIR)
-
-        set(${name}_SOURCE_DIR "${first_source_dir}" PARENT_SCOPE)
-        set(${name}_MODE "${first_mode}" PARENT_SCOPE)
-        set(${name}_ADDED NO PARENT_SCOPE)
-
-        if (first_mode STREQUAL "source")
-            set(${name}_BINARY_DIR "${first_binary_dir}" PARENT_SCOPE)
-        endif ()
-
-        return()
-    endif ()
-
-    epm_write_env()
-
-    set(request_file "${EPM_DIR}/requests/${name}.json")
-    set(response_file "${EPM_DIR}/responses/${name}.cmake")
-
-    file(WRITE "${request_file}" "${request}\n")
-    file(MAKE_DIRECTORY "${EPM_DIR}/responses")
-    file(REMOVE "${response_file}")
-
-    epm_run_binary("resolving ${name}"
-            resolve
-            --request "${request_file}"
-            --env "${EPM_DIR}/env.json"
-            --response "${response_file}")
-
-    if (NOT EXISTS "${response_file}")
-        message(FATAL_ERROR
-                "epm: resolving ${name} succeeded but wrote no response file "
-                "(${response_file})")
-    endif ()
-
-    include("${response_file}")
-
-    epm_load_package("${name}"
-            MODE "${epm_${name}_MODE}"
-            SOURCE_DIR "${epm_${name}_SOURCE_DIR}"
-            TARGETS_FILE "${epm_${name}_TARGETS_FILE}"
-            PREFIX "${epm_${name}_PREFIX}"
-            PLATFORM "${epm_${name}_PLATFORM}"
-            NOTE "${epm_${name}_NOTE}"
-            OPTIONS ${options}
-            ORIGIN "${response_file}")
-
-    set_property(GLOBAL PROPERTY EPM_PACKAGE_${name}_REQUEST "${request}")
-    get_property(resolved_mode GLOBAL PROPERTY EPM_PACKAGE_${name}_MODE)
-    get_property(source_dir GLOBAL PROPERTY EPM_PACKAGE_${name}_SOURCE_DIR)
-    get_property(binary_dir GLOBAL PROPERTY EPM_PACKAGE_${name}_BINARY_DIR)
-
-    set(${name}_SOURCE_DIR "${source_dir}" PARENT_SCOPE)
-    set(${name}_MODE "${resolved_mode}" PARENT_SCOPE)
-    set(${name}_ADDED YES PARENT_SCOPE)
-
-    if (resolved_mode STREQUAL "source")
-        set(${name}_BINARY_DIR "${binary_dir}" PARENT_SCOPE)
-    endif ()
+    string(REPLACE ";" "," configs "${configs}")
+    set(${out_var} "--configs=${configs}" "--abi-match=${abi_match}" PARENT_SCOPE)
 endfunction()
+
+# Pasted into each command, so the arguments expand once and "a\;b" stays whole.
+# The graph is read first, so a name it holds is loaded from it.
+set(_epm_run [=[
+    epm_set_policies()
+    epm_write_env()
+    epm_provider_read_graph()
+    epm_package_call_options(_epm_call_options)
+    execute_process(COMMAND "${EPM_EXECUTABLE}" ${_epm_subcommand} ${_EPM_OPTIONS}
+            ${_epm_call_options}
+            "--env=${EPM_DIR}/env.json" "--default-mode=${_epm_default_mode}"
+            "--graph-packages=${epm_PACKAGES}"
+            "--requested-by=${CMAKE_CURRENT_SOURCE_DIR}"
+            "--requested-by-file=${_epm_requested_by_file}"
+            "--requested-binary-dir=${CMAKE_CURRENT_BINARY_DIR}"
+            "--output=${EPM_DIR}/add.cmake" -- ${_epm_arguments}
+            RESULT_VARIABLE _epm_result ERROR_VARIABLE _epm_error)
+    _epm_report()
+    include("${EPM_DIR}/add.cmake")]=])
+
+# A function, as CPMAddPackage is: OPTIONS stay local to the add_subdirectory
+# they configure, and the results are handed to the caller.
+function(epm_add_package)
+    set(_epm_requested_by_file "${CMAKE_CURRENT_LIST_FILE}")
+    set(_epm_subcommand resolve)
+    set(_epm_default_mode auto)
+    set(_epm_arguments "${ARGN}")
+    cmake_language(EVAL CODE "${_epm_run}")
+endfunction()
+
+# The CPM commands go through epm as well, always as source: a dependency that
+# calls CPMAddPackage expects its targets add_subdirectory'd. CPMFindPackage
+# always fetches, never find_package(), so the build stays hermetic.
+foreach (command CPMAddPackage CPMFindPackage)
+    cmake_language(EVAL CODE "function(${command})
+        set(_epm_requested_by_file \"\${CMAKE_CURRENT_LIST_FILE}\")
+        set(_epm_subcommand resolve)
+        set(_epm_default_mode source)
+        set(_epm_arguments \"\${ARGN}\")
+        cmake_language(EVAL CODE \"\${_epm_run}\")
+    endfunction()")
+endforeach ()
+
+function(CPMDeclarePackage name)
+    set_property(GLOBAL PROPERTY EPM_DECLARED_${name} "${ARGN}")
+endfunction()
+
+function(CPMGetPackage name)
+    get_property(declared GLOBAL PROPERTY EPM_DECLARED_${name})
+    set(_epm_requested_by_file "${CMAKE_CURRENT_LIST_FILE}")
+    set(_epm_subcommand resolve)
+    set(_epm_default_mode source)
+    set(_epm_arguments NAME ${name} ${declared})
+    cmake_language(EVAL CODE "${_epm_run}")
+endfunction()
+
+function(CPMUsePackageLock)
+endfunction()
+
+# include(CPM) finds this stub; a dependency's CPM.cmake returns when
+# CPM_INITIALIZED is set, before it defines anything.
+file(WRITE "${EPM_DIR}/cpm/CPM.cmake" "# epm defines CPMAddPackage\n")
+list(PREPEND CMAKE_MODULE_PATH "${EPM_DIR}/cpm")
+set(CPM_DIRECTORY "${EPM_DIR}/cpm" CACHE INTERNAL "")
+set(CPM_VERSION 999999.0.0)
+set(CPM_FILE "${EPM_DIR}/cpm/CPM.cmake")
+set(CPM_DOWNLOAD_LOCATION "${EPM_DIR}/cpm/CPM.cmake")
+set_property(GLOBAL PROPERTY CPM_INITIALIZED true)
+
+# FetchContent_MakeAvailable of a name the graph does not hold, which the
+# provider hands here.
+macro(epm_provide_through_the_lock name)
+    set(_epm_requested_by_file "${CMAKE_CURRENT_LIST_FILE}")
+    set(_epm_subcommand provide)
+    set(_epm_default_mode source)
+    set(_epm_arguments NAME ${name} ${ARGN})
+    cmake_language(EVAL CODE "${_epm_run}")
+endmacro()
+
+# find_package of a name the graph does not hold and no manifest marks
+# "system": a package added, from the lock or a requirement in the graph.
+macro(epm_find_through_the_lock name)
+    set(_epm_requested_by_file "${CMAKE_CURRENT_LIST_FILE}")
+    set(_epm_subcommand find)
+    set(_epm_default_mode auto)
+    set(_epm_arguments NAME ${name})
+    cmake_language(EVAL CODE "${_epm_run}")
+endmacro()
+
+# A dependency provider can only be set while the first project() runs its
+# CMAKE_PROJECT_TOP_LEVEL_INCLUDES; included any later, find_package and
+# FetchContent keep searching and fetching for themselves.
+set(_epm_loaded_during_project OFF)
+
+foreach (include IN LISTS CMAKE_PROJECT_TOP_LEVEL_INCLUDES)
+    get_filename_component(include "${include}" REALPATH)
+    get_filename_component(parent "${CMAKE_PARENT_LIST_FILE}" REALPATH)
+    get_filename_component(current "${CMAKE_CURRENT_LIST_FILE}" REALPATH)
+
+    if (include STREQUAL parent OR include STREQUAL current)
+        set(_epm_loaded_during_project ON)
+    endif ()
+endforeach ()
+
+if (_epm_loaded_during_project)
+    if (EPM_NESTED AND EPM_GRAPH)
+        epm_provider_register("${EPM_GRAPH}")
+    elseif (NOT EPM_NESTED AND EXISTS "${EPM_MANIFEST_FILE}")
+        epm_use_manifest("${EPM_MANIFEST_FILE}")
+    else ()
+        epm_provider_register("")
+    endif ()
+endif ()
+
+cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL
+        execute_process COMMAND "${EPM_EXECUTABLE}" lock root ${_EPM_OPTIONS} --announce)

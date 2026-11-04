@@ -125,7 +125,7 @@ auto tTargetsFile = test("Harvest/targetsFile") = []
 {
     const auto text =
         targetsFileText({"eacp-core", "Miro"}, {}, true, {"Release", "Debug"});
-    const auto threads = text.find("find_package(Threads REQUIRED)");
+    const auto threads = text.find("find_package(Threads REQUIRED BYPASS_PROVIDER)");
     const auto debug =
         text.find(R"(include("${CMAKE_CURRENT_LIST_DIR}/export-Debug.cmake"))");
     const auto release =
@@ -200,12 +200,13 @@ auto tWriteTargetsAliases = test("Harvest/writeTargetsFile/aliases") = []
     {
         const auto file = prefix / ("export-" + std::string {config} + ".cmake");
 
-        check(writeTextFile(file, "# export\n"));
-        check(writeTextFile(file.sibling(file.fileName() + ".names"), "fmt\n"));
+        eacp::Files::writeFile(file, "# export\n");
+        eacp::Files::writeFile(file.sibling(file.fileName() + ".names"), "fmt\n");
     }
 
-    // Debug predates alias recording: its .aliases is missing.
-    check(writeTextFile(prefix / "export-Release.cmake.aliases", "fmt::fmt fmt\n"));
+    eacp::Files::writeFile(prefix / "export-Debug.cmake.aliases", "");
+    eacp::Files::writeFile(prefix / "export-Release.cmake.aliases",
+                           "fmt::fmt fmt\n");
     check(!writeTargetsFile(prefix, {"Debug", "Release"}).has_value());
 
     const auto text = eacp::Files::readFile(prefix / "epm-targets.cmake");
@@ -256,14 +257,17 @@ auto tHarvestShares = test("Harvest/harvestConfig/sharesInterfaceSources") = []
         const auto build = root.path() / "build" / config;
         const auto tree = build.str();
 
-        check(writeTextFile(build / source, "int registered = 1;\n"));
-        check(writeTextFile(build / generated / "Header.h", config));
-        check(writeTextFile(prefix / ("export-" + std::string {config} + ".cmake"),
-                            "  INTERFACE_INCLUDE_DIRECTORIES \"" + tree + "/"
-                                + generated + "\"\n  INTERFACE_SOURCES \"$<$<NOT:x>:"
-                                + tree + "/" + source + ">\"\n"));
-        check(writeTextFile(
-            prefix / ("export-" + std::string {config} + ".cmake.names"), "Miro\n"));
+        eacp::Files::writeFile(build / source, "int registered = 1;\n");
+        eacp::Files::writeFile(build / generated / "Header.h", config);
+        eacp::Files::writeFile(
+            prefix / ("export-" + std::string {config} + ".cmake"),
+            "  INTERFACE_INCLUDE_DIRECTORIES \"" + tree + "/" + generated
+                + "\"\n  INTERFACE_SOURCES \"$<$<NOT:x>:" + tree + "/" + source
+                + ">\"\n");
+        eacp::Files::writeFile(
+            prefix / ("export-" + std::string {config} + ".cmake.names"), "Miro\n");
+        eacp::Files::writeFile(
+            prefix / ("export-" + std::string {config} + ".cmake.aliases"), "");
 
         const auto result = harvestConfig(build, prefix, config);
 

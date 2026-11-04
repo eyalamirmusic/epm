@@ -6,6 +6,7 @@
 #include <epm/Util/Text.h>
 
 #include <eacp/Core/Platform/Platform.h>
+#include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Strings.h>
 
 namespace epm
@@ -16,7 +17,8 @@ namespace
 {
 constexpr auto failureTailLines = 40;
 constexpr auto exportScriptName = "epm-export.cmake";
-constexpr auto nestedScriptName = "epm-nested.cmake";
+constexpr auto moduleScriptName = "epm.cmake";
+constexpr auto providerScriptName = "epm-provider.cmake";
 constexpr auto nestedGraphName = "epm-graph.cmake";
 
 bool hasDependencies(const ChildBuild& build)
@@ -26,15 +28,11 @@ bool hasDependencies(const ChildBuild& build)
 
 std::string topLevelIncludes(const ChildBuild& build)
 {
-    const auto exportScript = (build.buildDirectory / exportScriptName).str();
-
-    if (!hasDependencies(build))
-        return exportScript;
-
-    return exportScript + ";" + (build.buildDirectory / nestedScriptName).str();
+    return (build.buildDirectory / exportScriptName).str() + ";"
+           + (build.buildDirectory / moduleScriptName).str();
 }
 
-void addDefinition(Vector<std::string>& arguments,
+void addDefinition(EA::Vector<std::string>& arguments,
                    std::string_view name,
                    const std::string& value)
 {
@@ -44,14 +42,14 @@ void addDefinition(Vector<std::string>& arguments,
 
 ChildBuildResult runStep(const ChildBuild& build,
                          std::string_view step,
-                         const Vector<std::string>& arguments)
+                         const EA::Vector<std::string>& arguments)
 {
     Log::step("epm: " + std::string {step} + " " + build.request.name + " ("
               + build.config + ")");
 
     const auto result = runCommand(build.env.cmake, arguments);
     const auto log = build.buildDirectory / ("epm-" + std::string {step} + ".log");
-    writeTextFile(log, result.output);
+    Files::writeFile(log, result.output);
 
     if (result.ok)
         return {true, {}, {}};
@@ -78,12 +76,12 @@ Generator chooseGenerator(const Env& env, const std::optional<FilePath>& ninja)
     return {"Unix Makefiles", {}};
 }
 
-Vector<std::string> configureArguments(const ChildBuild& build)
+EA::Vector<std::string> configureArguments(const ChildBuild& build)
 {
     const auto& env = build.env;
     const auto exportFile = build.prefix / ("export-" + build.config + ".cmake");
 
-    auto arguments = Vector<std::string> {
+    auto arguments = EA::Vector<std::string> {
         "-S", build.sourceDirectory.str(), "-B", build.buildDirectory.str()};
 
     if (!build.generator.name.empty())
@@ -103,19 +101,22 @@ Vector<std::string> configureArguments(const ChildBuild& build)
     addDefinition(arguments,
                   "CMAKE_ARCHIVE_OUTPUT_DIRECTORY",
                   (build.prefix / "lib" / build.config).str());
-    addDefinition(arguments, "CPM_SOURCE_CACHE", build.cpmCache.str());
     addDefinition(
         arguments, "CMAKE_PROJECT_TOP_LEVEL_INCLUDES", topLevelIncludes(build));
     addDefinition(arguments, "EPM_EXPORT_FILE", exportFile.str());
     addDefinition(arguments, "EPM_EXPORT_NAMESPACE", exportNamespace(build.config));
 
+    addDefinition(arguments, "EPM_NESTED", "ON");
+    addDefinition(arguments, "EPM_EXECUTABLE", build.epmExecutable.str());
+    addDefinition(arguments, "EPM_CACHE", build.cacheRoot.str());
+    addDefinition(arguments, "EPM_LOCK_FILE", build.childLock.lock.str());
+    addDefinition(arguments, "EPM_LOCK_MODE", build.childLock.mode);
+    addDefinition(arguments, "EPM_MANIFEST_FILE", build.childLock.manifest.str());
+    addDefinition(arguments, "EPM_ROOT_NAME", build.request.name);
+
     if (hasDependencies(build))
-    {
-        addDefinition(arguments, "EPM_NESTED", "ON");
         addDefinition(
             arguments, "EPM_GRAPH", (build.buildDirectory / nestedGraphName).str());
-        addDefinition(arguments, "EPM_EXECUTABLE", build.epmExecutable.str());
-    }
 
     for (const auto& [key, value]: build.request.options)
         arguments.add("-D" + key + "=" + value);
@@ -123,25 +124,23 @@ Vector<std::string> configureArguments(const ChildBuild& build)
     return arguments;
 }
 
-Vector<std::string> buildArguments(const ChildBuild& build)
+EA::Vector<std::string> buildArguments(const ChildBuild& build)
 {
     return {"--build", build.buildDirectory.str(), "--parallel"};
 }
 
 ChildBuildResult runChildBuild(const ChildBuild& build)
 {
-    auto files = Vector<std::pair<FilePath, std::string_view>> {
-        {build.buildDirectory / exportScriptName, embeddedExportScript()}};
+    auto files = EA::Vector<std::pair<FilePath, std::string_view>> {
+        {build.buildDirectory / exportScriptName, embeddedExportScript()},
+        {build.buildDirectory / moduleScriptName, embeddedModuleScript()},
+        {build.buildDirectory / providerScriptName, embeddedProviderScript()}};
 
     if (hasDependencies(build))
-    {
-        files.add({build.buildDirectory / nestedScriptName, embeddedNestedScript()});
         files.add({build.buildDirectory / nestedGraphName, build.dependencyGraph});
-    }
 
     for (const auto& [path, text]: files)
-        if (!writeTextFile(path, text))
-            return {false, "cannot write " + path.str(), {}};
+        Files::writeFile(path, text);
 
     auto configured = runStep(build, "configure", configureArguments(build));
 

@@ -1,9 +1,11 @@
 #include "BinaryCache.h"
-#include "PackageLock.h"
+#include <epm/Cache/CrossProcessLock.h>
 
 #include <epm/Build/ChildBuild.h>
 #include <epm/Build/Configs.h>
 #include <epm/Build/Harvest.h>
+#include <epm/Lock/LockFile.h>
+#include <epm/Lock/Session.h>
 #include <epm/Spec/JsonFile.h>
 #include <epm/Util/Command.h>
 #include <epm/Util/Log.h>
@@ -11,7 +13,9 @@
 #include <epm/Util/Timestamp.h>
 
 #include <eacp/Core/Utils/Console.h>
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/Files.h>
+#include <eacp/Core/Utils/Time.h>
 
 #include <tuple>
 
@@ -22,15 +26,21 @@ using namespace eacp;
 namespace
 {
 constexpr auto manifestFileName = "manifest.json";
+constexpr auto jsonIndent = 2;
+
+std::string createTimestamp()
+{
+    return Time::formatIso8601(Time::sinceEpoch());
+}
 
 FilePath markerFor(const FilePath& prefix, const std::string& config)
 {
     return prefix / (config + ".json");
 }
 
-Vector<FilePath> subdirectories(const FilePath& directory)
+EA::Vector<FilePath> subdirectories(const FilePath& directory)
 {
-    auto directories = Vector<FilePath> {};
+    auto directories = EA::Vector<FilePath> {};
 
     for (const auto& entry: Files::listDirectory(directory))
         if (entry.kind == Files::EntryKind::directory)
@@ -47,7 +57,7 @@ std::optional<BinaryEntry> loadEntry(const FilePath& prefix)
         return std::nullopt;
 
     auto entry =
-        BinaryEntry {prefix, manifest->fingerprint, {}, manifest->createdAt};
+        BinaryEntry {prefix, manifest->fingerprint, {}, {}, manifest->createdAt};
     auto options = Files::DirectoryOptions {};
     options.pattern = "*.json";
 
@@ -59,7 +69,10 @@ std::optional<BinaryEntry> loadEntry(const FilePath& prefix)
         const auto marker = loadJsonFile<ConfigMarker>(file);
 
         if (marker && marker->config + ".json" == file.fileName())
+        {
             entry.configs.add(marker->config);
+            entry.lockedDependencies[marker->config] = marker->lockedDependencies;
+        }
     }
 
     entry.configs = canonicalConfigs(entry.configs);
@@ -72,19 +85,20 @@ std::optional<BinaryEntry> loadEntry(const FilePath& prefix)
 std::optional<BinaryEntry> createEntry(const CacheRoot& cache,
                                        const std::string& name,
                                        const AbiFingerprint& fingerprint,
-                                       const std::string& sourceId)
+                                       const std::string& sourceHash)
 {
     const auto prefix = entryPrefix(cache, name, fingerprint);
 
     if (!Files::removeAll(prefix))
         return std::nullopt;
 
-    const auto manifest = EntryManifest {2, fingerprint, sourceId, utcTimestamp()};
+    const auto manifest = EntryManifest {
+        EntryManifest {}.schema, fingerprint, sourceHash, createTimestamp()};
 
-    if (!saveJsonFile(prefix / manifestFileName, manifest))
-        return std::nullopt;
+    Files::writeFileAtomically(prefix / manifestFileName,
+                               Miro::toJSONString(manifest, jsonIndent) + "\n");
 
-    return BinaryEntry {prefix, fingerprint, {}, manifest.createdAt};
+    return BinaryEntry {prefix, fingerprint, {}, {}, manifest.createdAt};
 }
 
 // What an unmarked config may have left behind. gen/shared stays: its files
@@ -100,6 +114,35 @@ bool clearConfig(const FilePath& prefix, const std::string& config)
            && Files::removeAll(prefix / "gen" / config)
            && Files::removeAll(exportFile) && Files::removeAll(companion(".names"))
            && Files::removeAll(companion(".aliases"));
+}
+
+bool isBuiltWithLockedDependencies(const std::map<std::string, std::string>& built,
+                                   const LockFile& lock)
+{
+    for (const auto& [name, hash]: built)
+    {
+        auto locked = lock.findPackage(name);
+
+        if (!locked || locked->hash != hash)
+            return false;
+    }
+
+    return true;
+}
+
+// What the child build's epm.cmake took from the lock, from its session.
+std::map<std::string, std::string>
+    readLockedDependencies(const FilePath& buildDirectory)
+{
+    auto dependencies = std::map<std::string, std::string> {};
+
+    for (const auto& package: readSession(buildDirectory).packages)
+    {
+        if (!package.hash.empty())
+            dependencies[package.name] = package.hash;
+    }
+
+    return dependencies;
 }
 
 BinaryResult failure(std::string error, std::string details = {})
@@ -124,11 +167,11 @@ FilePath entryPrefix(const CacheRoot& cache,
            / fingerprintId(fingerprint).substr(0, 12);
 }
 
-Vector<BinaryEntry> findEntries(const CacheRoot& cache,
-                                const std::string& name,
-                                const std::string& platform)
+EA::Vector<BinaryEntry> findEntries(const CacheRoot& cache,
+                                    const std::string& name,
+                                    const std::string& platform)
 {
-    auto entries = Vector<BinaryEntry> {};
+    auto entries = EA::Vector<BinaryEntry> {};
 
     for (const auto& prefix: subdirectories(cache.bin() / name / platform))
         if (auto entry = loadEntry(prefix))
@@ -138,9 +181,25 @@ Vector<BinaryEntry> findEntries(const CacheRoot& cache,
     return entries;
 }
 
-Vector<BinaryEntry> allEntries(const CacheRoot& cache)
+BinaryEntry withConfigsMatchingTheLock(BinaryEntry entry, const FilePath& lock)
 {
-    auto entries = Vector<BinaryEntry> {};
+    const auto lockFile = readLockFile(lock);
+    auto configs = EA::Vector<std::string> {};
+
+    for (const auto& config: entry.configs)
+    {
+        if (isBuiltWithLockedDependencies(entry.lockedDependencies[config],
+                                          lockFile))
+            configs.add(config);
+    }
+
+    entry.configs = configs;
+    return entry;
+}
+
+EA::Vector<BinaryEntry> allEntries(const CacheRoot& cache)
+{
+    auto entries = EA::Vector<BinaryEntry> {};
 
     for (const auto& nameDirectory: subdirectories(cache.bin()))
         for (const auto& platformDirectory: subdirectories(nameDirectory))
@@ -150,10 +209,10 @@ Vector<BinaryEntry> allEntries(const CacheRoot& cache)
     return entries;
 }
 
-std::optional<BinaryEntry> pickEntry(const Vector<BinaryEntry>& entries,
+std::optional<BinaryEntry> pickEntry(const EA::Vector<BinaryEntry>& entries,
                                      const AbiFingerprint& wanted,
                                      AbiMatch policy,
-                                     const Vector<std::string>& configs)
+                                     const EA::Vector<std::string>& configs)
 {
     const BinaryEntry* best = nullptr;
     auto bestRank = std::tuple<bool, bool, int, std::string> {};
@@ -187,24 +246,29 @@ BinaryResult buildBinary(const CacheRoot& cache,
                          const Request& request,
                          const Env& env,
                          const SourceSnapshot& snapshot,
+                         const LockForChildBuilds& childLock,
                          const std::string& dependencyGraph)
 {
-    const auto wanted = makeFingerprint(request, env, snapshot.sourceId);
+    const auto wanted = makeFingerprint(request, env, snapshot.hash);
     const auto policy =
         parseAbiMatch(request.abiMatch).value_or(AbiMatch::compatible);
     const auto configs = buildConfigsFor(request.configs);
 
-    auto lock = PackageLock {cache, request.name, packageLockTimeout};
+    auto lock = CrossProcessLock {cache, request.name, crossProcessLockTimeout};
 
     if (!lock.isLocked())
         return failure("timed out waiting for another epm process using "
                        + request.name);
 
-    auto entry = pickEntry(
-        findEntries(cache, request.name, wanted.platform), wanted, policy, configs);
+    auto entries = EA::Vector<BinaryEntry> {};
+
+    for (const auto& found: findEntries(cache, request.name, wanted.platform))
+        entries.add(withConfigsMatchingTheLock(found, childLock.lock));
+
+    auto entry = pickEntry(entries, wanted, policy, configs);
 
     if (!entry)
-        entry = createEntry(cache, request.name, wanted, snapshot.sourceId);
+        entry = createEntry(cache, request.name, wanted, snapshot.hash);
 
     if (!entry)
         return failure("cannot create "
@@ -221,9 +285,9 @@ BinaryResult buildBinary(const CacheRoot& cache,
     const auto generator = chooseGenerator(env, findExecutable("ninja"));
     auto keptBuildTree = false;
 
-    Log::step("epm: building " + request.name + " (" + joinList(missing, ", ")
-              + ") into " + prefix.str() + " with generator '" + generator.name
-              + "'");
+    Log::step("epm: building " + request.name + " ("
+              + eacp::Strings::join(missing, ", ") + ") into " + prefix.str()
+              + " with generator '" + generator.name + "'");
 
     for (const auto& config: missing)
     {
@@ -234,10 +298,11 @@ BinaryResult buildBinary(const CacheRoot& cache,
         build.sourceDirectory = snapshot.directory;
         build.buildDirectory = buildRoot / config;
         build.prefix = prefix;
-        build.cpmCache = cache.cpm();
         build.config = config;
         build.dependencyGraph = dependencyGraph;
         build.epmExecutable = Files::executablePath();
+        build.cacheRoot = cache.path();
+        build.childLock = childLock;
 
         if (!clearConfig(prefix, config) || !Files::removeAll(build.buildDirectory))
             return failure("cannot clear the leftovers of " + config + " in "
@@ -268,11 +333,15 @@ BinaryResult buildBinary(const CacheRoot& cache,
             keptBuildTree = true;
         }
 
-        const auto marker = ConfigMarker {
-            config, utcTimestamp(), env.cxxCompiler, env.cxxCompilerVersion};
+        const auto marker =
+            ConfigMarker {config,
+                          createTimestamp(),
+                          env.cxxCompiler,
+                          env.cxxCompilerVersion,
+                          readLockedDependencies(build.buildDirectory)};
 
-        if (!saveJsonFile(markerFor(prefix, config), marker))
-            return failure("cannot write " + markerFor(prefix, config).str());
+        Files::writeFileAtomically(markerFor(prefix, config),
+                                   Miro::toJSONString(marker, jsonIndent) + "\n");
 
         entry->configs.add(config);
         entry->configs = canonicalConfigs(entry->configs);

@@ -2,11 +2,13 @@
 
 #include "CacheRoot.h"
 #include "Fingerprint.h"
-#include "SourceCache.h"
+#include <epm/Source/SourceSnapshot.h>
 
+#include <epm/Build/ChildBuild.h>
 #include <epm/Spec/Env.h>
 #include <epm/Spec/Request.h>
 
+#include <map>
 #include <optional>
 #include <string>
 
@@ -16,12 +18,12 @@ namespace epm
 // created, before its first config is built.
 struct EntryManifest
 {
-    int schema = 2;
+    int schema = 3;
     AbiFingerprint fingerprint;
-    std::string sourceId;
+    std::string sourceHash;
     std::string createdAt;
 
-    MIRO_REFLECT(schema, fingerprint, sourceId, createdAt)
+    MIRO_REFLECT(schema, fingerprint, sourceHash, createdAt)
 };
 
 // <prefix>/<Config>.json, written last for that config, after its harvest:
@@ -35,7 +37,11 @@ struct ConfigMarker
     std::string compilerPath;
     std::string compilerVersion;
 
-    MIRO_REFLECT(config, builtAt, compilerPath, compilerVersion)
+    // The Merkle hash of every package the child build's own CPMAddPackage
+    // and FetchContent calls took from the lock, by name.
+    std::map<std::string, std::string> lockedDependencies;
+
+    MIRO_REFLECT(config, builtAt, compilerPath, compilerVersion, lockedDependencies)
 };
 
 struct BinaryEntry
@@ -44,7 +50,10 @@ struct BinaryEntry
     AbiFingerprint fingerprint;
 
     // The configs whose markers exist, canonical.
-    eacp::Vector<std::string> configs;
+    EA::Vector<std::string> configs;
+
+    // Each config's lockedDependencies.
+    std::map<std::string, std::map<std::string, std::string>> lockedDependencies;
     std::string createdAt;
 
     eacp::FilePath targetsFile() const;
@@ -56,21 +65,25 @@ eacp::FilePath entryPrefix(const CacheRoot& cache,
                            const AbiFingerprint& fingerprint);
 
 // Every entry of `name` under `platform` that has a manifest of this schema.
-// Entries of the old bin/<name>/<key12> layout are never seen.
-eacp::Vector<BinaryEntry> findEntries(const CacheRoot& cache,
-                                      const std::string& name,
-                                      const std::string& platform);
+EA::Vector<BinaryEntry> findEntries(const CacheRoot& cache,
+                                    const std::string& name,
+                                    const std::string& platform);
+
+// The entry with only the configs whose lockedDependencies the lock still
+// holds at the same hashes; the others are rebuilt.
+BinaryEntry withConfigsMatchingTheLock(BinaryEntry entry,
+                                       const eacp::FilePath& lock);
 
 // Every entry in the cache, by name then platform.
-eacp::Vector<BinaryEntry> allEntries(const CacheRoot& cache);
+EA::Vector<BinaryEntry> allEntries(const CacheRoot& cache);
 
 // The entry to use for `wanted` among those `policy` accepts, preferring an
 // exact (strict) match, then one holding every config in `configs`, then the
 // one holding most of them, then the newest.
-std::optional<BinaryEntry> pickEntry(const eacp::Vector<BinaryEntry>& entries,
+std::optional<BinaryEntry> pickEntry(const EA::Vector<BinaryEntry>& entries,
                                      const AbiFingerprint& wanted,
                                      AbiMatch policy,
-                                     const eacp::Vector<std::string>& configs);
+                                     const EA::Vector<std::string>& configs);
 
 struct BinaryResult
 {
@@ -78,19 +91,21 @@ struct BinaryResult
     BinaryEntry entry;
 
     // What this call built and added to the entry.
-    eacp::Vector<std::string> builtConfigs;
+    EA::Vector<std::string> builtConfigs;
     std::string error;
     std::string details;
 };
 
 // Under the package lock: picks the entry for the request again (another
 // process may have built it meanwhile) or creates the one for the current
-// fingerprint, then builds and harvests only the configs it lacks, adding
-// each to the entry as it completes. `dependencyGraph` goes to each child
-// build (ChildBuild::dependencyGraph).
+// fingerprint, then builds and harvests only the configs it lacks (or whose
+// locked dependencies changed), adding each to the entry as it completes.
+// `dependencyGraph` goes to each child build (ChildBuild::dependencyGraph),
+// and so does the lock its own package calls resolve against.
 BinaryResult buildBinary(const CacheRoot& cache,
                          const Request& request,
                          const Env& env,
                          const SourceSnapshot& snapshot,
+                         const LockForChildBuilds& childLock,
                          const std::string& dependencyGraph = {});
 } // namespace epm

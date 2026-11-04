@@ -68,11 +68,10 @@ auto tCreatesOnDemand = test("CacheRoot/createsSubdirectoriesOnDemand") = []
     check(cache.src() == directory / "src");
     check(cache.bin() == directory / "bin");
     check(cache.build() == directory / "build");
-    check(cache.cpm() == directory / "cpm");
     check(cache.tmp() == directory / "tmp");
     check(cache.locks() == directory / "locks");
 
-    for (auto name: {"src", "bin", "build", "cpm", "tmp", "locks"})
+    for (auto name: {"src", "bin", "build", "tmp", "locks"})
         check(Files::isDirectory(directory / name));
 
     Files::removeAll(directory);

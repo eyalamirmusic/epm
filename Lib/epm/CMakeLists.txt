@@ -11,12 +11,10 @@ add_library(epm-core STATIC
         Cache/CacheListing.h
         Cache/CacheRoot.cpp
         Cache/CacheRoot.h
+        Cache/CrossProcessLock.cpp
+        Cache/CrossProcessLock.h
         Cache/Fingerprint.cpp
         Cache/Fingerprint.h
-        Cache/PackageLock.cpp
-        Cache/PackageLock.h
-        Cache/SourceCache.cpp
-        Cache/SourceCache.h
         Emit/GraphResponse.cpp
         Emit/GraphResponse.h
         Emit/RecipeSdkCMake.cpp
@@ -30,6 +28,18 @@ add_library(epm-core STATIC
         Graph/Merge.cpp
         Graph/Merge.h
         Graph/ResolvedGraph.h
+        Lock/ErrorMessages.cpp
+        Lock/ErrorMessages.h
+        Lock/LockFile.cpp
+        Lock/LockFile.h
+        Lock/MerkleHash.cpp
+        Lock/MerkleHash.h
+        Lock/Requirements.cpp
+        Lock/Requirements.h
+        Lock/Session.cpp
+        Lock/Session.h
+        Resolve/Commands.cpp
+        Resolve/Commands.h
         Recipe/Project.cpp
         Recipe/Project.h
         Recipe/Recipe.h
@@ -40,12 +50,25 @@ add_library(epm-core STATIC
         Recipe/RecipeSdk.h
         Resolve/Resolve.cpp
         Resolve/Resolve.h
+        Source/BareClone.cpp
+        Source/BareClone.h
+        Source/Download.cpp
+        Source/Download.h
+        Source/SourceCache.cpp
+        Source/SourceCache.h
+        Source/SourceSnapshot.cpp
+        Source/SourceSnapshot.h
+        Source/Submodules.cpp
+        Source/Submodules.h
         Spec/Env.h
         Spec/JsonFile.h
         Spec/Manifest.cpp
         Spec/Manifest.h
         Spec/Overrides.cpp
         Spec/Overrides.h
+        Spec/PackageArguments.cpp
+        Spec/PackageArguments.h
+        Spec/PackageKind.h
         Spec/Platform.cpp
         Spec/Platform.h
         Spec/Request.h
@@ -55,29 +78,42 @@ add_library(epm-core STATIC
         Util/Git.h
         Util/Log.cpp
         Util/Log.h
-        Util/Sha256.cpp
-        Util/Sha256.h
+        Util/LongPath.cpp
+        Util/LongPath.h
+        Util/Status.cpp
+        Util/Status.h
         Util/Text.cpp
         Util/Text.h
         Util/Timestamp.cpp
         Util/Timestamp.h)
 
-# epm-export.cmake and epm-provider.cmake (the core of epm-nested.cmake) are
-# compiled into the binary, so an installed epm writes them into child builds
-# without needing this repository at runtime.
-foreach (script IN ITEMS export provider)
-    set(script_file "${CMAKE_CURRENT_SOURCE_DIR}/../../CMake/epm-${script}.cmake")
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${script_file}")
-    string(TOUPPER "${script}" upper)
-    file(READ "${script_file}" EPM_${upper}_SCRIPT)
+# epm-export.cmake, epm.cmake and epm-provider.cmake are compiled into the
+# binary, so an installed epm writes them into child builds without needing
+# this repository at runtime. MSVC rejects a string literal over 16380 bytes
+# (C2026), so each script becomes adjacent raw literals of at most 12000.
+set(epm_script_chunk_length 12000)
 
-    # MSVC rejects a string literal over 16380 bytes (C2026).
-    string(LENGTH "${EPM_${upper}_SCRIPT}" length)
-
-    if (length GREATER 15000)
-        message(FATAL_ERROR "${script_file} is ${length} bytes; split it into "
-                "several literals in Build/EmbeddedScripts.cpp.in")
+foreach (script IN ITEMS export module provider)
+    if (script STREQUAL "module")
+        set(script_file "${PROJECT_SOURCE_DIR}/CMake/epm.cmake")
+    else ()
+        set(script_file "${PROJECT_SOURCE_DIR}/CMake/epm-${script}.cmake")
     endif ()
+
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${script_file}")
+    file(READ "${script_file}" text)
+    string(LENGTH "${text}" length)
+    set(literals "")
+    set(offset 0)
+
+    while (offset LESS length)
+        string(SUBSTRING "${text}" ${offset} ${epm_script_chunk_length} chunk)
+        string(APPEND literals "R\"epm_script(${chunk})epm_script\"\n")
+        math(EXPR offset "${offset} + ${epm_script_chunk_length}")
+    endwhile ()
+
+    string(TOUPPER "${script}" upper)
+    set(EPM_${upper}_SCRIPT "${literals}")
 endforeach ()
 
 configure_file(Build/EmbeddedScripts.cpp.in
@@ -88,7 +124,7 @@ target_sources(epm-core PRIVATE
 target_include_directories(epm-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 # eacp-network for IPC::Lock, the cross-process package lock.
-target_link_libraries(epm-core PUBLIC eacp-core eacp-network)
+target_link_libraries(epm-core PUBLIC eacp-core eacp-network PRIVATE ResEmbed)
 
 set_default_target_setting(epm-core)
 
@@ -133,10 +169,54 @@ target_sources(epm-core PRIVATE
 # static library under it, each linked whole and compiled at default
 # visibility. The helpers are eacp's (EacpPlugin.cmake). Windows has no
 # recipes: the target links as before.
+# The headers a recipe includes, through <epm/Recipe/Recipe.h>, copied out of
+# their include directories at build time (CollectRecipeHeaders.cmake) and
+# embedded in each executable that compiles recipes, so a released binary
+# writes them out wherever it runs (RecipeSdk.h) and bakes in no build path.
+set(epm_recipe_headers_dir "${CMAKE_CURRENT_BINARY_DIR}/recipe-include" CACHE INTERNAL "")
+set(epm_recipe_headers_stamp "${CMAKE_CURRENT_BINARY_DIR}/recipe-include.stamp" CACHE INTERNAL "")
+
+if (NOT WIN32)
+    file(GENERATE
+            OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/Generated/recipe-include-dirs-$<CONFIG>.txt"
+            CONTENT "$<REMOVE_DUPLICATES:$<TARGET_PROPERTY:epm-core,INCLUDE_DIRECTORIES>;$<TARGET_PROPERTY:epm-core,INTERFACE_INCLUDE_DIRECTORIES>>")
+    file(GENERATE
+            OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/Generated/recipe-definitions-$<CONFIG>.txt"
+            CONTENT "$<TARGET_PROPERTY:epm-core,COMPILE_DEFINITIONS>")
+    file(GLOB_RECURSE epm_public_headers CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
+
+    add_custom_command(
+            OUTPUT "${epm_recipe_headers_stamp}"
+            COMMAND "${CMAKE_COMMAND}"
+            "-DCOMPILER=${CMAKE_CXX_COMPILER}"
+            "-DSTANDARD=${CMAKE_CXX_STANDARD}"
+            "-DINCLUDE_DIRS_FILE=${CMAKE_CURRENT_BINARY_DIR}/Generated/recipe-include-dirs-$<CONFIG>.txt"
+            "-DDEFINITIONS_FILE=${CMAKE_CURRENT_BINARY_DIR}/Generated/recipe-definitions-$<CONFIG>.txt"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/recipe-include-probe"
+            "-DOUTPUT_DIR=${epm_recipe_headers_dir}"
+            "-DSTAMP=${epm_recipe_headers_stamp}"
+            "-DEPM_HEADERS=${epm_public_headers}"
+            "-DINCLUDE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/.."
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/Recipe/CollectRecipeHeaders.cmake"
+            DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Recipe/CollectRecipeHeaders.cmake"
+            ${epm_public_headers}
+            COMMENT "Collecting the headers an epm.cpp includes"
+            VERBATIM)
+    add_custom_target(epm-recipe-headers DEPENDS "${epm_recipe_headers_stamp}")
+endif ()
+
 function(epm_export_recipe_api target)
     if (WIN32)
         return()
     endif ()
+
+    res_embed_add(${target}
+            SCAN_DIR "${epm_recipe_headers_dir}"
+            BASE_DIRECTORY "${epm_recipe_headers_dir}"
+            DEPENDS epm-recipe-headers "${epm_recipe_headers_stamp}"
+            NAMESPACE RecipeHeaders
+            CATEGORY RecipeHeaders)
 
     set(archives epm-core)
     eacp_collect_link_targets(epm-core archives)

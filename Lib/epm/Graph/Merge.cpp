@@ -21,7 +21,7 @@ struct Layer
     std::string tag;
     std::string mode;
     std::string abiMatch;
-    Vector<std::string> configs;
+    EA::Vector<std::string> configs;
     Options options;
 };
 
@@ -41,7 +41,7 @@ Vector<Layer> layersOf(const MergeLayers& layers)
     const auto& package = layers.packageOverride;
     const auto& overrides = layers.overrides;
 
-    auto result = Vector<Layer> {};
+    auto result = EA::Vector<Layer> {};
     result.add({"override:package",
                 {},
                 {},
@@ -68,7 +68,7 @@ Vector<Layer> layersOf(const MergeLayers& layers)
 }
 
 template <typename T>
-T firstSet(const Vector<Layer>& layers,
+T firstSet(const EA::Vector<Layer>& layers,
            T Layer::* member,
            const std::string& key,
            T fallback,
@@ -87,7 +87,7 @@ T firstSet(const Vector<Layer>& layers,
     return fallback;
 }
 
-Options mergedOptions(const Vector<Layer>& layers, Provenance& provenance)
+Options mergedOptions(const EA::Vector<Layer>& layers, Provenance& provenance)
 {
     auto options = Options {};
 
@@ -100,24 +100,24 @@ Options mergedOptions(const Vector<Layer>& layers, Provenance& provenance)
 }
 } // namespace
 
-bool isAutoConfigs(const Vector<std::string>& configs)
+bool isAutoConfigs(const EA::Vector<std::string>& configs)
 {
     return configs.empty()
            || (configs.size() == 1 && Strings::toLower(configs[0]) == "auto");
 }
 
-std::optional<Vector<std::string>> resolveConfigs(const Vector<std::string>& configs,
-                                                  const Env& env)
+std::optional<EA::Vector<std::string>>
+    resolveConfigs(const EA::Vector<std::string>& configs, const Env& env)
 {
     if (isAutoConfigs(configs))
     {
         if (env.isMultiConfig)
-            return Vector<std::string> {"Debug", "Release"};
+            return EA::Vector<std::string> {"Debug", "Release"};
 
         if (Strings::toLower(env.buildType) == "debug")
-            return Vector<std::string> {"Debug"};
+            return EA::Vector<std::string> {"Debug"};
 
-        return Vector<std::string> {"Release"};
+        return EA::Vector<std::string> {"Release"};
     }
 
     for (const auto& config: configs)
@@ -147,13 +147,14 @@ MergeResult
     request.options = mergedOptions(all, provenance);
 
     const auto configs = firstSet(
-        all, &Layer::configs, "configs", Vector<std::string> {}, provenance);
+        all, &Layer::configs, "configs", EA::Vector<std::string> {}, provenance);
     const auto resolved = resolveConfigs(configs, env);
 
     if (!resolved)
     {
         result.error = name + " has an unknown configuration in configs '"
-                       + joinList(configs, ";") + "' (from " + provenance["configs"]
+                       + eacp::Strings::join(configs, ";") + "' (from "
+                       + provenance["configs"]
                        + "): give auto, or Debug, Release, RelWithDebInfo and "
                          "MinSizeRel";
         return result;

@@ -14,7 +14,7 @@ namespace epm
 using namespace eacp;
 
 CommandResult runCommand(const std::string& executable,
-                         const Vector<std::string>& arguments)
+                         const EA::Vector<std::string>& arguments)
 {
     auto options = Processes::ProcessOptions {};
     options.executable = executable;

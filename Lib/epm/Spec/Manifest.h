@@ -21,7 +21,7 @@ struct ManifestPackage
     std::string git;
     std::string tag;
     std::map<std::string, std::string> options;
-    eacp::Vector<std::string> configs;
+    EA::Vector<std::string> configs;
 
     // "auto", "prebuilt", "binary-only" or "source".
     std::string mode;
@@ -29,7 +29,11 @@ struct ManifestPackage
     // "strict", "compatible" or "any".
     std::string abiMatch;
 
-    MIRO_REFLECT(name, git, tag, options, configs, mode, abiMatch)
+    // Found by CMake's own find_package search, never fetched: the explicit
+    // opt-in a find_package of a name outside the graph needs.
+    bool system = false;
+
+    MIRO_REFLECT(name, git, tag, options, configs, mode, abiMatch, system)
 };
 
 // https://github.com/<owner>/<repo>.git for an owner/repo shorthand: anything
@@ -39,7 +43,7 @@ std::string expandGitUrl(std::string_view git);
 
 // The entry named `name` of `packages`; nullptr when there is none.
 template <typename Package>
-const Package* findPackage(const eacp::Vector<Package>& packages,
+const Package* findPackage(const EA::Vector<Package>& packages,
                            std::string_view name)
 {
     return packages.findIf([name](const Package& package)

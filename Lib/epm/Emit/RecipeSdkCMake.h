@@ -9,12 +9,15 @@
 namespace epm
 {
 // recipe-sdk.cmake, written by `epm recipe-sdk` for epm.cmake's epm::recipe
-// target: EPM_RECIPE_CXX_COMPILER, EPM_RECIPE_COMPILER_ID,
-// EPM_RECIPE_CXX_STANDARD, EPM_RECIPE_CXX_EXTENSIONS (ON or OFF), and the
-// lists EPM_RECIPE_INCLUDE_DIRS, EPM_RECIPE_COMPILE_DEFINITIONS and
-// EPM_RECIPE_COMPILE_OPTIONS (epm-core's warning flags, meant for the
-// compiler named by EPM_RECIPE_COMPILER_ID only).
-std::string recipeSdkCMakeText(const RecipeSdk& sdk);
+// target: EPM_RECIPE_COMPILER_ID, EPM_RECIPE_CXX_STANDARD,
+// EPM_RECIPE_CXX_EXTENSIONS (ON or OFF), EPM_RECIPE_INCLUDE_DIRS (where the
+// embedded headers were written), and the lists
+// EPM_RECIPE_COMPILE_DEFINITIONS and EPM_RECIPE_COMPILE_OPTIONS (epm-core's
+// warning flags, meant for the compiler named by EPM_RECIPE_COMPILER_ID only).
+std::string recipeSdkCMakeText(const RecipeSdk& sdk,
+                               const eacp::FilePath& includeDirectory);
 
-bool writeRecipeSdkCMake(const eacp::FilePath& path, const RecipeSdk& sdk);
+void writeRecipeSdkCMake(const eacp::FilePath& path,
+                         const RecipeSdk& sdk,
+                         const eacp::FilePath& includeDirectory);
 } // namespace epm

@@ -79,7 +79,7 @@ if (NOT order STREQUAL "Pre;Leaf")
     message(SEND_ERROR "Pre was loaded again: order '${order}'")
 endif ()
 
-# Names outside the graph fall through to CMake's own search.
+# Names the graph marks "system" go to CMake's own search.
 find_package(NotEpm CONFIG REQUIRED PATHS "${packages}/NotEpm" NO_DEFAULT_PATH)
 
 if (NOT NotEpm_FROM_CONFIG OR DEFINED NotEpm_MODE)

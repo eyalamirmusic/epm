@@ -1,5 +1,6 @@
 #pragma once
 
+#include <eacp/Core/Process/Process.h>
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/FilePath.h>
 
@@ -20,28 +21,21 @@ struct Result
     }
 };
 
-// Runs git in `workingDirectory` and waits. Never prompts for credentials: a
-// remote that needs them fails instead of hanging.
-Result run(const eacp::FilePath& workingDirectory,
-           const eacp::Vector<std::string>& arguments);
+// Runs git from the temp directory and waits. Never prompts for credentials:
+// a remote that needs them fails instead of hanging.
+Result run(const EA::Vector<std::string>& arguments,
+           const EA::Vector<eacp::Processes::EnvironmentVariable>& environment = {});
 
-bool isAvailable();
+// run's trimmed stdout; throws, with git's stderr, when git fails.
+std::string runOrThrow(
+    const EA::Vector<std::string>& arguments,
+    const EA::Vector<eacp::Processes::EnvironmentVariable>& environment = {});
 
-struct RemoteRef
-{
-    std::string ref;
-    std::string sha;
-};
+// Whether git-lfs is installed, so `git lfs` runs.
+bool isLfsInstalled();
 
-struct RemoteRefs
-{
-    bool ok = false;
-    eacp::Vector<RemoteRef> refs;
-    std::string error;
-};
+// The patch.exe Git for Windows installs beside itself, or an empty path when
+// git is missing.
+eacp::FilePath findPatchBesideGit();
 
-// Parses `git ls-remote <url>` output, in the order git printed it.
-eacp::Vector<RemoteRef> parseLsRemote(std::string_view output);
-
-RemoteRefs lsRemote(const std::string& url);
 } // namespace epm::Git

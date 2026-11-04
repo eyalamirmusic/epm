@@ -1,4 +1,5 @@
 #include <epm/Emit/GraphResponse.h>
+#include <epm/Spec/JsonFile.h>
 #include <epm/Graph/Graph.h>
 #include <epm/Resolve/Resolve.h>
 #include <epm/Util/Text.h>
@@ -71,17 +72,32 @@ struct FakeSources final : ManifestLoader
 
     SourceFetcher fetcher()
     {
-        return [this](const std::string& name,
-                      const std::string& url,
-                      const std::string& ref)
+        return
+            [this](const std::string& name, const EA::Vector<Requirement>& declared)
         {
+            auto requirements = declared;
+
+            for (auto& requirement: requirements)
+                requirement.commit = requirement.requestedRef;
+
+            auto result = LockedSource {};
+            auto selection = selectRequirement(requirements);
+
+            if (selection.isConflict)
+            {
+                result.error = describeRequirementConflict(name, requirements);
+                return result;
+            }
+
+            const auto& ref = selection.selected.requestedRef;
+            const auto& url = selection.selected.url;
             fetched.add(name + "@" + ref);
             urls[name] = url;
 
-            auto result = SourceResult {};
+            result.selected = selection.selected;
             result.snapshot.directory = root.path() / (name + "@" + ref);
             result.snapshot.commit = ref;
-            result.snapshot.sourceId = name + ref;
+            result.snapshot.hash = name + ref;
             result.ok = eacp::Files::isDirectory(result.snapshot.directory);
             result.error = result.ok ? "" : "no " + ref + " of " + url;
             return result;
@@ -95,7 +111,7 @@ struct FakeSources final : ManifestLoader
     }
 
     eacp::TemporaryFile root;
-    eacp::Vector<std::string> fetched;
+    EA::Vector<std::string> fetched;
     std::map<std::string, std::string> urls;
     std::map<std::string, Describe> recipes;
     std::map<std::string, std::string> failures;
@@ -119,9 +135,9 @@ const PlannedPackage* planned(const GraphPlan& plan, const std::string& name)
     return nullptr;
 }
 
-eacp::Vector<std::string> planOrder(const GraphPlan& plan)
+EA::Vector<std::string> planOrder(const GraphPlan& plan)
 {
-    auto names = eacp::Vector<std::string> {};
+    auto names = EA::Vector<std::string> {};
 
     for (const auto& package: plan.packages)
         names.add(package.effective.request.name);
@@ -241,13 +257,12 @@ auto tMergeConfigs = test("Graph/merge/configs") = []
     auto multi = Env {};
     multi.isMultiConfig = true;
 
-    check(*resolveConfigs({}, single) == eacp::Vector<std::string> {"Debug"});
-    check(*resolveConfigs({"AUTO"}, Env {})
-          == eacp::Vector<std::string> {"Release"});
+    check(*resolveConfigs({}, single) == EA::Vector<std::string> {"Debug"});
+    check(*resolveConfigs({"AUTO"}, Env {}) == EA::Vector<std::string> {"Release"});
     check(*resolveConfigs({"auto"}, multi)
-          == eacp::Vector<std::string> {"Debug", "Release"});
+          == EA::Vector<std::string> {"Debug", "Release"});
     check(*resolveConfigs({"RelWithDebInfo", "debug"}, single)
-          == eacp::Vector<std::string> {"Debug", "Release"});
+          == EA::Vector<std::string> {"Debug", "Release"});
     check(!resolveConfigs({"Profile"}, single).has_value());
 
     auto layers = MergeLayers {};
@@ -258,13 +273,13 @@ auto tMergeConfigs = test("Graph/merge/configs") = []
     check(merged.error.find("Fast") != std::string::npos);
 };
 
-auto tGraphRootWins = test("Graph/walk/rootWinsAndNotes") = []
+auto tGraphHighestTag = test("Graph/walk/highestTagWinsRootOptionsWin") = []
 {
     auto sources = FakeSources {};
     auto a = Project {};
     setMode(setOption(a.add("C", "org/C", "v2"), "X", "dep"), "source");
     sources.add("A", "v1", a);
-    sources.add("C", "v1");
+    sources.add("C", "v2");
 
     auto root = Project {};
     root.add("A", "org/A", "v1");
@@ -272,29 +287,29 @@ auto tGraphRootWins = test("Graph/walk/rootWinsAndNotes") = []
     const auto plan = sources.plan(inputsFor(root));
 
     check(plan.ok);
-    check(planned(plan, "C")->effective.request.gitRef == "v1");
+    check(planned(plan, "C")->effective.request.gitRef == "v2");
+    check(planned(plan, "C")->effective.provenance.at("tag") == "A");
     check(planned(plan, "C")->effective.request.options.at("X") == "root");
     check(planned(plan, "C")->effective.request.mode == "source");
     check(planned(plan, "C")->effective.provenance.at("mode") == "manifest:A");
-    check(sources.fetched == eacp::Vector<std::string> {"A@v1", "C@v1"});
-    check(hasNote(plan, "C: A declares v2, root declares v1"));
+    check(sources.fetched == EA::Vector<std::string> {"A@v1", "C@v2"});
     check(hasNote(plan, "C: A declares option X=dep, root declares option X=root"));
 
-    // The root leaves mode unset, so A's mode is the winning one: no note.
-    check(plan.notes.size() == 2);
-    check(planned(plan, "C")->declaredBy == eacp::Vector<std::string> {"root", "A"});
+    // Tags are selected, not merged, so they make no note.
+    check(plan.notes.size() == 1);
+    check(planned(plan, "C")->declaredBy == EA::Vector<std::string> {"root", "A"});
 };
 
-auto tGraphFirstWins = test("Graph/walk/firstDeclarationDepthFirst") = []
+auto tGraphDepthFirst = test("Graph/walk/depthFirstOrder") = []
 {
     auto sources = FakeSources {};
     auto a = Project {};
     a.add("D", "org/D", "v1");
-    a.add("E", "org/E", "fromA");
+    a.add("E", "org/E", "e1");
     sources.add("A", "v1", a);
-    sources.add("B", "v1", declaring("E", "fromB"));
-    sources.add("D", "v1", declaring("E", "fromD"));
-    sources.add("E", "fromD");
+    sources.add("B", "v1", declaring("E", "e1"));
+    sources.add("D", "v1", declaring("E", "e1"));
+    sources.add("E", "e1");
 
     auto root = Project {};
     root.add("A", "org/A", "v1");
@@ -302,25 +317,43 @@ auto tGraphFirstWins = test("Graph/walk/firstDeclarationDepthFirst") = []
     const auto plan = sources.plan(inputsFor(root));
 
     check(plan.ok);
-    check(planned(plan, "E")->effective.request.gitRef == "fromD");
-    check(planned(plan, "E")->effective.provenance.at("tag") == "manifest:D");
-    check(hasNote(plan, "E: A declares fromA, D declares fromD"));
-    check(hasNote(plan, "E: B declares fromB, D declares fromD"));
-    check(planOrder(plan) == eacp::Vector<std::string> {"E", "D", "A", "B"});
-    check(planned(plan, "A")->deps == eacp::Vector<std::string> {"D", "E"});
-    check(planned(plan, "B")->deps == eacp::Vector<std::string> {"E"});
+    check(planned(plan, "E")->effective.request.gitRef == "e1");
+    check(planOrder(plan) == EA::Vector<std::string> {"E", "D", "A", "B"});
+    check(planned(plan, "A")->deps == EA::Vector<std::string> {"D", "E"});
+    check(planned(plan, "B")->deps == EA::Vector<std::string> {"E"});
     check(planned(plan, "E")->deps.empty());
+};
+
+auto tGraphConflict = test("Graph/walk/differentRefsConflict") = []
+{
+    auto sources = FakeSources {};
+    sources.add("zeta", "v1", declaring("P", "fromZeta"));
+    sources.add("alpha", "v1", declaring("P", "fromAlpha"));
+    sources.add("P", "fromZeta");
+
+    auto root = Project {};
+    root.add("zeta", "org/zeta", "v1");
+    root.add("alpha", "org/alpha", "v1");
+    const auto plan = sources.plan(inputsFor(root));
+
+    check(!plan.ok);
+    check(plan.error.find("disagree on P") != std::string::npos);
+    check(plan.error.find("zeta asks for") != std::string::npos);
+    check(plan.error.find("alpha asks for") != std::string::npos);
+    check(plan.error.find("epm.cpp") != std::string::npos);
 };
 
 auto tGraphStrict = test("Graph/walk/strictTurnsNotesIntoAnError") = []
 {
     auto sources = FakeSources {};
-    sources.add("A", "v1", declaring("C", "v2"));
+    auto a = Project {};
+    setOption(a.add("C", "org/C", "v1"), "X", "dep");
+    sources.add("A", "v1", a);
     sources.add("C", "v1");
 
     auto root = Project {};
     root.add("A", "org/A", "v1");
-    root.add("C", "org/C", "v1");
+    setOption(root.add("C", "org/C", "v1"), "X", "root");
     auto inputs = inputsFor(root);
 
     check(sources.plan(inputs).ok);
@@ -329,8 +362,9 @@ auto tGraphStrict = test("Graph/walk/strictTurnsNotesIntoAnError") = []
     const auto strict = sources.plan(inputs);
 
     check(!strict.ok);
-    check(strict.error.find("C: A declares v2, root declares v1")
-          != std::string::npos);
+    check(
+        strict.error.find("C: A declares option X=dep, root declares option X=root")
+        != std::string::npos);
 
     inputs.overrides.strict = false;
     inputs.environment = [](std::string_view name)
@@ -418,11 +452,11 @@ auto tGraphSourceOverride = test("Graph/walk/sourceOverrideIsReadNotFetched") = 
     const auto plan = sources.plan(inputs);
 
     check(plan.ok);
-    check(sources.fetched == eacp::Vector<std::string> {"C@v1"});
+    check(sources.fetched == EA::Vector<std::string> {"C@v1"});
     check(planned(plan, "A")->effective.source == checkout.path().str());
     check(planned(plan, "A")->snapshot.directory == checkout.path());
     check(planned(plan, "A")->effective.request.mode == "source");
-    check(planned(plan, "A")->deps == eacp::Vector<std::string> {"C"});
+    check(planned(plan, "A")->deps == EA::Vector<std::string> {"C"});
     check(planned(plan, "C")->effective.request.mode == "auto");
 };
 
@@ -476,7 +510,7 @@ auto tGraphBadInputs = test("Graph/walk/reportsBadInputs") = []
 
     const auto noTag = sources.plan(inputsFor(declaring("A", "v1")));
     check(!noTag.ok);
-    check(noTag.error == "C has no tag (declared by A)");
+    check(noTag.error == "C has no git and tag (declared by A)");
 
     const auto missing = sources.plan(inputsFor(declaring("A", "v7")));
     check(!missing.ok);
@@ -510,17 +544,17 @@ auto tGraphDuplicateName = test("Graph/walk/duplicateNameIsAnError") = []
     const auto root = sources.plan(inputsFor(twice));
     check(!root.ok);
     check(root.error == "the root manifest: C is declared twice in packages");
-    check(sources.fetched == eacp::Vector<std::string> {"A@v1"});
+    check(sources.fetched == EA::Vector<std::string> {"A@v1"});
 };
 
 auto tGraphDeclarationOrder = test("Graph/walk/declarationOrderNotNameOrder") = []
 {
     auto sources = FakeSources {};
-    sources.add("zeta", "v1", declaring("P", "fromZeta"));
-    sources.add("alpha", "v1", declaring("P", "fromAlpha"));
-    sources.add("P", "fromZeta");
+    sources.add("zeta", "v1", declaring("P", "v1"));
+    sources.add("alpha", "v1", declaring("P", "v1"));
+    sources.add("P", "v1");
 
-    // Name order would visit alpha first and let its P win.
+    // Name order would visit alpha first.
     auto root = Project {};
     root.add("zeta", "org/zeta", "v1");
     root.add("alpha", "org/alpha", "v1");
@@ -530,18 +564,17 @@ auto tGraphDeclarationOrder = test("Graph/walk/declarationOrderNotNameOrder") = 
     const auto plan = sources.plan(inputs);
 
     check(plan.ok);
-    check(planned(plan, "P")->effective.request.gitRef == "fromZeta");
-    check(planned(plan, "P")->effective.provenance.at("tag") == "manifest:zeta");
     check(planned(plan, "P")->declaredBy
-          == eacp::Vector<std::string> {"zeta", "alpha"});
-    check(hasNote(plan, "P: alpha declares fromAlpha, zeta declares fromZeta"));
+          == EA::Vector<std::string> {"zeta", "alpha"});
+    // alpha's declaration, met after P was fetched, takes part in the
+    // selection again.
     check(sources.fetched
-          == eacp::Vector<std::string> {"zeta@v1", "P@fromZeta", "alpha@v1"});
-    check(planOrder(plan) == eacp::Vector<std::string> {"P", "zeta", "alpha"});
+          == EA::Vector<std::string> {"zeta@v1", "P@v1", "alpha@v1", "P@v1"});
+    check(planOrder(plan) == EA::Vector<std::string> {"P", "zeta", "alpha"});
 
     auto cacheDirectory = eacp::TemporaryFile {};
     const auto resolved =
-        resolvePlan(plan, inputs.env, CacheRoot {cacheDirectory.path()});
+        resolvePlan(plan, inputs.env, CacheRoot {cacheDirectory.path()}, {});
 
     check(resolved.ok);
     check(graphCMakeText(resolved.graph)
@@ -629,7 +662,7 @@ auto tGraphFallbackForcesSource =
 
     auto cacheDirectory = eacp::TemporaryFile {};
     const auto resolved =
-        resolvePlan(plan, inputs.env, CacheRoot {cacheDirectory.path()});
+        resolvePlan(plan, inputs.env, CacheRoot {cacheDirectory.path()}, {});
 
     check(resolved.ok);
     check(resolved.graph.packages.size() == 2);
@@ -640,7 +673,7 @@ auto tGraphFallbackForcesSource =
     check(a.name == "A" && a.mode == "source");
     check(a.request.mode == "source");
     check(a.provenance.at("mode") == "source dependency C");
-    check(a.deps == eacp::Vector<std::string> {"C"});
+    check(a.deps == EA::Vector<std::string> {"C"});
     check(a.request.deps.empty());
     check(a.commit == "v1");
 };
@@ -657,7 +690,7 @@ auto tGraphBinaryOnlyMiss = test("Graph/resolve/binaryOnlyFailsOnAMiss") = []
 
     auto cacheDirectory = eacp::TemporaryFile {};
     const auto resolved =
-        resolvePlan(plan, inputs.env, CacheRoot {cacheDirectory.path()});
+        resolvePlan(plan, inputs.env, CacheRoot {cacheDirectory.path()}, {});
 
     check(!resolved.ok);
     check(resolved.error.find("A is binary-only") == 0);
@@ -722,11 +755,14 @@ auto tGraphCMake = test("GraphResponse/cmakeText") = []
         "set(epm_B_SOURCE_DIR \"/work/B\")\n"
         "set(epm_B_DEPS \"fmt\")\n"
         "set(epm_B_OPTIONS \"\")\n"
+        "set(epm_SYSTEM_PACKAGES \"\")\n"
         "set(epm_NOTES \"fmt: B declares 10.2.1, root declares 11.0.2;"
         "fmt: B declares configs Debug\\\\;Release, root leaves it unset\")\n";
 
     check(graphCMakeText(sampleGraph()) == expected);
-    check(graphCMakeText({}) == "set(epm_PACKAGES \"\")\nset(epm_NOTES \"\")\n");
+    check(
+        graphCMakeText({})
+        == "set(epm_PACKAGES \"\")\nset(epm_SYSTEM_PACKAGES \"\")\nset(epm_NOTES \"\")\n");
 };
 
 auto tGraphJsonRoundTrip = test("GraphResponse/jsonRoundTrip") = []
@@ -734,9 +770,10 @@ auto tGraphJsonRoundTrip = test("GraphResponse/jsonRoundTrip") = []
     auto directory = eacp::TemporaryFile {};
     const auto graph = sampleGraph();
 
-    check(writeGraphJson(directory.path() / "graph.json", graph));
+    eacp::Files::writeFile(directory.path() / "graph.json",
+                           Miro::toJSONString(graph, 2));
 
-    const auto loaded = loadGraphJson(directory.path() / "graph.json");
+    const auto loaded = loadJsonFile<ResolvedGraph>(directory.path() / "graph.json");
 
     check(loaded.has_value());
     check(loaded->schema == 1);
@@ -750,7 +787,7 @@ auto tGraphJsonRoundTrip = test("GraphResponse/jsonRoundTrip") = []
 
 auto tGraphDependencyClosure = test("Graph/dependencyClosure") = []
 {
-    const auto package = [](std::string name, eacp::Vector<std::string> deps)
+    const auto package = [](std::string name, EA::Vector<std::string> deps)
     {
         auto resolved = ResolvedPackage {};
         resolved.name = std::move(name);
@@ -768,7 +805,7 @@ auto tGraphDependencyClosure = test("Graph/dependencyClosure") = []
 
     const auto names = [](const ResolvedGraph& closure)
     {
-        auto result = eacp::Vector<std::string> {};
+        auto result = EA::Vector<std::string> {};
 
         for (const auto& resolved: closure.packages)
             result.add(resolved.name);
@@ -777,11 +814,29 @@ auto tGraphDependencyClosure = test("Graph/dependencyClosure") = []
     };
 
     check(names(dependencyClosure(graph, {"Leaf"}))
-          == eacp::Vector<std::string> {"Leaf"});
+          == EA::Vector<std::string> {"Leaf"});
     check(names(dependencyClosure(graph, {"Mid"}))
-          == eacp::Vector<std::string> {"Leaf", "Mid"});
+          == EA::Vector<std::string> {"Leaf", "Mid"});
     check(names(dependencyClosure(graph, {"Top", "Other"}))
-          == eacp::Vector<std::string> {"Leaf", "Other", "Mid", "Top"});
+          == EA::Vector<std::string> {"Leaf", "Other", "Mid", "Top"});
     check(dependencyClosure(graph, {}).packages.empty());
     check(dependencyClosure(graph, {"Mid"}).notes.empty());
+};
+
+auto tGraphSystemPackages = test("Graph/walk/systemPackagesAreNotFetched") = []
+{
+    auto sources = FakeSources {};
+    auto a = Project {};
+    a.addSystem("CURL");
+    sources.add("A", "v1", a);
+
+    auto root = Project {};
+    root.add("A", "org/A", "v1");
+    root.addSystem("Threads");
+    const auto plan = sources.plan(inputsFor(root));
+
+    check(plan.ok);
+    check(plan.systemPackages == EA::Vector<std::string> {"Threads", "CURL"});
+    check(planOrder(plan) == EA::Vector<std::string> {"A"});
+    check(sources.fetched == EA::Vector<std::string> {"A@v1"});
 };

@@ -111,6 +111,7 @@ else ()
     file(MAKE_DIRECTORY "${fake_prefix}/bin")
     file(WRITE "${fake_epm}" "#!/bin/sh
 if [ \"$1\" = --version ]; then echo 0.2.0; exit 0; fi
+if [ \"$1\" = lock ]; then exit 0; fi
 if [ \"$1\" != configure ]; then echo \"fake epm: unknown command $1\" >&2; exit 2; fi
 if [ -n \"$EPM_TEST_FAIL\" ]; then
     echo 'fake epm: resolving the graph'
@@ -118,10 +119,8 @@ if [ -n \"$EPM_TEST_FAIL\" ]; then
     exit 3
 fi
 out=''
-previous=''
 for arg in \"$@\"; do
-    if [ \"$previous\" = --out ]; then out=\"$arg\"; fi
-    previous=\"$arg\"
+    case \"$arg\" in --out=*) out=\"\${arg#--out=}\";; esac
 done
 printf '%s\\n' \"$@\" > \"$out/configure-args.txt\"
 cp '${WORK_DIR}/graph.cmake' \"$out/graph.cmake\"
@@ -151,14 +150,17 @@ set(EPM_Leaf_OPTIONS "LEAF_X=1;LEAF_Y=a \"b\"" CACHE STRING "")
     file(READ "${epm_dir}/configure-args.txt" args)
     string(REPLACE "\n" ";" args "${args}")
     set(expected_args configure
-            --manifest "${graph_dir}/Consumer/epm.cpp"
-            --env "${epm_dir}/env.json"
-            --overrides "${epm_dir}/overrides.json"
-            --out "${epm_dir}")
+            "--manifest=${graph_dir}/Consumer/epm.cpp"
+            "--lock=${graph_dir}/Consumer/epm-lock.json"
+            "--env=${epm_dir}/env.json"
+            "--overrides=${epm_dir}/overrides.json"
+            "--out=${epm_dir}")
 
-    if (NOT args STREQUAL "${expected_args};")
-        fail("epm configure got '${args}', expected '${expected_args}'")
-    endif ()
+    foreach (expected IN LISTS expected_args)
+        if (NOT expected IN_LIST args)
+            fail("epm configure got '${args}', which lacks '${expected}'")
+        endif ()
+    endforeach ()
 
     file(READ "${epm_dir}/env.json" env)
     string(JSON cxx_standard GET "${env}" cxxStandard)

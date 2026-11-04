@@ -11,34 +11,27 @@ namespace
 {
 std::string identityOf(const RecipeSdk& sdk)
 {
-    auto lines = eacp::Vector<std::string> {sdk.compiler,
-                                            sdk.compilerId,
+    auto lines = eacp::Vector<std::string> {sdk.compilerId,
                                             sdk.cxxStandard,
                                             sdk.cxxExtensions ? "ON" : "OFF",
-                                            joinList(sdk.flags, " "),
-                                            sdk.osxSysroot,
-                                            joinList(sdk.osxArchitectures, " "),
+                                            eacp::Strings::join(sdk.flags, " "),
+                                            eacp::Strings::join(sdk.osxArchitectures, " "),
                                             sdk.osxDeploymentTarget,
-                                            joinList(sdk.includeDirectories, " "),
-                                            joinList(sdk.compileDefinitions, " "),
-                                            joinList(sdk.compileOptions, " ")};
+                                            eacp::Strings::join(sdk.compileDefinitions, " "),
+                                            eacp::Strings::join(sdk.compileOptions, " ")};
 
-    return joinList(lines, "\n");
+    return eacp::Strings::join(lines, "\n");
 }
 
 RecipeSdk bakedSdk()
 {
     auto sdk = RecipeSdk {};
-    sdk.compiler = R"epmsdk(@CMAKE_CXX_COMPILER@)epmsdk";
     sdk.compilerId = R"epmsdk(@CMAKE_CXX_COMPILER_ID@)epmsdk";
     sdk.cxxStandard = R"epmsdk(@CMAKE_CXX_STANDARD@)epmsdk";
     sdk.cxxExtensions = std::string {"@EPM_SDK_CXX_EXTENSIONS@"} == "ON";
     sdk.flags = splitList(R"epmsdk(@EPM_SDK_CXX_FLAGS@)epmsdk");
-    sdk.osxSysroot = R"epmsdk(@CMAKE_OSX_SYSROOT@)epmsdk";
     sdk.osxArchitectures = splitList(R"epmsdk(@EPM_SDK_OSX_ARCHITECTURES@)epmsdk");
     sdk.osxDeploymentTarget = R"epmsdk(@CMAKE_OSX_DEPLOYMENT_TARGET@)epmsdk";
-    sdk.includeDirectories = splitList(
-        R"epmsdk($<REMOVE_DUPLICATES:$<TARGET_PROPERTY:epm-core,INCLUDE_DIRECTORIES>;$<TARGET_PROPERTY:epm-core,INTERFACE_INCLUDE_DIRECTORIES>>)epmsdk");
     sdk.compileDefinitions =
         splitList(R"epmsdk($<TARGET_PROPERTY:epm-core,COMPILE_DEFINITIONS>)epmsdk");
     sdk.compileOptions =

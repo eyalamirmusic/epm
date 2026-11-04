@@ -1,6 +1,6 @@
 # get_epm.cmake -- the one file a project vendors to use epm.
 #
-# With a manifest (Docs/Graph.md): list this file in
+# With a manifest: list this file in
 # CMAKE_PROJECT_TOP_LEVEL_INCLUDES before project(), and keep epm.cpp (the
 # recipe naming the dependencies) beside the top-level CMakeLists.txt:
 #
@@ -67,19 +67,22 @@
 #   EPM_BOOTSTRAP_NO_DOWNLOAD ON: never download a release binary (skips 4)
 #   EPM_SOURCE_REF            build this epm tag, branch or commit (skips 2-4)
 #   EPM_SOURCE_URL            build this source tarball (skips 2-4)
-#   EPM_BOOTSTRAP_SOURCE_DIR  deprecated: read as EPM_SOURCE_DIR when that is
-#                             unset
+#   EPM_RELEASE_REPOSITORY    the GitHub repository whose releases are used
+#                             (default https://github.com/eyalamirmusic/epm)
 #   EPM_CACHE                cache root (else the EPM_CACHE environment
 #                             variable, else the platform cache directory)
 #   EPM_VERBOSE               say what is tried; stream the build output
 #   EPM_NESTED                set by epm for its child builds: do nothing
 #
-# The binary ends up in EPM_EXECUTABLE (cache INTERNAL). See Docs/PoC.md §8 and
-# Docs/Graph.md §8.
+# The binary ends up in EPM_EXECUTABLE (cache INTERNAL).
 
 include_guard(GLOBAL)
 
 set(GET_EPM_REPOSITORY "https://github.com/eyalamirmusic/epm")
+
+if (EPM_RELEASE_REPOSITORY)
+    set(GET_EPM_REPOSITORY "${EPM_RELEASE_REPOSITORY}")
+endif ()
 set(GET_EPM_DIR "${CMAKE_CURRENT_LIST_DIR}")
 set(GET_EPM_FILE "${CMAKE_CURRENT_LIST_FILE}")
 
@@ -571,11 +574,10 @@ function(get_epm_check_source_dir dir)
     set(source_error "${error}" PARENT_SCOPE)
 endfunction()
 
-# Whether EPM_EXECUTABLE is one the user gave: not the one an earlier configure
-# picked, nor one the pre-get_epm epm.cmake bootstrapped.
+# Whether EPM_EXECUTABLE is one the user gave, not the one an earlier configure
+# picked.
 function(get_epm_user_executable out_var)
-    if (EPM_EXECUTABLE AND NOT EPM_EXECUTABLE STREQUAL "${EPM_SELECTED_EXECUTABLE}"
-            AND NOT EPM_EXECUTABLE STREQUAL "${EPM_BOOTSTRAPPED_EXECUTABLE}")
+    if (EPM_EXECUTABLE AND NOT EPM_EXECUTABLE STREQUAL "${EPM_SELECTED_EXECUTABLE}")
         set(${out_var} TRUE PARENT_SCOPE)
     else ()
         set(${out_var} FALSE PARENT_SCOPE)
@@ -583,10 +585,9 @@ function(get_epm_user_executable out_var)
 endfunction()
 
 # The epm checkout to build, empty for none: the EPM_SOURCE_DIR CMake variable,
-# else the environment variable, else the deprecated EPM_BOOTSTRAP_SOURCE_DIR,
-# else the checkout this file belongs to (<checkout>/CMake/get_epm.cmake) when
+# else the environment variable, else the checkout this file belongs to (<checkout>/CMake/get_epm.cmake) when
 # nothing else asks for a particular epm. Sets `out_var` and `${out_var}_origin`
-# (variable, environment, deprecated, enclosing or empty).
+# (variable, environment, enclosing or empty).
 function(get_epm_source_dir_setting out_var)
     set(setting "")
     set(origin "")
@@ -597,13 +598,15 @@ function(get_epm_source_dir_setting out_var)
     elseif (NOT "$ENV{EPM_SOURCE_DIR}" STREQUAL "")
         set(setting "$ENV{EPM_SOURCE_DIR}")
         set(origin environment)
-    elseif (NOT "${EPM_BOOTSTRAP_SOURCE_DIR}" STREQUAL "")
-        set(setting "${EPM_BOOTSTRAP_SOURCE_DIR}")
-        set(origin deprecated)
     else ()
         get_epm_user_executable(user_executable)
 
-        if (NOT user_executable AND NOT EPM_SOURCE_REF AND NOT EPM_SOURCE_URL)
+        # epm itself builds with a release, never with the checkout it builds.
+        get_filename_component(checkout "${GET_EPM_DIR}/.." REALPATH)
+        get_filename_component(project_root "${CMAKE_SOURCE_DIR}" REALPATH)
+
+        if (NOT user_executable AND NOT EPM_SOURCE_REF AND NOT EPM_SOURCE_URL
+                AND NOT checkout STREQUAL project_root)
             get_epm_check_source_dir("${GET_EPM_DIR}/..")
 
             if (source_error STREQUAL "")
@@ -760,10 +763,7 @@ function(get_epm_select)
     # nature, so its version is reported rather than checked.
     get_epm_source_dir_setting(source_setting)
 
-    if (source_setting_origin STREQUAL "deprecated")
-        message(STATUS "epm: EPM_BOOTSTRAP_SOURCE_DIR is deprecated; "
-                "using it as EPM_SOURCE_DIR")
-    elseif (source_setting_origin STREQUAL "enclosing")
+    if (source_setting_origin STREQUAL "enclosing")
         message(STATUS "epm: get_epm.cmake is inside the epm checkout "
                 "${source_setting}; building epm from it (-DEPM_EXECUTABLE or "
                 "-DEPM_SOURCE_DIR to use another)")
@@ -925,7 +925,7 @@ function(get_epm_is_top_level_include out_var)
 endfunction()
 
 # Tests/GetEpmRanges.cmake wants the functions only. A child build epm runs
-# (Docs/Graph.md §10) has the provider injected by its parent and needs no
+# has the provider injected by its parent and needs no
 # binary: bootstrapping one there could find no module beside an EPM_EXECUTABLE
 # in a build tree and go on to download a release.
 if (GET_EPM_FUNCTIONS_ONLY OR EPM_NESTED)
@@ -943,7 +943,6 @@ if (get_epm_remember)
     set(EPM_SELECTED_EXECUTABLE "${get_epm_executable}" CACHE INTERNAL "")
     set(EPM_EXECUTABLE "${get_epm_executable}" CACHE INTERNAL "Path to the epm binary")
     set(EPM_EXECUTABLE "${get_epm_executable}")
-    unset(EPM_BOOTSTRAPPED_EXECUTABLE CACHE)
 endif ()
 
 # -DEPM_UPDATE=ON is a one-off request, not a setting.
@@ -951,7 +950,7 @@ unset(EPM_UPDATE CACHE)
 
 include("${get_epm_module}")
 
-# The manifest flow (Docs/Graph.md §8). A project without epm.cpp may still
+# The manifest flow. A project without epm.cpp may still
 # call epm_add_package.
 if (NOT EXISTS "${CMAKE_SOURCE_DIR}/epm.cpp")
     return()

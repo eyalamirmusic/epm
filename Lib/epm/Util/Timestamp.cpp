@@ -15,12 +15,6 @@ std::int64_t steadyMilliseconds()
 }
 } // namespace
 
-std::string utcTimestamp()
-{
-    using namespace std::chrono;
-    return std::format("{:%FT%TZ}", floor<seconds>(system_clock::now()));
-}
-
 std::string formatDuration(std::int64_t seconds)
 {
     if (seconds < 60)

@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.31)
 
-project(epm VERSION 0.1.3 LANGUAGES C CXX)
+# epm builds itself with the released epm below, as a compiler builds with its
+# previous release: get_epm.cmake downloads it, and it resolves epm.cpp's
+# packages from epm-lock.json. -DEPM_EXECUTABLE=<an epm> uses another.
+set(EPM_VERSION "0.1.4...0.1.4")
+set(EPM_RELEASE_REPOSITORY "https://github.com/jamierpond/epm")
+list(APPEND CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${CMAKE_CURRENT_LIST_DIR}/CMake/get_epm.cmake")
+
+project(epm VERSION 0.1.4 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -15,7 +22,7 @@ endif ()
 option(EPM_VERBOSE_CONFIGURE
         "Print the third-party fetch and probe detail hidden by default" OFF)
 
-# Same knobs as eacp's ConfigureLog.cmake: keep a clean configure down to CPM's
+# Same knobs as eacp's ConfigureLog.cmake: keep a clean configure down to epm's
 # one line per package.
 if (EPM_VERBOSE_CONFIGURE)
     set(CMAKE_MESSAGE_LOG_LEVEL VERBOSE)
@@ -23,10 +30,6 @@ else ()
     set(CMAKE_REQUIRED_QUIET ON)
     set(Threads_FIND_QUIETLY TRUE)
 endif ()
-
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
-
-include(CPM)
 
 find_package(eacp REQUIRED)
 find_package(Miro REQUIRED)
