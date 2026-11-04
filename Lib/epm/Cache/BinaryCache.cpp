@@ -243,10 +243,18 @@ BinaryResult buildBinary(const CacheRoot& cache,
             return failure("cannot clear the leftovers of " + config + " in "
                            + prefix.str());
 
+        Log::progress("epm: building " + request.name
+                      + " from source into the cache (" + config + ", "
+                      + wanted.platform + "), this can take a while");
+
+        const auto stopwatch = Stopwatch {};
         const auto built = runChildBuild(build);
 
         if (!built.ok)
             return failure(built.error, built.details);
+
+        Log::progress("epm: built " + request.name + " (" + config + ") in "
+                      + formatDuration(stopwatch.elapsedSeconds()));
 
         const auto harvest = harvestConfig(build.buildDirectory, prefix, config);
 

@@ -15,6 +15,7 @@ nano_add_executable(epmTests
             Sha256Tests.cpp
             SourceCacheTests.cpp
             SpecTests.cpp
+            TimestampTests.cpp
         TARGETS epm-core)
 
 add_test(NAME get_epm_ranges

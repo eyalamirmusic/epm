@@ -389,7 +389,10 @@ function(epm_write_env)
 endfunction()
 
 # Runs the epm binary with `arguments` plus --cache and --verbose as asked for.
-# Fails the configure with `what` and the binary's output on a non-zero exit.
+# Its stdout goes straight to the console as it is written: without --verbose
+# that is only the "-- epm: building ..." progress of a dependency built into
+# the cache. stderr is kept for the failure message (and echoed with
+# EPM_VERBOSE). Fails the configure with `what` and stderr on a non-zero exit.
 function(epm_run_binary what)
     set(command "${EPM_EXECUTABLE}" ${ARGN})
 
@@ -401,25 +404,18 @@ function(epm_run_binary what)
 
     if (EPM_VERBOSE)
         list(APPEND command --verbose)
-        set(echo_args ECHO_OUTPUT_VARIABLE ECHO_ERROR_VARIABLE)
+        set(echo_args ECHO_ERROR_VARIABLE)
     endif ()
 
     # The project's directory, for paths given relative to it (a profile file).
     execute_process(COMMAND ${command}
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             RESULT_VARIABLE result
-            OUTPUT_VARIABLE output
             ERROR_VARIABLE error
             ${echo_args})
 
     if (NOT result EQUAL 0)
         string(STRIP "${error}" error)
-        string(STRIP "${output}" output)
-
-        if (output AND NOT EPM_VERBOSE)
-            set(error "${output}\n${error}")
-        endif ()
-
         message(FATAL_ERROR "epm: ${what} failed (exit ${result}): ${error}")
     endif ()
 endfunction()

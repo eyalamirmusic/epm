@@ -97,7 +97,10 @@ last two are built as Release) and an unknown `abiMatch`.
 Invocation: `epm resolve --request <json> --env <json> --response <cmake> [--cache <dir>]
 [--verbose]`. `--cache` is passed only when the CMake variable `EPM_CACHE` is set;
 `EPM_VERBOSE` adds `--verbose` and streams the binary's output (step lines plus the child
-builds' output, live). Non-zero exit with a one-line message on stderr means configure
+builds' output, live). Without it the binary's stdout carries only one
+`-- epm: building <name> from source into the cache (<Config>, <platform>), this can take
+a while` line before each config it builds and `-- epm: built <name> (<Config>) in 1m 42s`
+after; `epm.cmake` passes stdout through as it is written and captures only stderr. Non-zero exit with a one-line message on stderr means configure
 fails; when a child build failed, the last 40 lines of its output come first and the full
 log stays in the kept build dir (`epm-configure.log` / `epm-build.log`). `EPM_BUILD_MISSING_BINARIES` is a global `option()`
 (default ON) whose value lands in `buildMissingBinaries`. `GIT_TAG` is required; `NAME`
