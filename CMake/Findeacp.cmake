@@ -13,4 +13,5 @@ CPMAddPackage(
             "EACP_BUILD_GRAPHICS OFF"
             "EACP_BUILD_WEBVIEW OFF"
             "EACP_ENABLE_TESTS OFF"
-            "EACP_ENABLE_EXAMPLES OFF")
+            "EACP_ENABLE_EXAMPLES OFF"
+)
