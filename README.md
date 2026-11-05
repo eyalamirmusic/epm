@@ -271,7 +271,7 @@ the top-level project).
 
 [![CI](https://github.com/eyalamirmusic/epm/actions/workflows/build.yml/badge.svg)](https://github.com/eyalamirmusic/epm/actions/workflows/build.yml)
 
-Every push to `main` or `develop` and every pull request runs
+Every push to `main` and every pull request runs
 `.github/workflows/build.yml` (the `CI` workflow) on seven targets, all Release
 unity builds of epm and its dependencies (`EPM_CI_BUILD=ON`) with Ninja; the
 ones with a platform name are released:
