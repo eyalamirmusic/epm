@@ -18,7 +18,7 @@ namespace epm
 // whose objects are std::maps, so keys (options included) come out sorted.
 struct AbiFingerprint
 {
-    int schema = 3;
+    int schema = 4;
     std::string platform;
     std::string compilerId;
     std::string compilerVersion;
@@ -29,6 +29,11 @@ struct AbiFingerprint
     std::string osxArchitectures;
     std::string osxDeploymentTarget;
     std::string cxxStandard;
+
+    // The Android API level and STL; empty off Android, where the ABI is in
+    // the platform name.
+    std::string androidApi;
+    std::string androidStl;
 
     // The MSVC runtime library (msvcRuntimeOf); empty off the MSVC ABI.
     std::string msvcRuntime;
@@ -54,6 +59,8 @@ struct AbiFingerprint
                  osxArchitectures,
                  osxDeploymentTarget,
                  cxxStandard,
+                 androidApi,
+                 androidStl,
                  msvcRuntime,
                  toolchainFile,
                  toolchainFileHash,
@@ -65,9 +72,9 @@ struct AbiFingerprint
 // EPM_ABI_MATCH: how close an existing entry must be to be used.
 //   strict      every recorded field equal
 //   compatible  same platform, compiler id and major version, deployment
-//               target, C++ standard, options, source and toolchain file
-//               contents; compiler path, minor/patch version and processor
-//               may differ
+//               target, C++ standard, Android API level and STL, options,
+//               source and toolchain file contents; compiler path,
+//               minor/patch version and processor may differ
 //   any         same platform, options and source
 // Every policy also requires the same dependencies (deps) and, on the MSVC
 // ABI, the same runtime library (msvcRuntime): nothing links across those.

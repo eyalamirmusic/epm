@@ -36,7 +36,7 @@ bool copyEntry(const FilePath& from, const FilePath& to)
     return Files::copyFile(from, to);
 }
 
-HarvestResult failure(std::string error)
+HarvestResult harvestFailure(std::string error)
 {
     auto result = HarvestResult {};
     result.error = std::move(error);
@@ -267,8 +267,9 @@ HarvestResult harvestConfig(const FilePath& buildDirectory,
     const auto namesFile = prefix / ("export-" + config + ".cmake.names");
 
     if (!Files::isFile(exportFile) || !Files::isFile(namesFile))
-        return failure("the " + config + " build wrote no " + exportFile.fileName()
-                       + " (or its .names) - was epm-export.cmake injected?");
+        return harvestFailure("the " + config + " build wrote no "
+                              + exportFile.fileName()
+                              + " (or its .names) - was epm-export.cmake injected?");
 
     auto text = Files::readFile(exportFile);
     const auto generated = prefix / "gen" / config;
@@ -282,15 +283,15 @@ HarvestResult harvestConfig(const FilePath& buildDirectory,
         const auto from = buildDirectory / relative;
 
         if (!Files::isFile(from))
-            return failure(exportFile.fileName() + " lists " + from.str()
-                           + " in INTERFACE_SOURCES, which the build did not "
-                             "produce as a file");
+            return harvestFailure(exportFile.fileName() + " lists " + from.str()
+                                  + " in INTERFACE_SOURCES, which the build did not "
+                                    "produce as a file");
 
         const auto shared = sharedSourcePath(Files::readFile(from), relative);
         const auto to = prefix.str() + "/" + shared;
 
         if (!Files::isFile(FilePath {to}) && !Files::copyFile(from, FilePath {to}))
-            return failure("cannot copy " + from.str() + " to " + to);
+            return harvestFailure("cannot copy " + from.str() + " to " + to);
 
         text = replacePath(text, treePrefix + relative, to);
         Log::step("epm: shared " + shared);
@@ -302,11 +303,12 @@ HarvestResult harvestConfig(const FilePath& buildDirectory,
         const auto from = buildDirectory / relative;
 
         if (!Files::exists(from))
-            return failure(exportFile.fileName() + " references " + from.str()
-                           + ", which the build did not produce");
+            return harvestFailure(exportFile.fileName() + " references " + from.str()
+                                  + ", which the build did not produce");
 
         if (!copyEntry(from, generated / relative))
-            return failure("cannot copy " + from.str() + " into " + generated.str());
+            return harvestFailure("cannot copy " + from.str() + " into "
+                                  + generated.str());
 
         Log::step("epm: relocated " + relative);
         result.relocatedPaths.add(relative);
@@ -316,13 +318,13 @@ HarvestResult harvestConfig(const FilePath& buildDirectory,
         relocateBuildTree(text, buildDirectory.str(), generated.str());
 
     if (!writeTextFile(exportFile, relocated))
-        return failure("cannot rewrite " + exportFile.str());
+        return harvestFailure("cannot rewrite " + exportFile.str());
 
     result.targetNames = parseTargetNames(Files::readFile(namesFile));
     result.needsThreads = mentionsThreads(relocated);
 
     if (result.targetNames.empty())
-        return failure(namesFile.str() + " lists no targets");
+        return harvestFailure(namesFile.str() + " lists no targets");
 
     if (referencesBuildTree(relocated, buildDirectory.str()))
         result.warning = exportFile.fileName() + " still references "

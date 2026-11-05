@@ -1,63 +1,87 @@
-name: Build
+name: CI
 
-# Reusable: one job per target, called by ci.yml (tests + HelloEacp smoke) and
-# release.yml (tests + packaging). The matrix lives only here.
+# The one build matrix. Run directly on pushes to main and develop and on pull
+# requests (feature branches run it through a PR, or by hand with
+# workflow_dispatch): unit tests, the smoke tests and the packages as workflow
+# artifacts (so a broken install shows up before it reaches a release branch).
+# epm itself is configured with EPM_CI_BUILD (unity builds of epm and its
+# dependencies); the consumer smoke builds are not. release.yml calls it with
+# `release: true`: only the five released lanes (the `build` job), without the
+# smoke tests, for the packages it publishes. Tags are built only by
+# release.yml.
 on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
   workflow_call:
     inputs:
-      smoke:
+      release:
         description: >-
-          Build and run Examples/HelloEacp and HelloGraph with the just-built
-          epm (on macOS also HelloGraph under Xcode and NestedGraph for the
-          iOS simulator)
+          Called by release.yml: skip the smoke tests (the packages are built
+          either way)
         type: boolean
         default: false
-      package:
-        description: Install, archive and upload epm-<version>-<platform>
-        type: boolean
-        default: false
+
+# `inputs` is empty on a direct run, so `inputs.release` is set only when
+# release.yml calls this workflow. There `github` is the caller's (the workflow
+# name is "Release"), and the suffix keeps the group apart from release.yml's
+# own, which the call would otherwise deadlock on.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}${{ inputs.release && '-release' || '' }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
+  # The released lanes, the only jobs a release.yml call runs: every other job
+  # below is skipped there, so a lane that is not released never holds up a
+  # publish.
   build:
-    name: ${{ matrix.platform }}
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
-    continue-on-error: ${{ matrix.allow-failure == true }}
 
     strategy:
       fail-fast: false
       matrix:
-        # `platform` is the release asset suffix (epm-<version>-<platform>);
-        # the PATH smoke test downloads v0.1.1's asset by it, so keep the
-        # names stable. `cmake-flags` apply to epm and to the HelloEacp smoke
-        # build, `epm-flags` to epm only. Linux links with lld: eacp's
+        # `platform` is the release asset suffix (epm-<version>-<platform>),
+        # set only on the lanes that are packaged and released; the PATH smoke
+        # test downloads v0.1.1's asset by it, so keep the names stable.
+        # `cmake-flags` apply to epm and to the smoke builds, `epm-flags` to
+        # epm only. Linux links with lld: eacp's
         # set_default_target_setting turns on LTO for Release, and GNU ld
         # cannot read clang's bitcode archives without the LLVMgold plugin.
         # `source-smoke` runs the smoke tests in which get_epm.cmake builds a
         # release tag from source (Debug and Release, a few minutes), on one
         # job only.
         include:
-          - platform: macos-universal
+          - name: macOS Universal Binary
+            platform: macos-universal
             os: macos-15
             epm-flags: '-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"'
             source-smoke: true
-          - platform: windows-x64
+          - name: Windows Clang
+            platform: windows-x64
             os: windows-latest
             msvc-arch: x64
+            compiler: clang-cl
             cmake-flags: -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
-          - platform: windows-arm64
+          - name: Windows Clang ARM64
+            platform: windows-arm64
             os: windows-11-arm
             msvc-arch: arm64
+            compiler: clang-cl
             cmake-flags: -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
-          - platform: linux-x64
+          - name: Linux Clang
+            platform: linux-x64
             os: ubuntu-24.04
             cmake-flags: >-
               -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
               -DCMAKE_LINKER_TYPE=LLD
-          - platform: linux-arm64
+          - name: Linux Clang ARM64
+            platform: linux-arm64
             os: ubuntu-24.04-arm
             cmake-flags: >-
               -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
@@ -67,7 +91,8 @@ jobs:
       run:
         shell: bash
 
-    steps:
+    # Shared with build-msvc below through the YAML anchor.
+    steps: &matrix-steps
       - uses: actions/checkout@v7
 
       - name: Install Linux dependencies
@@ -76,6 +101,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang lld ninja-build libcurl4-openssl-dev
 
+      # cl and clang-cl alike need the developer prompt's environment, and so
+      # do the recipes epm compiles with them.
       - name: Set up the MSVC environment
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
@@ -99,7 +126,12 @@ jobs:
           cmake --version
           echo "ninja $(ninja --version)"
           if [ "$RUNNER_OS" = "Windows" ]; then
-            where clang-cl && clang-cl --version
+            where ${{ matrix.compiler }}
+            if [ "${{ matrix.compiler }}" = "clang-cl" ]; then
+              clang-cl --version
+            else
+              cl 2>&1 | head -n 1 || true
+            fi
           else
             clang++ --version
           fi
@@ -120,7 +152,7 @@ jobs:
 
       - name: Configure
         run: >
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DEPM_CI_BUILD=ON
           ${{ matrix.cmake-flags }} ${{ matrix.epm-flags }}
 
       - name: Build
@@ -135,8 +167,10 @@ jobs:
             [[ "$archs" == *arm64* && "$archs" == *x86_64* ]]
           fi
 
+      # The iOS and Android end-to-end tests run in jobs of their own below,
+      # with the SDK and the NDK they need installed and checked.
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure -E '^epm_graph_(ios|android)$'
 
       # (a) The full consumer path with this epm: get_epm.cmake takes
       # EPM_EXECUTABLE and, finding no module installed beside it, the
@@ -145,7 +179,7 @@ jobs:
       # In-tree on purpose: the bare build-tree epm needs the checkout's module,
       # and EPM_EXECUTABLE keeps get_epm.cmake from building the checkout.
       - name: HelloEacp smoke test
-        if: inputs.smoke
+        if: ${{ !inputs.release }}
         run: |
           cmake -S Examples/HelloEacp -B build-hello -G Ninja -DCMAKE_BUILD_TYPE=Release \
             "-DEPM_EXECUTABLE=$ROOT/build/Apps/epm/epm$EXE_SUFFIX" \
@@ -156,17 +190,17 @@ jobs:
 
       # (a2) The recipe path with this epm, on every platform: epm compiles
       # HelloGraph's epm.cpp with the compiler that built it (cl's command
-      # line on Windows) and runs it, eacp is built into (a)'s cache, and
-      # epm_add_recipe builds the recipe as a target of the consumer, whose
-      # -configure target runs the whole configure again in it.
+      # line on Windows, for cl and clang-cl) and runs it, eacp is built into
+      # (a)'s cache, and epm_add_recipe builds the recipe as a target of the
+      # consumer, whose -configure target runs the whole configure again in it.
       - name: HelloGraph smoke test
-        if: inputs.smoke
+        if: ${{ !inputs.release }}
         run: |
           cmake -S Examples/HelloGraph -B build-hello-graph -G Ninja -DCMAKE_BUILD_TYPE=Release \
             "-DEPM_EXECUTABLE=$ROOT/build/Apps/epm/epm$EXE_SUFFIX" \
             "-DEPM_CACHE=$ROOT/.epm-cache" -DEPM_VERBOSE=ON \
             ${{ matrix.cmake-flags }}
-          ls "$ROOT/.epm-cache"/recipe/*/epm-recipe$EXE_SUFFIX
+          ls "$ROOT/.epm-cache"/recipe/*/epm-recipe"$EXE_SUFFIX"
           cmake --build build-hello-graph
           "./build-hello-graph/hello$EXE_SUFFIX"
           [ -f "build-hello-graph/HelloGraphRecipe$EXE_SUFFIX" ]
@@ -178,7 +212,7 @@ jobs:
       # gains a Debug build, and the Debug hello links it with the static
       # debug runtime. Elsewhere a Debug build links the Release entry.
       - name: HelloGraph Debug smoke test
-        if: inputs.smoke
+        if: ${{ !inputs.release }}
         run: |
           cmake -S Examples/HelloGraph -B build-hello-graph-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug \
             "-DEPM_EXECUTABLE=$ROOT/build/Apps/epm/epm$EXE_SUFFIX" \
@@ -198,9 +232,11 @@ jobs:
       # The consumer smoke tests below share one cache, $CONSUMER_CACHE: (b)
       # starts it empty, (c) deletes only its tool/ directory and (d) reuses
       # the tool entry (c) built, so each reuses the eacp build of the step
-      # before. (c) and (d) run on the `source-smoke` job only: get_epm.cmake
-      # never downloads a binary, so a consumer without an installed epm builds
-      # the newest release tag from source, Debug and Release.
+      # before. They run on the released lanes only, as (b) needs a v0.1.1
+      # asset for the lane's platform, and (c) and (d) on the `source-smoke`
+      # job only: get_epm.cmake never downloads a binary, so a consumer without
+      # an installed epm builds the newest release tag from source, Debug and
+      # Release.
       #
       # They configure a vendored copy of HelloEacp, not Examples/HelloEacp: a
       # get_epm.cmake inside the epm checkout builds that checkout by default,
@@ -208,7 +244,7 @@ jobs:
       # steps test. The copy keeps include(../../CMake/get_epm.cmake) working with
       # no epm CMakeLists.txt above CMake/, as in a real consumer.
       - name: Stage a vendored HelloEacp
-        if: inputs.smoke
+        if: ${{ !inputs.release && matrix.platform }}
         run: |
           temp="$(cygpath -m "$RUNNER_TEMP" 2>/dev/null || echo "$RUNNER_TEMP")"
           smoke="$temp/smoke"
@@ -227,7 +263,7 @@ jobs:
       # (b) An epm 0.1.1 installed on PATH (a release archive: bin/ and share/)
       # is preferred when no range is given.
       - name: HelloEacp PATH smoke test
-        if: inputs.smoke
+        if: ${{ !inputs.release && matrix.platform }}
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then ext=zip; else ext=tar.gz; fi
           curl -fsSL -o "epm-0.1.1.$ext" \
@@ -247,7 +283,7 @@ jobs:
       # (c) A consumer with nothing set and no epm on PATH: get_epm.cmake lists
       # the release tags and builds the newest into <cache>/tool/v<x.y.z>/.
       - name: HelloEacp release source build smoke test
-        if: inputs.smoke && matrix.source-smoke
+        if: ${{ !inputs.release && matrix.platform && matrix.source-smoke }}
         run: |
           if command -v epm; then
             echo "::error::an epm is on PATH; this test needs none"
@@ -268,7 +304,7 @@ jobs:
       # out: the release tag (c) built is in range and used from the cache,
       # with nothing built.
       - name: HelloEacp version range smoke test
-        if: inputs.smoke && matrix.source-smoke
+        if: ${{ !inputs.release && matrix.platform && matrix.source-smoke }}
         run: |
           export PATH="$PWD/.epm-path/bin:$PATH"
           cmake -S "$VENDORED_HELLO" -B build-hello-range -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -286,72 +322,39 @@ jobs:
           cmake --build build-hello-range
           "./build-hello-range/hello$EXE_SUFFIX"
 
-      # The Apple smoke tests below share one cache, $APPLE_CACHE, which (e)
-      # starts empty and (f) reuses for eacp's source.
-      #
       # (e) An Xcode consumer with nothing set: Examples/HelloGraph's
       # get_epm.cmake is inside this checkout, so it builds the checkout into
       # <cache>/tool/local-<hash>/, with Ninja whatever the consumer's
-      # generator, then takes eacp prebuilt (Release).
+      # generator, then takes eacp prebuilt (Release), all into a cache of its
+      # own that starts empty.
       - name: HelloGraph Xcode smoke test
-        if: inputs.smoke && runner.os == 'macOS'
+        if: ${{ !inputs.release && runner.os == 'macOS' }}
         run: |
-          echo "APPLE_CACHE=$ROOT/.epm-cache-apple" >> "$GITHUB_ENV"
-          rm -rf "$ROOT/.epm-cache-apple"
+          cache="$ROOT/.epm-cache-apple"
+          rm -rf "$cache"
           cmake -S Examples/HelloGraph -B build-hello-xcode -G Xcode \
-            "-DEPM_CACHE=$ROOT/.epm-cache-apple" 2>&1 | tee configure-xcode.log
+            "-DEPM_CACHE=$cache" 2>&1 | tee configure-xcode.log
           grep -Eq 'epm: building epm from .* into .*/tool/local-[0-9a-f]+ \(Debug and Release; first time only\)' configure-xcode.log
-          if ! ls -d "$ROOT/.epm-cache-apple"/tool/local-*/build-ninja; then
+          if ! ls -d "$cache"/tool/local-*/build-ninja; then
             echo "::error::get_epm.cmake did not build epm with Ninja under an Xcode consumer"
             exit 1
           fi
           cmake --build build-hello-xcode --config Release
           ./build-hello-xcode/Release/hello
 
-      # (f) An iOS simulator consumer under Xcode, without a toolchain file:
-      # NestedGraph's App, with the sibling Lib from source and eacp prebuilt
-      # (Release only, which the Debug configuration links as well) for the
-      # simulator's architectures. The app has to be a simulator binary for
-      # each of them, and eacp's cache entry an ios-simulator one.
-      - name: NestedGraph iOS simulator smoke test
-        if: inputs.smoke && runner.os == 'macOS'
-        run: |
-          cmake -S Examples/NestedGraph/App -B build-nested-ios -G Xcode \
-            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphonesimulator \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
-            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
-            "-DEPM_EXECUTABLE=$ROOT/build/Apps/epm/epm" \
-            "-DEPM_CACHE=$APPLE_CACHE" -DEPM_VERBOSE=ON
-          cmake --build build-nested-ios --config Release
-          app=build-nested-ios/Release-iphonesimulator/app.app/app
-          archs="$(lipo -archs "$app")"
-          echo "app architectures: $archs"
-          for arch in $archs; do
-            build_version="$(vtool -arch "$arch" -show-build "$app")"
-            echo "$build_version"
-            if ! grep -q 'platform IOSSIMULATOR' <<< "$build_version"; then
-              echo "::error::app ($arch) is not an iOS simulator binary"
-              exit 1
-            fi
-          done
-          if ! ls -d "$APPLE_CACHE"/bin/eacp/ios-simulator-*/; then
-            echo "::error::no ios-simulator entry for eacp in $APPLE_CACHE/bin/eacp"
-            exit 1
-          fi
-
       # A usable prefix holds the recipe libraries of both configurations
       # (lib/Debug/ and lib/Release/), so the package needs a Debug build of
       # epm beside the Release one in `build`. Ninja is single-config: a second
       # build directory, without the tests.
       - name: Build Debug for the package
-        if: inputs.package
+        if: matrix.platform
         run: |
           cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DEPM_ENABLE_TESTS=OFF \
-            ${{ matrix.cmake-flags }} ${{ matrix.epm-flags }}
+            -DEPM_CI_BUILD=ON ${{ matrix.cmake-flags }} ${{ matrix.epm-flags }}
           cmake --build build-debug --parallel
 
       - name: Package
-        if: inputs.package
+        if: matrix.platform
         run: |
           version="$(sed -n 's/^project(epm VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
 
@@ -394,9 +397,219 @@ jobs:
           ls -l dist
 
       - name: Upload the package
-        if: inputs.package
+        if: matrix.platform
         uses: actions/upload-artifact@v7
         with:
           name: epm-${{ matrix.platform }}
           path: dist/*
           if-no-files-found: error
+
+  # The same steps with cl rather than clang-cl, on direct runs only: the
+  # released Windows binaries are clang-cl's, so these lanes set no `platform`
+  # and package nothing.
+  build-msvc:
+    if: ${{ !inputs.release }}
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # The keys the shared steps read, empty here: no `platform`, so no
+        # package and no PATH smoke test (its v0.1.1 assets are clang-cl's).
+        include:
+          - name: Windows MSVC
+            platform: ''
+            os: windows-latest
+            msvc-arch: x64
+            compiler: cl
+            cmake-flags: -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
+            epm-flags: ''
+            source-smoke: false
+          - name: Windows MSVC ARM64
+            platform: ''
+            os: windows-11-arm
+            msvc-arch: arm64
+            compiler: cl
+            cmake-flags: -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
+            epm-flags: ''
+            source-smoke: false
+
+    defaults:
+      run:
+        shell: bash
+
+    steps: *matrix-steps
+
+  # Prebuilt packages for an iOS simulator consumer, with epm built for the
+  # host: Tests/GraphIos.cmake (epm_graph_ios, which the matrix leaves out),
+  # which has to run rather than skip itself, and then NestedGraph's App under
+  # Xcode, without a toolchain file. Direct runs only.
+  build-ios:
+    if: ${{ !inputs.release }}
+    name: iOS Simulator
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up paths
+        run: |
+          {
+            echo "ROOT=$PWD"
+            echo "CPM_SOURCE_CACHE=$PWD/.cpm-cache"
+          } >> "$GITHUB_ENV"
+
+      - name: Show the toolchain
+        run: |
+          cmake --version
+          echo "ninja $(ninja --version)"
+          xcodebuild -version
+          xcrun --sdk iphonesimulator --show-sdk-path
+
+      - name: Resolve eacp main
+        id: eacp
+        run: |
+          echo "sha=$(git ls-remote https://github.com/eyalamirmusic/eacp refs/heads/main | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache CPM sources
+        uses: actions/cache@v6
+        with:
+          path: .cpm-cache
+          key: cpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMake/Find*.cmake') }}-eacp-${{ steps.eacp.outputs.sha }}
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DEPM_CI_BUILD=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      # A skip (no simulator SDK, no git) passes in ctest; here it fails.
+      - name: Test
+        run: |
+          ctest --test-dir build -R '^epm_graph_ios$' --output-on-failure --no-tests=error \
+            2>&1 | tee ctest-ios.log
+          if grep -Eq 'Skipped|Not Run' ctest-ios.log; then
+            echo "::error::epm_graph_ios did not run"
+            exit 1
+          fi
+
+      # NestedGraph's App, with the sibling Lib from source and eacp prebuilt
+      # (Release only, which the Debug configuration links as well) for the
+      # simulator's architectures, into a cache that starts empty. The app has
+      # to be a simulator binary for each of them, and eacp's cache entry an
+      # ios-simulator one.
+      - name: NestedGraph iOS simulator smoke test
+        run: |
+          cache="$ROOT/.epm-cache-ios"
+          rm -rf "$cache"
+          cmake -S Examples/NestedGraph/App -B build-nested-ios -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphonesimulator \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+            "-DEPM_EXECUTABLE=$ROOT/build/Apps/epm/epm" \
+            "-DEPM_CACHE=$cache" -DEPM_VERBOSE=ON
+          cmake --build build-nested-ios --config Release
+          app=build-nested-ios/Release-iphonesimulator/app.app/app
+          archs="$(lipo -archs "$app")"
+          echo "app architectures: $archs"
+          for arch in $archs; do
+            build_version="$(vtool -arch "$arch" -show-build "$app")"
+            echo "$build_version"
+            if ! grep -q 'platform IOSSIMULATOR' <<< "$build_version"; then
+              echo "::error::app ($arch) is not an iOS simulator binary"
+              exit 1
+            fi
+          done
+          if ! ls -d "$cache"/bin/eacp/ios-simulator-*/; then
+            echo "::error::no ios-simulator entry for eacp in $cache/bin/eacp"
+            exit 1
+          fi
+
+  # Prebuilt packages for an Android consumer, with epm built for the host:
+  # Tests/GraphAndroid.cmake (epm_graph_android, which the matrix leaves out),
+  # which has to run rather than skip itself, against the NDK installed here.
+  # Direct runs only.
+  build-android:
+    if: ${{ !inputs.release }}
+    name: Android arm64-v8a
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NDK_VERSION: 30.0.16248370
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # The runner's SDK carries sdkmanager and a few older NDKs, and names one
+      # of them in ANDROID_NDK_HOME and ANDROID_NDK_ROOT; both name the one
+      # installed here instead. epm itself is a host build: clang, lld (see the
+      # matrix's Linux note) and libcurl for eacp-network.
+      - name: Install the host toolchain and the NDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld ninja-build libcurl4-openssl-dev
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION"
+          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
+          if [ ! -d "$ndk" ]; then
+            echo "::error::no NDK at $ndk"
+            exit 1
+          fi
+          {
+            echo "ANDROID_NDK_HOME=$ndk"
+            echo "ANDROID_NDK_ROOT=$ndk"
+          } >> "$GITHUB_ENV"
+
+      - name: Set up paths
+        run: |
+          {
+            echo "ROOT=$PWD"
+            echo "CPM_SOURCE_CACHE=$PWD/.cpm-cache"
+          } >> "$GITHUB_ENV"
+
+      - name: Show the toolchain
+        run: |
+          cmake --version
+          echo "ninja $(ninja --version)"
+          clang++ --version
+          echo "NDK: $ANDROID_NDK_HOME"
+          cat "$ANDROID_NDK_HOME/source.properties"
+
+      - name: Resolve eacp main
+        id: eacp
+        run: |
+          echo "sha=$(git ls-remote https://github.com/eyalamirmusic/eacp refs/heads/main | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache CPM sources
+        uses: actions/cache@v6
+        with:
+          path: .cpm-cache
+          key: cpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMake/Find*.cmake') }}-eacp-${{ steps.eacp.outputs.sha }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DEPM_CI_BUILD=ON
+          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_LINKER_TYPE=LLD
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      # A skip (no NDK, no git) passes in ctest; here it fails.
+      - name: Test
+        run: |
+          ctest --test-dir build -R '^epm_graph_android$' --output-on-failure --no-tests=error \
+            2>&1 | tee ctest-android.log
+          if grep -Eq 'Skipped|Not Run' ctest-android.log; then
+            echo "::error::epm_graph_android did not run"
+            exit 1
+          fi

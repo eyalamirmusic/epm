@@ -104,7 +104,22 @@ Vector<std::string> configureArguments(const ChildBuild& build)
         addDefinition(arguments, "CMAKE_OSX_SYSROOT", env.osxSysroot);
 
         if (env.systemName == "Android")
+        {
             addDefinition(arguments, "CMAKE_ANDROID_ARCH_ABI", env.androidAbi);
+            addDefinition(arguments, "CMAKE_ANDROID_NDK", env.androidNdk);
+            addDefinition(arguments, "CMAKE_SYSTEM_VERSION", env.androidApi);
+            addDefinition(arguments, "CMAKE_ANDROID_STL_TYPE", env.androidStl);
+        }
+    }
+    else if (env.systemName == "Android" && !env.toolchainFile.empty())
+    {
+        // The NDK's toolchain file reads these, and otherwise defaults them
+        // (armeabi-v7a, its minimum API level, c++_static).
+        addDefinition(arguments, "ANDROID_ABI", env.androidAbi);
+        addDefinition(arguments,
+                      "ANDROID_PLATFORM",
+                      env.androidApi.empty() ? "" : "android-" + env.androidApi);
+        addDefinition(arguments, "ANDROID_STL", env.androidStl);
     }
 
     // A C++-only consumer names no C compiler. CMake refuses a child build

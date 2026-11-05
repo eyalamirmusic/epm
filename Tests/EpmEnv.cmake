@@ -1,6 +1,7 @@
 # Self-test of env.json's Apple architecture and deployment-target fallbacks in
 # CMake/epm.cmake (epm_osx_architectures, epm_osx_deployment_target), and of
-# its MSVC runtime library (epm_msvc_runtime).
+# its MSVC runtime library (epm_msvc_runtime) and Android settings
+# (epm_android_setting).
 #
 #   cmake -P Tests/EpmEnv.cmake
 
@@ -91,6 +92,37 @@ foreach (case IN ITEMS "MultiThreaded=static" "MultiThreadedDebug=static"
         set(failures 1)
     endif ()
 endforeach ()
+
+# Android's settings, for `expect`, which passes only the output variable.
+foreach (setting IN ITEMS abi api ndk stl)
+    cmake_language(EVAL CODE "
+        function(epm_android_${setting} out_var)
+            epm_android_setting(${setting} value)
+            set(\${out_var} \"\${value}\" PARENT_SCOPE)
+        endfunction()")
+endforeach ()
+
+# CMake's own Android support.
+set(cmake_android CMAKE_SYSTEM_NAME=Android CMAKE_ANDROID_ARCH_ABI=arm64-v8a
+        CMAKE_SYSTEM_VERSION=26 CMAKE_ANDROID_NDK=/sdk/ndk/30
+        CMAKE_ANDROID_STL_TYPE=c++_static)
+expect(epm_android_abi "arm64-v8a" ${cmake_android})
+expect(epm_android_api "26" ${cmake_android})
+expect(epm_android_ndk "/sdk/ndk/30" ${cmake_android})
+expect(epm_android_stl "c++_static" ${cmake_android})
+
+# The NDK's legacy toolchain file, whose CMAKE_SYSTEM_VERSION is 1.
+set(legacy_toolchain CMAKE_SYSTEM_NAME=Android ANDROID_ABI=x86_64
+        CMAKE_SYSTEM_VERSION=1 ANDROID_PLATFORM_LEVEL=28 ANDROID_NDK=/sdk/ndk/30
+        ANDROID_STL=c++_shared)
+expect(epm_android_abi "x86_64" ${legacy_toolchain})
+expect(epm_android_api "28" ${legacy_toolchain})
+expect(epm_android_ndk "/sdk/ndk/30" ${legacy_toolchain})
+expect(epm_android_stl "c++_shared" ${legacy_toolchain})
+
+# Nothing off Android.
+expect(epm_android_api "" CMAKE_SYSTEM_NAME=Darwin CMAKE_SYSTEM_VERSION=25.0.0)
+expect(epm_android_abi "" CMAKE_SYSTEM_NAME=Linux ANDROID_ABI=arm64-v8a)
 
 if (failures)
     message(FATAL_ERROR "epm env checks failed")

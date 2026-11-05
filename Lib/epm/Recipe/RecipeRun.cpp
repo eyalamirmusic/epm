@@ -15,14 +15,14 @@ using namespace eacp;
 
 namespace
 {
-constexpr auto failureLines = 20;
+constexpr auto runFailureLines = 20;
 
 RecipeRun runFailure(std::string error, std::string_view output = {})
 {
     auto run = RecipeRun {};
     run.error = std::move(error);
 
-    if (const auto tail = lastLines(output, failureLines); !tail.empty())
+    if (const auto tail = lastLines(output, runFailureLines); !tail.empty())
         run.error += "\n" + tail;
 
     return run;

@@ -269,29 +269,40 @@ the top-level project).
 
 ## Continuous integration
 
-[![CI](https://github.com/eyalamirmusic/epm/actions/workflows/ci.yml/badge.svg)](https://github.com/eyalamirmusic/epm/actions/workflows/ci.yml)
+[![CI](https://github.com/eyalamirmusic/epm/actions/workflows/build.yml/badge.svg)](https://github.com/eyalamirmusic/epm/actions/workflows/build.yml)
 
-Every push and pull request runs `.github/workflows/ci.yml` on five targets, all
-Release builds with Ninja:
+Every push to `main` or `develop` and every pull request runs
+`.github/workflows/build.yml` (the `CI` workflow) on seven targets, all Release
+unity builds of epm and its dependencies (`EPM_CI_BUILD=ON`) with Ninja; the
+ones with a platform name are released:
 
-| Platform          | Runner             | Compiler                            |
-|-------------------|--------------------|-------------------------------------|
-| `macos-universal` | `macos-15`         | Apple clang, `arm64;x86_64`         |
-| `windows-x64`     | `windows-latest`   | clang-cl (MSVC ABI)                 |
-| `windows-arm64`   | `windows-11-arm`   | clang-cl (MSVC ABI)                 |
-| `linux-x64`       | `ubuntu-24.04`     | clang, lld                          |
-| `linux-arm64`     | `ubuntu-24.04-arm` | clang, lld                          |
+| Job                    | Platform          | Runner             | Compiler                    |
+|------------------------|-------------------|--------------------|-----------------------------|
+| macOS Universal Binary | `macos-universal` | `macos-15`         | Apple clang, `arm64;x86_64` |
+| Windows Clang          | `windows-x64`     | `windows-latest`   | clang-cl (MSVC ABI)         |
+| Windows Clang ARM64    | `windows-arm64`   | `windows-11-arm`   | clang-cl (MSVC ABI)         |
+| Windows MSVC           |                   | `windows-latest`   | cl                          |
+| Windows MSVC ARM64     |                   | `windows-11-arm`   | cl                          |
+| Linux Clang            | `linux-x64`       | `ubuntu-24.04`     | clang, lld                  |
+| Linux Clang ARM64      | `linux-arm64`     | `ubuntu-24.04-arm` | clang, lld                  |
 
 Each job builds epm, runs `ctest`, then configures, builds and runs
-`Examples/HelloEacp` through `get_epm.cmake`: (a) with the binary it just built
-(`MODE auto`, so eacp is fetched and built, Release only, into a cache inside
-the workspace); then, from a vendored copy of the example, (b) with the epm
-0.1.1 release unpacked onto `PATH`, which must be used. On the macOS job only,
-(c) with nothing set and no epm on `PATH`, which must build the newest release
-tag from source, Debug and Release, and (d) with 0.1.1 on `PATH` again and
-`EPM_VERSION=0.1.2`, which must skip it and use the entry (c) built, building
-nothing. The package (Debug and Release installed into one prefix) is uploaded
-as a workflow artifact.
+`Examples/HelloEacp` and `Examples/HelloGraph` with the binary it just built
+(a) (`MODE auto`, so eacp is fetched and built, Release only, into a cache
+inside the workspace). On the released lanes, from a vendored copy of the
+example, (b) with the epm 0.1.1 release unpacked onto `PATH`, which must be
+used. On the macOS job only, (c) with nothing set and no epm on `PATH`, which
+must build the newest release tag from source, Debug and Release, (d) with
+0.1.1 on `PATH` again and `EPM_VERSION=0.1.2`, which must skip it and use the
+entry (c) built, building nothing, and HelloGraph under Xcode. A released
+lane's package (Debug and Release installed into one prefix) is uploaded as a
+workflow artifact.
+
+Two more jobs build epm for the host and run one end-to-end test each, which
+must run rather than skip itself: `iOS Simulator` (`macos-15`,
+`epm_graph_ios`, then `Examples/NestedGraph` for the iOS simulator under
+Xcode) and `Android arm64-v8a` (`ubuntu-latest`, `epm_graph_android` against
+an NDK installed with `sdkmanager`).
 
 `.github/workflows/release.yml` builds the same packages on pushes to `main` and
 `release/**` and on `v*` tags (the list is at the top of the file):
@@ -301,8 +312,9 @@ prefix and put on `PATH`, plus `SHA256SUMS` and a copy of `get_epm.cmake`.
 `get_epm.cmake` downloads none of them. A branch push replaces the assets of
 the rolling [`nightly`](https://github.com/eyalamirmusic/epm/releases/tag/nightly)
 prerelease; a `v*` tag publishes them on the
-[release](https://github.com/eyalamirmusic/epm/releases) of that tag. Both
-workflows share their build matrix through `.github/workflows/build.yml`.
+[release](https://github.com/eyalamirmusic/epm/releases) of that tag. It calls
+`.github/workflows/build.yml` with `release: true`, which runs only the five
+released lanes, without the smoke tests, so the matrix lives in one place.
 
 ### Releasing
 

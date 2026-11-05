@@ -163,7 +163,15 @@ longer-term design and background.
   `-DCMAKE_SYSTEM_NAME=iOS` without a toolchain file, under Xcode and Ninja:
   the child builds get the target system, the entries are
   `ios-simulator-<arch>` simulator archives and the app links; skipped off
-  macOS and without the simulator SDK) and
+  macOS and without the simulator SDK), `GraphAndroid.cmake`
+  (ctest `epm_graph_android`: the same fixtures for an Android consumer under
+  Ninja, once through CMake's own Android support (arm64-v8a, API 26,
+  c++_static) and once through the NDK's toolchain file (x86_64, API 28,
+  c++_shared): the child builds get the ABI, API level, NDK and STL, the
+  entries are `android-<abi>` ELF archives and the app links; the NDK from
+  `ANDROID_NDK_HOME`, `ANDROID_NDK_ROOT`, else the newest `ndk/*` under
+  `ANDROID_HOME`/`ANDROID_SDK_ROOT`/Android Studio's SDK; skipped without
+  one, git or ninja, and on Windows hosts) and
   `InstallRoundTrip.cmake` (ctest `epm_install_round_trip`: the installed epm
   through a symlink (the binary itself on Windows), `recipe-sdk`, `describe` and a
   `configure` of an empty recipe against the prefix only, and which `bin/epm`
@@ -231,6 +239,15 @@ delete a published tag.
 
 `EPM_ENABLE_TESTS` defaults ON when epm is the top-level project.
 `EPM_VERBOSE_CONFIGURE=ON` brings back the configure detail hidden by default.
+`EPM_UNITY_BUILD=ON` compiles epm's own targets (`epm-recipe`, `epm`,
+`epmTests`, not its dependencies) as unity builds; it is OFF by default, for
+the per-file `compile_commands.json`, and ON in get_epm's builds, so file-local
+names must be unique across each target's sources.
+`EPM_CI_BUILD=ON` (OFF by default, ON for epm's own configures in CI and
+`Docker/run-linux-ci.sh`) mirrors CI's flag set, as eacp's `EACP_CI_BUILD`:
+`EPM_UNITY_BUILD`, `EACP_UNITY_BUILD`, `MIRO_UNITY_BUILD` and `UNITY_BUILD`
+on ResEmbed (fmt, miniz and NanoTest are one source per library,
+ea_data_structures header-only).
 Use a local eacp with `-DCPM_eacp_SOURCE=/path/to/eacp`.
 
 ## Code style

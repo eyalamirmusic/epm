@@ -184,7 +184,7 @@ auto tFpMsvcRuntime = test("Fingerprint/msvcRuntime") = []
     env.cxxCompilerFrontend = "MSVC";
 
     const auto base = fingerprintWith(env);
-    check(base.schema == 3);
+    check(base.schema == 4);
     check(base.msvcRuntime == staticMsvcRuntime);
     check(fingerprintWith(fingerprintEnv()).msvcRuntime.empty());
 
@@ -197,6 +197,40 @@ auto tFpMsvcRuntime = test("Fingerprint/msvcRuntime") = []
         check(!abiMatches(base, dynamic, policy));
 
     check(abiNote(base, dynamic) == "built with a different msvcRuntime");
+};
+
+// On Android the ABI is in the platform name; the API level and STL are
+// compared under strict and compatible, not under any.
+auto tFpAndroid = test("Fingerprint/android") = []
+{
+    auto env = fingerprintEnv();
+    env.systemName = "Android";
+    env.systemProcessor = "aarch64";
+    env.cxxCompilerId = "Clang";
+    env.androidAbi = "arm64-v8a";
+    env.androidApi = "26";
+    env.androidStl = "c++_static";
+
+    const auto base = fingerprintWith(env);
+    check(base.platform == "android-arm64-v8a");
+    check(base.androidApi == "26");
+    check(base.androidStl == "c++_static");
+    check(fingerprintWith(fingerprintEnv()).androidApi.empty());
+
+    auto api = env;
+    api.androidApi = "28";
+    auto stl = env;
+    stl.androidStl = "c++_shared";
+
+    for (const auto& other: {fingerprintWith(api), fingerprintWith(stl)})
+    {
+        check(fingerprintId(other) != fingerprintId(base));
+        check(!abiMatches(base, other, AbiMatch::compatible));
+        check(abiMatches(base, other, AbiMatch::any));
+    }
+
+    check(abiNote(base, fingerprintWith(api))
+          == "built with a different androidApi");
 };
 
 auto tFpParse = test("Fingerprint/parseAbiMatch") = []

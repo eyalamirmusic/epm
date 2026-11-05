@@ -378,6 +378,29 @@ function(epm_osx_deployment_target out_var)
     set(${out_var} "${target}" PARENT_SCOPE)
 endfunction()
 
+# env.json's Android `setting` (abi, api, ndk or stl), empty off Android. CMake's
+# own Android support sets CMAKE_ANDROID_ARCH_ABI, CMAKE_SYSTEM_VERSION (the API
+# level), CMAKE_ANDROID_NDK and CMAKE_ANDROID_STL_TYPE; the NDK's legacy
+# toolchain file, its default, ANDROID_ABI, ANDROID_PLATFORM_LEVEL (with
+# CMAKE_SYSTEM_VERSION 1), ANDROID_NDK and ANDROID_STL.
+function(epm_android_setting setting out_var)
+    set(abi CMAKE_ANDROID_ARCH_ABI ANDROID_ABI)
+    set(api ANDROID_PLATFORM_LEVEL CMAKE_SYSTEM_VERSION)
+    set(ndk CMAKE_ANDROID_NDK ANDROID_NDK)
+    set(stl CMAKE_ANDROID_STL_TYPE ANDROID_STL)
+    set(value "")
+
+    if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+        foreach (variable IN LISTS ${setting})
+            if (value STREQUAL "")
+                set(value "${${variable}}")
+            endif ()
+        endforeach ()
+    endif ()
+
+    set(${out_var} "${value}" PARENT_SCOPE)
+endfunction()
+
 # The compiler is cl or clang-cl (CMAKE_CXX_COMPILER_FRONTEND_VARIANT): the MSVC
 # ABI, with its runtime library rules.
 function(epm_is_msvc_abi out_var)
@@ -539,15 +562,14 @@ function(epm_write_env)
     epm_osx_deployment_target(deployment_target)
     epm_json_set_string(json osxDeploymentTarget "${deployment_target}")
 
-    # CMake's own Android support sets CMAKE_ANDROID_ARCH_ABI; the NDK's
-    # legacy toolchain file only ANDROID_ABI.
-    set(android_abi "${CMAKE_ANDROID_ARCH_ABI}")
-
-    if (NOT android_abi)
-        set(android_abi "${ANDROID_ABI}")
-    endif ()
-
-    epm_json_set_string(json androidAbi "${android_abi}")
+    foreach (pair IN ITEMS androidAbi=abi androidApi=api androidNdk=ndk
+            androidStl=stl)
+        string(REPLACE "=" ";" pair "${pair}")
+        list(GET pair 0 key)
+        list(GET pair 1 setting)
+        epm_android_setting(${setting} value)
+        epm_json_set_string(json ${key} "${value}")
+    endforeach ()
 
     # The runtime library the dependencies must share with the project's
     # targets. Under the old policy the variable never reaches a target, and

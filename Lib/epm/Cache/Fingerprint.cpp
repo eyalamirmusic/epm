@@ -46,6 +46,8 @@ AbiFingerprint fingerprintFor(const Request& request,
     fingerprint.osxArchitectures = env.osxArchitectures;
     fingerprint.osxDeploymentTarget = env.osxDeploymentTarget;
     fingerprint.cxxStandard = env.cxxStandard;
+    fingerprint.androidApi = env.androidApi;
+    fingerprint.androidStl = env.androidStl;
     fingerprint.msvcRuntime = msvcRuntimeOf(env);
     fingerprint.toolchainFile = env.toolchainFile;
     fingerprint.options = request.options;
@@ -97,6 +99,8 @@ bool abiMatches(const AbiFingerprint& recorded,
            && recorded.compilerMajor == wanted.compilerMajor
            && recorded.osxDeploymentTarget == wanted.osxDeploymentTarget
            && recorded.cxxStandard == wanted.cxxStandard
+           && recorded.androidApi == wanted.androidApi
+           && recorded.androidStl == wanted.androidStl
            && recorded.toolchainFileHash == wanted.toolchainFileHash;
 }
 
@@ -132,6 +136,8 @@ std::optional<std::string> abiNote(const AbiFingerprint& recorded,
             recorded.osxDeploymentTarget,
             current.osxDeploymentTarget);
     compare("cxxStandard", recorded.cxxStandard, current.cxxStandard);
+    compare("androidApi", recorded.androidApi, current.androidApi);
+    compare("androidStl", recorded.androidStl, current.androidStl);
     compare("msvcRuntime", recorded.msvcRuntime, current.msvcRuntime);
     compare("toolchainFile", recorded.toolchainFile, current.toolchainFile);
     compare(

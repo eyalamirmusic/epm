@@ -10,6 +10,19 @@ option(LEAF_EXTRA "" OFF)
 # whose build tree epm deletes after the harvest.
 message(STATUS "Leaf: system ${CMAKE_SYSTEM_NAME}, sysroot ${CMAKE_OSX_SYSROOT}")
 
+# And Tests/GraphAndroid.cmake: the triple names the ABI and API level. The
+# NDK's legacy toolchain file sets ANDROID_STL, CMake's own support the other.
+if (ANDROID)
+    set(leaf_stl "${CMAKE_ANDROID_STL_TYPE}")
+
+    if (NOT leaf_stl)
+        set(leaf_stl "${ANDROID_STL}")
+    endif ()
+
+    message(STATUS "Leaf: android target ${CMAKE_CXX_COMPILER_TARGET}, "
+            "stl ${leaf_stl}")
+endif ()
+
 add_library(Leaf STATIC Leaf.cpp)
 add_library(Leaf::Leaf ALIAS Leaf)
 target_include_directories(Leaf PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
