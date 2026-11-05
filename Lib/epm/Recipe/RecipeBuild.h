@@ -37,8 +37,8 @@ struct RecipeBuild
 // cache already holds one for the same source, SDK, libraries, headers and
 // epm binary. That binary is `epmExecutable` (Env::epmExecutable), whose
 // recipeSdkFor the recipe is built against, or this executable when empty.
-// Fails on Windows: there are no recipes there until this has an MSVC
-// argument shape.
+// With cl or clang-cl the MSVC environment (INCLUDE, LIB) must be set, as in
+// a developer command prompt.
 RecipeBuild buildRecipe(const eacp::FilePath& source,
                         const CacheRoot& cache,
                         const eacp::FilePath& epmExecutable = {});
@@ -64,7 +64,8 @@ std::string recipeKey(const RecipeSdk& sdk,
 // The arguments after the compiler for compiling `source` into the executable
 // `output`: one direct invocation, compile and link, with no CMake involved.
 // The SDK's archives for its configuration and its link options follow the
-// source. GCC and Clang spellings: MSVC would need its own.
+// source. GCC and Clang spellings, or cl's (clCommandLine) with the archives
+// after /link.
 eacp::Vector<std::string> recipeCompileArguments(const RecipeSdk& sdk,
                                                  const eacp::FilePath& source,
                                                  const eacp::FilePath& output);

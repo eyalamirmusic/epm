@@ -54,7 +54,8 @@ CommandResult runCommandKeepingErrors(const std::string& executable,
                                       const eacp::Vector<std::string>& arguments,
                                       const eacp::FilePath& workingDirectory = {});
 
-// Why `result` failed, one line, naming the signal that killed the child.
+// Why `result` failed, one line, naming the signal that killed the child (on
+// Windows, the NT status it crashed with).
 std::string failureReason(const std::string& executable,
                           const CommandResult& result);
 

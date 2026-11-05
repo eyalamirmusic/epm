@@ -8,6 +8,7 @@
 #include <epm/Util/Text.h>
 
 #include <eacp/Core/Platform/Platform.h>
+#include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/Files.h>
 
 #include <map>
@@ -83,10 +84,12 @@ std::string commandLine(const std::string& executable,
     return executable + " " + joinList(arguments, " ");
 }
 
+// "error:" (GCC, Clang, clang-cl), or cl's "error C2065:".
 std::string firstErrorLine(std::string_view output)
 {
     for (const auto line: splitLines(output))
-        if (line.find("error:") != std::string_view::npos)
+        if (line.find("error:") != std::string_view::npos
+            || line.find("error C") != std::string_view::npos)
             return std::string {line};
 
     return {};
@@ -112,6 +115,125 @@ void addLinkOption(Vector<std::string>& arguments, const std::string& option)
         arguments.add(option);
     else
         arguments.add("-l" + option);
+}
+
+// The same after cl's /link: a bare name is a system library, <name>.lib.
+void addClLinkOption(Vector<std::string>& arguments, const std::string& option)
+{
+    const auto isName = !option.starts_with('/') && !option.starts_with('-')
+                        && option.find_first_of("/\\.") == std::string::npos;
+    arguments.add(isName ? option + ".lib" : option);
+}
+
+// /std: takes the standards cl names; anything newer is c++latest.
+std::string clStandard(const std::string& standard)
+{
+    for (const auto known: {"14", "17", "20"})
+        if (standard == known)
+            return "/std:c++" + standard;
+
+    return "/std:c++latest";
+}
+
+// cl's spelling of an MSVC_RUNTIME_LIBRARY value.
+std::string clRuntimeFlag(const std::string& runtime)
+{
+    const auto debug = runtime.find("Debug") != std::string::npos;
+    const auto dll = runtime.ends_with("DLL");
+    return std::string {dll ? "/MD" : "/MT"} + (debug ? "d" : "");
+}
+
+Vector<std::string> gnuCompileArguments(const RecipeSdk& sdk,
+                                        const FilePath& source,
+                                        const FilePath& output)
+{
+    auto arguments = Vector<std::string> {};
+    arguments.add((sdk.cxxExtensions ? "-std=gnu++" : "-std=c++") + sdk.cxxStandard);
+
+    for (const auto& flag: sdk.flags)
+        arguments.add(flag);
+
+    // After the configuration's flags: a recipe is a few calls, so a quick
+    // compile beats a Release -O3.
+    arguments.add("-O1");
+
+    if (!sdk.osxSysroot.empty())
+        arguments.add({"-isysroot", sdk.osxSysroot});
+
+    for (const auto& architecture: sdk.osxArchitectures)
+        arguments.add({"-arch", architecture});
+
+    if (!sdk.osxDeploymentTarget.empty())
+        arguments.add("-mmacosx-version-min=" + sdk.osxDeploymentTarget);
+
+    for (const auto& directory: sdk.includeDirectories)
+        arguments.add("-I" + directory);
+
+    for (const auto& definition: sdk.compileDefinitions)
+        arguments.add("-D" + definition);
+
+    for (const auto& option: sdk.compileOptions)
+        arguments.add(option);
+
+    arguments.add({"-o", output.str(), source.str()});
+
+    // After the source, each archive before those it depends on: a
+    // single-pass linker (GNU ld) only takes from an archive what is already
+    // undefined.
+    for (const auto& library: recipeLibraries(sdk))
+        arguments.add(library);
+
+    for (const auto& option: sdk.linkOptions)
+        addLinkOption(arguments, option);
+
+    return arguments;
+}
+
+// cl and clang-cl: the configuration's flags as they are (its /O level, and
+// a Debug /RTC1 that no /O may follow), the archives' runtime library, the
+// object beside the executable rather than in the working directory, then
+// the linker's arguments after /link.
+Vector<std::string> clCompileArguments(const RecipeSdk& sdk,
+                                       const FilePath& source,
+                                       const FilePath& output)
+{
+    auto arguments = Vector<std::string> {"/nologo", clStandard(sdk.cxxStandard)};
+
+    for (const auto& flag: sdk.flags)
+        arguments.add(flag);
+
+    if (!sdk.msvcRuntime.empty())
+        arguments.add(clRuntimeFlag(sdk.msvcRuntime));
+
+    for (const auto& directory: sdk.includeDirectories)
+        arguments.add("/I" + directory);
+
+    for (const auto& definition: sdk.compileDefinitions)
+        arguments.add("/D" + definition);
+
+    for (const auto& option: sdk.compileOptions)
+        arguments.add(option);
+
+    arguments.add({"/Fo" + output.parentDirectory().str() + "/",
+                   "/Fe:" + output.str(),
+                   source.str(),
+                   "/link"});
+
+    for (const auto& library: recipeLibraries(sdk))
+        arguments.add(library);
+
+    for (const auto& option: sdk.linkOptions)
+        addClLinkOption(arguments, option);
+
+    return arguments;
+}
+
+// cl finds its headers and libraries through INCLUDE and LIB, which a
+// developer command prompt (vcvarsall) sets; outside one the compile fails
+// on the first standard header, so say why first.
+bool msvcEnvironmentIsSet()
+{
+    return !getEnvValue("INCLUDE").empty() && !getEnvValue("LIB").empty();
 }
 
 RecipeBuild compile(const RecipeSdk& sdk,
@@ -194,57 +316,14 @@ Vector<std::string> recipeCompileArguments(const RecipeSdk& sdk,
                                            const FilePath& source,
                                            const FilePath& output)
 {
-    auto arguments = Vector<std::string> {};
-    arguments.add((sdk.cxxExtensions ? "-std=gnu++" : "-std=c++") + sdk.cxxStandard);
-
-    for (const auto& flag: sdk.flags)
-        arguments.add(flag);
-
-    // After the configuration's flags: a recipe is a few calls, so a quick
-    // compile beats a Release -O3.
-    arguments.add("-O1");
-
-    if (!sdk.osxSysroot.empty())
-        arguments.add({"-isysroot", sdk.osxSysroot});
-
-    for (const auto& architecture: sdk.osxArchitectures)
-        arguments.add({"-arch", architecture});
-
-    if (!sdk.osxDeploymentTarget.empty())
-        arguments.add("-mmacosx-version-min=" + sdk.osxDeploymentTarget);
-
-    for (const auto& directory: sdk.includeDirectories)
-        arguments.add("-I" + directory);
-
-    for (const auto& definition: sdk.compileDefinitions)
-        arguments.add("-D" + definition);
-
-    for (const auto& option: sdk.compileOptions)
-        arguments.add(option);
-
-    arguments.add({"-o", output.str(), source.str()});
-
-    // After the source, each archive before those it depends on: a
-    // single-pass linker (GNU ld) only takes from an archive what is already
-    // undefined.
-    for (const auto& library: recipeLibraries(sdk))
-        arguments.add(library);
-
-    for (const auto& option: sdk.linkOptions)
-        addLinkOption(arguments, option);
-
-    return arguments;
+    return clCommandLine(sdk) ? clCompileArguments(sdk, source, output)
+                              : gnuCompileArguments(sdk, source, output);
 }
 
 RecipeBuild buildRecipe(const FilePath& sourceToBuild,
                         const CacheRoot& cache,
                         const FilePath& epmExecutable)
 {
-    // MSVC needs its own argument shape (/std:, /Fe, .lib names), not a
-    // different design: a recipe is an executable on every platform.
-    if (Platform::isWindows())
-        return failure("epm.cpp recipes are not supported on Windows yet");
-
     // Absolute, so the compiler's diagnostics in compile.log name it fully.
     const auto source = resolvedPath(sourceToBuild);
 
@@ -285,6 +364,11 @@ RecipeBuild buildRecipe(const FilePath& sourceToBuild,
 
     if (!Files::isFile(sdk.compiler))
         return failure("the compiler that built epm is gone: " + sdk.compiler);
+
+    if (clCommandLine(sdk) && !msvcEnvironmentIsSet())
+        return failure("cannot compile " + source.str() + " with " + sdk.compiler
+                       + ": INCLUDE and LIB are not set; run from a Visual "
+                         "Studio developer command prompt (vcvarsall)");
 
     const auto lock = PackageLock {cache, "recipe-" + key, packageLockTimeout};
 

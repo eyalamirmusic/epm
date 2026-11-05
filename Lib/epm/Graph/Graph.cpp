@@ -4,6 +4,7 @@
 #include <epm/Emit/GraphResponse.h>
 #include <epm/Recipe/CMakePackage.h>
 #include <epm/Resolve/Resolve.h>
+#include <epm/Spec/Manifest.h>
 #include <epm/Util/Log.h>
 #include <epm/Util/Text.h>
 
@@ -626,11 +627,6 @@ Vector<PackageDependency> packageDependencies(const ResolvedGraph& graph,
     return dependencies;
 }
 
-std::string ownerText(const StepOwner& owner)
-{
-    return owner.name.empty() ? std::string {rootDeclarer} : owner.name;
-}
-
 ResolveResult stepFailure(std::string error)
 {
     auto result = ResolveResult {};
@@ -654,21 +650,14 @@ ResolveResult checkedMode(const BuildInput& input, ResolveResult result)
 
 // Runs the package's build step in its owner's recipe executable, source
 // packages too (their hooks set the options the consumer's add_subdirectory
-// gets); the default steps in this process for an owner without a recipe,
-// and where there are no recipe executables.
+// gets); the default steps in this process for an owner without a recipe.
 ResolveResult
     runStep(const PlannedPackage& planned, BuildInput input, ManifestLoader& steps)
 {
     const auto& owner = planned.owner;
     const auto& name = input.request.name;
 
-    if (!steps.runsSteps() && owner.customBuild && input.request.mode != "source")
-        return stepFailure(ownerText(owner) + " declares custom build steps for "
-                           + name
-                           + ", which need a recipe executable: epm builds none "
-                             "on Windows yet (no MSVC support)");
-
-    if (owner.recipe.empty() || !steps.runsSteps())
+    if (owner.recipe.empty())
         return resolveResultFor(buildInProcess(input));
 
     input.recipeName = owner.name;
@@ -691,7 +680,7 @@ ResolveResult
 std::string repositoryKey(std::string_view url)
 {
     auto key = std::string {url};
-    const auto isLocal = key.starts_with('/');
+    const auto isLocal = isLocalRepository(key);
     const auto scheme = key.find("://");
 
     if (scheme != std::string::npos)

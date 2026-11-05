@@ -15,10 +15,12 @@ BakedRecipeSdk bake()
     auto& sdk = baked.sdk;
     sdk.compiler = R"epmsdk(@CMAKE_CXX_COMPILER@)epmsdk";
     sdk.compilerId = R"epmsdk(@CMAKE_CXX_COMPILER_ID@)epmsdk";
+    sdk.compilerFrontend = R"epmsdk(@CMAKE_CXX_COMPILER_FRONTEND_VARIANT@)epmsdk";
     sdk.cxxStandard = R"epmsdk(@CMAKE_CXX_STANDARD@)epmsdk";
     sdk.cxxExtensions = std::string {"@EPM_SDK_CXX_EXTENSIONS@"} == "ON";
     sdk.config = R"epmsdk($<CONFIG>)epmsdk";
     sdk.flags = splitList(R"epmsdk(@EPM_SDK_CXX_FLAGS@)epmsdk");
+    sdk.msvcRuntime = R"epmsdk(@EPM_SDK_MSVC_RUNTIME@)epmsdk";
     sdk.osxSysroot = R"epmsdk(@CMAKE_OSX_SYSROOT@)epmsdk";
     sdk.osxArchitectures = splitList(R"epmsdk(@EPM_SDK_OSX_ARCHITECTURES@)epmsdk");
     sdk.osxDeploymentTarget = R"epmsdk(@CMAKE_OSX_DEPLOYMENT_TARGET@)epmsdk";

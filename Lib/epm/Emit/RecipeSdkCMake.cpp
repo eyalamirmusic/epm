@@ -29,6 +29,7 @@ std::string recipeSdkCMakeText(const RecipeSdk& sdk)
     auto text = "# Written by `epm recipe-sdk`: how this epm compiles an epm.cpp.\n"
                 + set("CXX_COMPILER", cmakeQuoted(sdk.compiler))
                 + set("COMPILER_ID", cmakeQuoted(sdk.compilerId))
+                + set("COMPILER_FRONTEND", cmakeQuoted(sdk.compilerFrontend))
                 + set("CXX_STANDARD", cmakeQuoted(sdk.cxxStandard))
                 + set("CXX_EXTENSIONS", sdk.cxxExtensions ? "ON" : "OFF")
                 + set("INCLUDE_DIRS", cmakeQuotedList(sdk.includeDirectories))
@@ -39,6 +40,14 @@ std::string recipeSdkCMakeText(const RecipeSdk& sdk)
     for (const auto& [config, libraries]: sdk.libraries)
         text += set("LINK_LIBRARIES_" + configSuffix(config),
                     cmakeQuotedList(libraries));
+
+    // The runtime library each configuration's archives need, on the MSVC
+    // ABI only (epm.cmake gives the recipe target the one of the archives
+    // its configuration maps to).
+    for (const auto& config: recipeConfigs(sdk))
+        if (const auto runtime = msvcRuntimeFor(sdk, config); !runtime.empty())
+            text +=
+                set("MSVC_RUNTIME_" + configSuffix(config), cmakeQuoted(runtime));
 
     return text + set("LINK_OPTIONS", cmakeQuotedList(sdk.linkOptions));
 }

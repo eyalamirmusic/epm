@@ -40,11 +40,6 @@ public:
     // Whether <directory> has an epm.cpp.
     virtual bool hasManifest(const eacp::FilePath& directory) const;
 
-    // Whether build() can run: false where there are no recipe executables
-    // (Windows, until RecipeBuild has an MSVC argument shape), and every step
-    // then runs in epm's process (buildInProcess).
-    virtual bool runsSteps() const = 0;
-
     // Runs the build step of input.request.name in the executable of the
     // recipe file `recipe`: `build --package <name>`. A step that failed
     // comes back as an output holding its error; nullopt, with `error` set,
@@ -105,8 +100,6 @@ public:
     std::optional<Project> loadFile(const eacp::FilePath& recipe,
                                     const Env& env,
                                     std::string& error) override;
-
-    bool runsSteps() const override;
 
     // The step's output reaches stdout as it runs. The step runs with
     // --quiet, as epm reports its failure, so a failure it records is printed

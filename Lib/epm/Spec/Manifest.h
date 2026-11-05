@@ -36,9 +36,13 @@ struct ManifestPackage
     MIRO_REFLECT(name, git, tag, options, configs, mode, abiMatch, customBuild)
 };
 
+// Whether `git` names a directory rather than a remote: an absolute POSIX
+// path, or a Windows one with a drive letter (C:/..., C:\...).
+bool isLocalRepository(std::string_view git);
+
 // https://github.com/<owner>/<repo>.git for an owner/repo shorthand: anything
-// without "://", without a "git@" prefix and not starting with '/'. Any
-// other spelling is returned as is.
+// without "://", without a "git@" prefix and not a local path. Any other
+// spelling is returned as is.
 std::string expandGitUrl(std::string_view git);
 
 // The entry named `name` of `packages`; nullptr when there is none.

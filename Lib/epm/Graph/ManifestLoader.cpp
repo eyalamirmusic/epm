@@ -33,18 +33,31 @@ std::string withLastLines(std::string error, std::string_view output)
     return error;
 }
 
-// `text` as one POSIX shell word: as it is when nothing in it is special,
-// else single-quoted. (Upstream candidate for eacp's Strings.)
+// `text` as one word of the shell the command is run by hand in: as it is
+// when nothing in it is special, else single-quoted for a POSIX shell, or
+// double-quoted on Windows, where cmd and PowerShell both take that.
+// (Upstream candidate for eacp's Strings.)
 std::string shellQuoted(std::string_view text)
 {
     const auto plain = [](char c)
     {
         return std::isalnum(static_cast<unsigned char>(c))
-               || std::string_view {"@%+=:,./_-"}.find(c) != std::string_view::npos;
+               || std::string_view {"@%+=:,./_-"}.find(c) != std::string_view::npos
+               || (Platform::isWindows() && c == '\\');
     };
 
     if (!text.empty() && std::ranges::all_of(text, plain))
         return std::string {text};
+
+    if (Platform::isWindows())
+    {
+        auto quoted = std::string {"\""};
+
+        for (const auto c: text)
+            quoted += c == '"' ? std::string {"\\\""} : std::string {c};
+
+        return quoted + "\"";
+    }
 
     auto quoted = std::string {"'"};
 
@@ -196,11 +209,6 @@ std::optional<Project> RecipeManifestLoader::loadFile(const FilePath& recipe,
         error = "the recipe " + recipe.str() + ": " + run.error;
 
     return std::move(run.project);
-}
-
-bool RecipeManifestLoader::runsSteps() const
-{
-    return !Platform::isWindows();
 }
 
 std::optional<BuildOutput> RecipeManifestLoader::build(const FilePath& recipe,

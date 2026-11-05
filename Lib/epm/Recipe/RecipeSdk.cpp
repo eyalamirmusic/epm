@@ -15,10 +15,12 @@ std::string identityOf(const RecipeSdk& sdk)
 {
     auto lines = Vector<std::string> {sdk.compiler,
                                       sdk.compilerId,
+                                      sdk.compilerFrontend,
                                       sdk.cxxStandard,
                                       sdk.cxxExtensions ? "ON" : "OFF",
                                       sdk.config,
                                       joinList(sdk.flags, " "),
+                                      sdk.msvcRuntime,
                                       sdk.osxSysroot,
                                       joinList(sdk.osxArchitectures, " "),
                                       sdk.osxDeploymentTarget,
@@ -71,6 +73,30 @@ Vector<std::string> recipeLibraries(const RecipeSdk& sdk)
 {
     const auto found = sdk.libraries.find(sdk.config);
     return found == sdk.libraries.end() ? Vector<std::string> {} : found->second;
+}
+
+bool clCommandLine(const RecipeSdk& sdk)
+{
+    return sdk.compilerId == "MSVC" || sdk.compilerFrontend == "MSVC";
+}
+
+std::string msvcRuntimeFor(const RecipeSdk& sdk, std::string_view config)
+{
+    if (sdk.msvcRuntime.empty())
+        return {};
+
+    constexpr auto debug = std::string_view {"Debug"};
+    auto runtime = sdk.msvcRuntime;
+
+    if (const auto at = runtime.find(debug); at != std::string::npos)
+        runtime.erase(at, debug.size());
+
+    if (config != debug)
+        return runtime;
+
+    const auto dll = runtime.ends_with("DLL");
+    return runtime.substr(0, runtime.size() - (dll ? 3 : 0)) + "Debug"
+           + (dll ? "DLL" : "");
 }
 
 std::optional<RecipeSdk> installedRecipeSdk(const BakedRecipeSdk& baked,

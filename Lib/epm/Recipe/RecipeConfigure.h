@@ -105,8 +105,6 @@ public:
                                     const Env& env,
                                     std::string& error) override;
 
-    bool runsSteps() const override;
-
     std::optional<BuildOutput> build(const eacp::FilePath& recipe,
                                      const BuildInput& input,
                                      std::string& error) override;

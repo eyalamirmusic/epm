@@ -91,11 +91,9 @@ add_test(NAME epm_graph_ios
 set_tests_properties(epm_graph_ios PROPERTIES
         SKIP_REGULAR_EXPRESSION "epm-graph-ios: skipped")
 
-if (NOT WIN32)
-    add_test(NAME epm_install_round_trip
-            COMMAND ${CMAKE_COMMAND}
-                "-DBUILD_DIR=${CMAKE_BINARY_DIR}"
-                "-DCONFIG=$<CONFIG>"
-                "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/epm-install-round-trip"
-                -P ${CMAKE_CURRENT_SOURCE_DIR}/InstallRoundTrip.cmake)
-endif ()
+add_test(NAME epm_install_round_trip
+        COMMAND ${CMAKE_COMMAND}
+            "-DBUILD_DIR=${CMAKE_BINARY_DIR}"
+            "-DCONFIG=$<CONFIG>"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/epm-install-round-trip"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/InstallRoundTrip.cmake)

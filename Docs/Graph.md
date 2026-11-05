@@ -186,7 +186,8 @@ A recipe is two phases of user code, each run in its recipe executable:
 - `name` is case-sensitive (as the PoC). A later stage may relax this. A package
   without a name is an error, and so is a name added twice to one project
   (`projectError`); the error names the package whose `epm.cpp` it is.
-- `git` without `://`, `git@` or a leading `/` is a GitHub `owner/repo` shorthand.
+- `git` without `://`, `git@` or a local path's start (a leading `/`, or a drive letter
+  such as `C:/` on Windows) is a GitHub `owner/repo` shorthand.
 - `configs` names are the consumer-facing names; the binary collapses them as
   `epm.cmake` does today (§3 of `PoC.md`).
 - The root project may add a package with only `options` (or `configs`, `mode`,
@@ -421,7 +422,17 @@ mismatch as such rather than half reading the file: the recipe as above, epm as
    configuration (`epm-recipe`, `eacp-network`, `eacp-core`, `Miro` and the static
    libraries under them: `fmt`, `miniz`, `ResEmbed`), each before those it depends on,
    the order a single-pass linker needs; then the link options (frameworks, system
-   libraries; libcurl on Linux, which `eacp-network` links). An imported shared (or
+   libraries; libcurl on Linux, which `eacp-network` links). Under cl or clang-cl
+   (`RecipeSdk::compilerFrontend`, `clCommandLine`) the same in cl's spelling: `/std:`,
+   the configuration's flags as they are (their `/O` level; a Debug `/RTC1` takes no
+   `/O` after it), the runtime library of epm's archives (`/MD`, `/MDd`:
+   `RecipeSdk::msvcRuntime`, which a recipe's objects must match), `/I`, `/D`, the
+   object beside the executable (`/Fo`), `/Fe:`, then the archives and the link options
+   after `/link`, a system library as `<name>.lib`, with CMake's standard libraries
+   (`kernel32.lib`, `gdi32.lib`, ...; `CMAKE_CXX_STANDARD_LIBRARIES`, which every link
+   of epm's build got) among the link options. cl finds its headers and libraries
+   through `INCLUDE` and `LIB`, so epm must run in the MSVC environment of a developer
+   command prompt, which `buildRecipe` checks before compiling. An imported shared (or
    unknown-type) library is named, not given by the build machine's path to it:
    `-l<name>` for `lib<name>.so`, `-l:<file>` for a versioned `lib<name>.so.<N>`,
    after `-L<dir>` only when the compiler does not search that directory already
@@ -519,7 +530,8 @@ give the `AppRecipe` run configuration those arguments and that working director
 <build>/epm/env.json` prints the project alone, and `epm describe epm.cpp --exe
 <build>/AppRecipe --env <build>/epm/env.json` reads it the way the configure does. The
 executable the CMake configure runs is epm's own cached one: the same file and
-libraries, but compiled with epm's configuration flags and `-O1`.
+libraries, but compiled with epm's configuration flags and `-O1` (under cl, their own
+`/O` level).
 
 **Debugging a build step.** The configure keeps each step's input in
 `<build>/epm/steps/<name>.in.json` (§6). Launch `AppRecipe` with
@@ -540,26 +552,33 @@ use the command file, whose executable is that recipe's.
 `epm::recipe` is an `INTERFACE IMPORTED GLOBAL` target defined once per configure from
 `epm recipe-sdk --out <build>/epm/recipe-sdk.cmake`, which writes the binary's SDK
 (`Recipe/RecipeSdk.h`, `Emit/RecipeSdkCMake`) as CMake variables:
-`EPM_RECIPE_CXX_COMPILER`, `EPM_RECIPE_COMPILER_ID`, `EPM_RECIPE_CXX_STANDARD`,
+`EPM_RECIPE_CXX_COMPILER`, `EPM_RECIPE_COMPILER_ID`, `EPM_RECIPE_COMPILER_FRONTEND`
+(`CMAKE_CXX_COMPILER_FRONTEND_VARIANT`), `EPM_RECIPE_CXX_STANDARD`,
 `EPM_RECIPE_CXX_EXTENSIONS`, the lists `EPM_RECIPE_INCLUDE_DIRS`,
 `EPM_RECIPE_COMPILE_DEFINITIONS` and `EPM_RECIPE_COMPILE_OPTIONS`,
 `EPM_RECIPE_CONFIGS` (every configuration the SDK has archives for), one
 `EPM_RECIPE_LINK_LIBRARIES_<CONFIG>` per configuration (upper-case suffix; the same
-archives, in the same order, in each) and `EPM_RECIPE_LINK_OPTIONS`. The target
-carries the include directories (as system directories, like any imported target's),
-the definitions, `cxx_std_<N>`, `epm-recipe`'s compile options only under a compiler of
-`EPM_RECIPE_COMPILER_ID`, and links, in order, one `STATIC IMPORTED` target per
-archive (`epm::recipe-<name>`), then the link options. Each archive target has a
-location per configuration and a `MAP_IMPORTED_CONFIG_<CONFIG>` for the standard
-configurations and the project's own: the same-named configuration when epm has it,
-else Debug for Debug and Release for anything else (RelWithDebInfo, MinSizeRel, a
-custom or empty configuration), then the other of the two. So it works the same with
-an installed epm as with one built from a checkout: the SDK always comes from the
-binary.
+archives, in the same order, in each), on the MSVC ABI one
+`EPM_RECIPE_MSVC_RUNTIME_<CONFIG>` per configuration (the runtime library its archives
+were compiled against) and `EPM_RECIPE_LINK_OPTIONS`. The target carries the include
+directories (as system directories, like any imported target's), the definitions,
+`cxx_std_<N>`, `epm-recipe`'s compile options only under a compiler of epm's family,
+and links, in order, one `STATIC IMPORTED` target per archive (`epm::recipe-<name>`),
+then the link options. Each archive target has a location per configuration and a
+`MAP_IMPORTED_CONFIG_<CONFIG>` for the standard configurations and the project's own:
+the same-named configuration when epm has it, else Debug for Debug and Release for
+anything else (RelWithDebInfo, MinSizeRel, a custom or empty configuration), then the
+other of the two. On the MSVC ABI the recipe target's `MSVC_RUNTIME_LIBRARY` follows
+the same mapping (a Debug build of the project against a Release-only build tree epm
+compiles the recipe with `/MD`): objects and archives compiled against different
+runtimes do not link (LNK2038). So it works the same with an installed epm as with one
+built from a checkout: the SDK always comes from the binary.
 
 - The archives hold epm's C++ types, compiled by epm's compiler, and another compiler
-  family need not share their ABI. A project whose `CMAKE_CXX_COMPILER_ID` is not
-  `EPM_RECIPE_COMPILER_ID` stops the configure, with the ways out:
+  family need not share their ABI. A project whose compiler family (its
+  `CMAKE_CXX_COMPILER_ID`; cl and clang-cl are one family, as clang-cl's id is Clang
+  with an MSVC `CMAKE_CXX_COMPILER_FRONTEND_VARIANT`) is not epm's stops the configure,
+  with the ways out:
   `-DCMAKE_CXX_COMPILER=<epm's>`, an epm built with this compiler (delete its
   `get_epm.cmake` tool entry to rebuild it), or `-DEPM_RECIPE_ALLOW_COMPILER_MISMATCH=ON`,
   which makes it a warning. Another compiler of the same family (compared by real
@@ -568,10 +587,10 @@ binary.
   inconsistent library lists stops the configure. When an SDK include directory or
   archive does not exist (an epm whose build or install tree has moved),
   `epm_add_recipe` does nothing beyond a status line.
-- It does nothing on Windows (below), when cross-compiling (a recipe runs on the host,
-  against epm's host libraries), and in a project that is not the top-level one (a
-  package added from source); a child build epm runs gets a no-op stub from
-  `epm-export.cmake`, so a package may call it for its own developers.
+- It does nothing when cross-compiling (a recipe runs on the host, against epm's host
+  libraries), and in a project that is not the top-level one (a package added from
+  source); a child build epm runs gets a no-op stub from `epm-export.cmake`, so a
+  package may call it for its own developers.
 
 Limits:
 
@@ -579,14 +598,10 @@ Limits:
   prefix (or build tree) holding the headers and archives. `get_epm.cmake` builds epm
   from source on the machine that uses it (`PoC.md` §8), so both are there; a bare
   `bin/epm` copied away from its prefix falls back to its build tree's paths.
-- macOS and Linux only. There are no recipe executables on Windows until
-  `RecipeBuild` has an MSVC argument shape (`/std:`, `/Fe`, `.lib` names): an
-  executable linking static archives needs no exports, so the design itself carries
-  over. On Windows `epm configure` runs the configure in its own process (§6), where
-  `buildRecipe` fails, and so does the configure, at the first recipe. The step runner
-  is ready for a loader without recipe executables (`ManifestLoader::runsSteps`, false
-  on Windows): every step there runs the default steps in epm's process, and custom
-  steps are an error unless the package is in source mode (§6).
+- On Windows, the MSVC environment: cl and clang-cl take their headers and libraries
+  from `INCLUDE` and `LIB`, which a developer command prompt (vcvarsall) sets and a
+  Visual Studio generator's MSBuild sets for its own compiles only. A configure run
+  outside one fails at the first recipe, saying so.
 
 ## 3. Overrides `overrides.json`
 
@@ -723,12 +738,11 @@ Its stdout (progress lines, the steps' output) reaches epm's as it runs, its std
 (the failure it reports, `epm: …`) is passed on as epm's own, and its exit code is
 epm's. A recipe executable killed by a signal reported nothing itself: epm fails with
 `the manifest <epm.cpp>: <executable> configure failed: <executable> was terminated by
-signal 6 (exit code 134)`, then the last 20 lines it printed. An env without
+signal 6 (exit code 134)`; on Windows `crashed (exit status 0xC0000409)`), then the
+last 20 lines it printed. An env without
 `epmExecutable` (epm run by hand) is copied into a temporary directory naming this
 epm, and the copy is passed, so the recipe executable finds the SDK and nested child
-builds get their `EPM_EXECUTABLE` (§10). Where there are no recipe executables
-(`ManifestLoader::runsSteps`, Windows) epm runs the same configure, `runConfigure`, in
-its own process over a `RecipeManifestLoader`.
+builds get their `EPM_EXECUTABLE` (§10).
 
 The configure runs the root recipe for the `env.json` given, then every dependency's,
 planning the graph (§2, §5); then resolves the packages in dependency order, each
@@ -756,7 +770,8 @@ For each package, in dependency order:
    `<recipe executable> build --package <name> --in <dir>/steps/<name>.in.json
    --out <dir>/steps/<name>.out.json --quiet`. Beforehand it writes `<name>.in.json`
    and `<name>.command` (a `# run from: <directory>` line, then the command line, shell
-   quoted, without `--quiet`, so a run by hand prints a failure on stderr) and removes
+   quoted (on Windows with double quotes, for cmd and PowerShell), without `--quiet`, so
+   a run by hand prints a failure on stderr) and removes
    the previous `<name>.out.json`, so it cannot pass for this run's. The input carries
    the owner's `customBuild`. A step the root owns runs in the configure's own
    process instead (`SelfRecipeLoader`), with the same three files: `<name>.command`
@@ -782,12 +797,8 @@ A package in source mode runs its step as well, in the same executable: nothing 
 built (`cached` returns nothing), but its `configure` hook runs and the step records
 the options the provider sets before `add_subdirectory` (`useSource(build)`, §2, §8).
 The default steps run in the configure's process without any recipe's `describe()`
-(`buildInProcess`) only for:
-
-- a package whose owner has no recipe file (a root given none, as tests do);
-- every package where there are no recipe executables (`ManifestLoader::runsSteps`:
-  Windows, §2); an owner with custom steps is then an error, unless the package is in
-  source mode, where the default steps record the request's options.
+(`buildInProcess`) only for a package whose owner has no recipe file (a root given
+none, as tests do).
 
 The configure holds no package lock while a step runs, in its own process or another:
 the step takes the package's lock itself, inside `cached`, and only to build. eacp's
@@ -952,13 +963,13 @@ this end to end, with Leaf's step run in Mid's recipe executable (Mid declares i
 ## 11. Out of scope for this stage
 
 Stores and remote caches, `epm.lock`, `epm why`, case-insensitive names, a CPM shim
-for dependencies that use CPM instead of a manifest, `find_package` version checks,
-recipes on Windows (`RecipeBuild`'s MSVC argument shape, §2).
+for dependencies that use CPM instead of a manifest, `find_package` version checks.
 
 Known limitations of what exists:
 
-- Windows has no recipe executables, so no manifest flow (§2); where none can be built,
-  only the default steps could run (§6).
+- On Windows a recipe compiles only in the MSVC environment (`INCLUDE`, `LIB`) of a
+  developer command prompt (§2): a Visual Studio consumer configured outside one, which
+  `get_epm.cmake` otherwise supports (`PoC.md` §8), cannot run an `epm.cpp`.
 - A released archive's epm compiles recipes with the compiler CI built it with, at
   CI's path, against archives from that compiler: where that path does not exist it
   cannot run an `epm.cpp`. `get_epm.cmake` therefore never downloads one and builds epm

@@ -6,6 +6,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace epm
 {
@@ -14,9 +15,12 @@ namespace epm
 // are empty.
 struct RecipeSdk
 {
-    // CMAKE_CXX_COMPILER and CMAKE_CXX_COMPILER_ID.
+    // CMAKE_CXX_COMPILER, CMAKE_CXX_COMPILER_ID and
+    // CMAKE_CXX_COMPILER_FRONTEND_VARIANT: the command line the compiler
+    // takes, "MSVC" for cl and clang-cl, "GNU" for the rest (clCommandLine).
     std::string compiler;
     std::string compilerId;
+    std::string compilerFrontend;
 
     // CMAKE_CXX_STANDARD, and whether the GNU dialect (-std=gnu++NN) is used.
     std::string cxxStandard;
@@ -28,6 +32,11 @@ struct RecipeSdk
 
     // CMAKE_CXX_FLAGS followed by `config`'s flags.
     eacp::Vector<std::string> flags;
+
+    // The MSVC runtime library the archives of `config` were compiled against
+    // (MSVC_RUNTIME_LIBRARY: MultiThreadedDLL, MultiThreadedDebugDLL, ...),
+    // which a recipe must match; empty off the MSVC ABI.
+    std::string msvcRuntime;
 
     std::string osxSysroot;
     eacp::Vector<std::string> osxArchitectures;
@@ -58,6 +67,16 @@ eacp::Vector<std::string> recipeConfigs(const RecipeSdk& sdk);
 
 // The archives a recipe built by this epm links: those of `sdk.config`.
 eacp::Vector<std::string> recipeLibraries(const RecipeSdk& sdk);
+
+// Whether the compiler takes cl's command line (/std:, /Fe, .lib names): cl
+// itself, and clang-cl, whose id is Clang with an MSVC frontend.
+bool clCommandLine(const RecipeSdk& sdk);
+
+// The MSVC runtime library the archives of `config` were compiled against:
+// `sdk.msvcRuntime` with CMake's default rule for the other configurations
+// (the Debug runtime for Debug, the plain one for the rest), as installs of
+// several configurations share the same choice. Empty off the MSVC ABI.
+std::string msvcRuntimeFor(const RecipeSdk& sdk, std::string_view config);
 
 // The build tree's SDK, baked in at build time (RecipeSdk.cpp.in), and where
 // `cmake --install` puts the same headers and archives, relative to the

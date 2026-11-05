@@ -105,8 +105,6 @@ struct FakeSources final : ManifestLoader
         return recipes.contains(directory.str());
     }
 
-    bool runsSteps() const override { return recipeExecutables; }
-
     std::optional<BuildOutput> build(const eacp::FilePath& recipe,
                                      const BuildInput& input,
                                      std::string& error) override
@@ -205,7 +203,6 @@ struct FakeSources final : ManifestLoader
     std::map<std::string, Describe> recipes;
     std::map<std::string, std::string> failures;
 
-    bool recipeExecutables = true;
     bool honoursMode = true;
     eacp::Vector<StepCall> steps;
     std::map<std::string, BuildOutput> outputs;
@@ -480,6 +477,7 @@ auto tGraphRepositoryKey = test("Graph/repositoryKey") = []
     check(repositoryKey("git@github.com:fmtlib/fmt.git") == key);
     check(repositoryKey("ssh://git@github.com/fmtlib/fmt") == key);
     check(repositoryKey("/srv/Git/fmt.git") == "/srv/Git/fmt");
+    check(repositoryKey("C:/Git/fmt.git") == "C:/Git/fmt");
 };
 
 auto tGraphSourcePropagates = test("Graph/walk/sourceForcesDependents") = []
@@ -1013,37 +1011,17 @@ auto tGraphCustomStepsOwnRecipe =
     check(planned(own, "C")->owner.name == "C");
 };
 
-auto tGraphNoRecipeExecutables = test("Graph/steps/inProcessWithoutRecipes") = []
+auto tGraphSourceStepInOwner = test("Graph/steps/sourceStepRunsInOwner") = []
 {
     auto graph = StepGraph {};
     auto& sources = graph.sources;
-    sources.recipeExecutables = false;
     graph.inputs.overrides.buildMissingBinaries = false;
-
-    // Custom steps need a recipe executable.
-    const auto plan = sources.plan(graph.inputs);
-    const auto custom = sources.resolve(plan, graph.inputs.env);
-
-    check(!custom.ok);
-    check(custom.error
-          == "A declares custom build steps for C, which need a recipe "
-             "executable: epm builds none on Windows yet (no MSVC support)");
-    check(sources.steps.empty());
-
-    // Without them, every step runs in this process.
     graph.inputs.project.packages.clear();
     graph.inputs.project.add("D", "org/D", "v1");
     graph.inputs.project.add("E", "org/E", "v1");
-    const auto plain = sources.resolve(sources.plan(graph.inputs), graph.inputs.env);
 
-    check(plain.ok);
-    check(sources.steps.empty());
-    check(plain.graph.packages.size() == 2
-          && plain.graph.packages[0].mode == "source");
-
-    // With recipes, a source package's step runs in its owner's, for the
+    // A source package's step runs in its owner's executable too, for the
     // options its hooks set.
-    sources.recipeExecutables = true;
     graph.inputs.overrides.mode = "source";
     const auto source =
         sources.resolve(sources.plan(graph.inputs), graph.inputs.env);

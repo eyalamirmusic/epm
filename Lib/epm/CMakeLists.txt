@@ -331,6 +331,13 @@ set(epm_archives)
 set(epm_link_options)
 epm_visit_link_closure(epm-recipe)
 list(REVERSE epm_archives)
+
+# What CMake adds to every link here (on Windows kernel32.lib, user32.lib,
+# gdi32.lib and the rest), which the archives rely on as much as on what they
+# name themselves; empty elsewhere.
+separate_arguments(standard_libraries NATIVE_COMMAND
+        "${CMAKE_CXX_STANDARD_LIBRARIES}")
+list(APPEND epm_link_options ${standard_libraries})
 list(REMOVE_DUPLICATES epm_link_options)
 
 # What the recipe SDK links beyond its archives, for CI logs (--log-level=VERBOSE).
@@ -426,6 +433,16 @@ if (DEFINED CMAKE_CXX_EXTENSIONS AND NOT CMAKE_CXX_EXTENSIONS)
     set(EPM_SDK_CXX_EXTENSIONS OFF)
 else ()
     set(EPM_SDK_CXX_EXTENSIONS ON)
+endif ()
+
+# The runtime library epm-recipe's objects were compiled against, which a
+# recipe's must match (LNK2038 otherwise): the target's MSVC_RUNTIME_LIBRARY,
+# else CMake's default for it.
+if (MSVC)
+    set(EPM_SDK_MSVC_RUNTIME
+            "$<IF:$<BOOL:$<TARGET_PROPERTY:epm-recipe,MSVC_RUNTIME_LIBRARY>>,$<TARGET_PROPERTY:epm-recipe,MSVC_RUNTIME_LIBRARY>,MultiThreaded$<$<CONFIG:Debug>:Debug>DLL>")
+else ()
+    set(EPM_SDK_MSVC_RUNTIME "")
 endif ()
 
 set(EPM_SDK_OSX_ARCHITECTURES "${CMAKE_OSX_ARCHITECTURES}")

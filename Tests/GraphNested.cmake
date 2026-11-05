@@ -43,11 +43,6 @@ if (NOT EXISTS "${EPM_BINARY}")
     message(FATAL_ERROR "EPM_BINARY '${EPM_BINARY}' does not exist")
 endif ()
 
-if (CMAKE_HOST_WIN32)
-    message(STATUS "epm-graph-nested: skipped: no epm.cpp recipes on Windows yet")
-    return()
-endif ()
-
 find_program(git_executable git NO_CACHE)
 
 if (NOT git_executable)
@@ -82,6 +77,13 @@ if (TEST_CXX_COMPILER)
 endif ()
 
 set(scenario "setup")
+
+# A <name>.command line is quoted for the host's shell.
+if (CMAKE_HOST_WIN32)
+    set(command_syntax WINDOWS_COMMAND)
+else ()
+    set(command_syntax UNIX_COMMAND)
+endif ()
 
 function(fail text)
     message(FATAL_ERROR "epm-graph-nested: ${scenario}: ${text}")
@@ -329,10 +331,11 @@ function(expect_recipe_configure)
     foreach (name IN ITEMS Leaf Mid)
         file(STRINGS "${build}/epm/steps/${name}.command" command_lines)
         list(GET command_lines 1 command_line)
-        separate_arguments(command_line UNIX_COMMAND "${command_line}")
+        separate_arguments(command_line ${command_syntax} "${command_line}")
         list(GET command_line 0 step_recipe)
 
-        if (NOT IS_ABSOLUTE "${step_recipe}" OR NOT step_recipe MATCHES "/epm-recipe$")
+        if (NOT IS_ABSOLUTE "${step_recipe}"
+                OR NOT step_recipe MATCHES "/epm-recipe(\\.exe)?$")
             fail("${name}.command after ConsumerRecipe-configure: ${command_line}")
         endif ()
     endforeach ()
@@ -512,10 +515,10 @@ if (NOT IS_DIRECTORY "${run_from}")
     fail("Leaf.command runs from ${run_from}, which is not a directory")
 endif ()
 
-separate_arguments(leaf_command UNIX_COMMAND "${leaf_command}")
+separate_arguments(leaf_command ${command_syntax} "${leaf_command}")
 list(GET leaf_command 0 mid_recipe)
 
-if (NOT IS_ABSOLUTE "${mid_recipe}" OR NOT mid_recipe MATCHES "/epm-recipe$"
+if (NOT IS_ABSOLUTE "${mid_recipe}" OR NOT mid_recipe MATCHES "/epm-recipe(\\.exe)?$"
         OR NOT EXISTS "${mid_recipe}")
     fail("Leaf.command does not run a recipe executable: ${leaf_command}")
 endif ()

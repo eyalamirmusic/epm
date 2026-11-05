@@ -7,6 +7,7 @@
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/StdPath.h>
 
+#include <cstdio>
 #include <filesystem>
 
 namespace epm
@@ -97,9 +98,24 @@ CommandResult runCommandKeepingErrors(const std::string& executable,
 }
 
 // Above 128 is how eacp::Processes reports a signal (or a shell's 128 + N).
+// On Windows a process that crashed (an abort, an access violation) exits
+// with an NT status, 0xC0000000 and up.
 std::string failureReason(const std::string& executable, const CommandResult& result)
 {
     constexpr auto signalBase = 128;
+    constexpr auto errorStatus = 0xC0000000u;
+
+    if (Platform::isWindows())
+    {
+        const auto status = static_cast<unsigned>(result.exitCode);
+
+        if (status < errorStatus)
+            return result.error;
+
+        char text[16];
+        std::snprintf(text, sizeof text, "0x%08X", status);
+        return executable + " crashed (exit status " + text + ")";
+    }
 
     if (result.exitCode > signalBase)
         return executable + " was terminated by signal "

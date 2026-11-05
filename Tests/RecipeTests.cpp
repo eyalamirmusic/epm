@@ -13,6 +13,7 @@
 
 #include <eacp/Core/App/Args.h>
 #include <eacp/Core/Platform/Platform.h>
+#include <eacp/Core/Process/Process.h>
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/Files.h>
@@ -38,21 +39,39 @@ FilePath recipeFixture()
 }
 
 // The recipe tests compile with the toolchain that built epm; a binary moved
-// to another machine may not find it there. Windows has no recipes until
-// RecipeBuild has an MSVC argument shape.
+// to another machine may not find it there.
 bool hasRecipeCompiler()
 {
-    if (eacp::Platform::isWindows())
-    {
-        eacp::Console::print("Recipe: skipped, no recipes on Windows");
-        return false;
-    }
-
     if (eacp::Files::isFile(recipeSdk().compiler))
         return true;
 
     eacp::Console::print("Recipe: skipped, no compiler at " + recipeSdk().compiler);
     return false;
+}
+
+// How runCommand reports a recipe executable that aborted: a signal, or on
+// Windows an NT status.
+bool reportsAbort(const std::string& error)
+{
+    if (eacp::Platform::isWindows())
+        return error.find("crashed (exit status 0xC") != std::string::npos;
+
+    return error.find("terminated by signal " + std::to_string(SIGABRT))
+           != std::string::npos;
+}
+
+// Whether a diagnostic names line 2 of epm.cpp, as GCC and Clang
+// (epm.cpp:2:5:) or cl and clang-cl (epm.cpp(2,5):) spell it.
+bool namesLineTwo(const std::string& diagnostic)
+{
+    return diagnostic.find("epm.cpp:2:") != std::string::npos
+           || diagnostic.find("epm.cpp(2") != std::string::npos;
+}
+
+// The static library the child build of Tiny leaves in its prefix.
+std::string tinyArchive()
+{
+    return eacp::Platform::isWindows() ? "Tiny.lib" : "libTiny.a";
 }
 
 Env envForSystem(std::string systemName)
@@ -235,7 +254,7 @@ auto tRecipeBuildsAndRuns = test("Recipe/buildAndRun") = []
     check(eacp::Files::isFile(build.log));
 
     // The recipe header compiles clean under epm's own warning flags.
-    check(eacp::Files::readFile(build.log).find("warning:") == std::string::npos);
+    check(eacp::Files::readFile(build.log).find("warning") == std::string::npos);
 
     if (!build.ok)
         return;
@@ -280,8 +299,7 @@ auto tRecipeBuildsAndRuns = test("Recipe/buildAndRun") = []
 
     const auto aborted = runRecipe(build.executable, envForProfile("abort"));
     check(!aborted.project);
-    check(aborted.error.find("terminated by signal " + std::to_string(SIGABRT))
-          != std::string::npos);
+    check(reportsAbort(aborted.error));
 
     const auto exited = runRecipe(build.executable, envForProfile("exit0"));
     check(!exited.project);
@@ -756,17 +774,8 @@ auto tRecipeMainConfigureCwd =
     check(runRecipeMain(fromWork, createNamedAfterCwd, work) == 0);
     check(eacp::Files::readFile(work / "out" / "graph.json") == graph);
 
-    // The root's step runs from its directory too. Where there are no recipe
-    // executables (Windows) it runs the default steps in this process
-    // instead, which keep no steps/ files.
+    // The root's step runs from its directory too.
     const auto commandFile = work / "out" / "steps" / "project.command";
-
-    if (!RecipeManifestLoader {CacheRoot {work / "cache"}}.runsSteps())
-    {
-        check(!eacp::Files::exists(commandFile));
-        return;
-    }
-
     const auto command = eacp::Files::readFile(commandFile);
     check(command.starts_with("# run from: " + project.str() + "\n"));
 };
@@ -911,7 +920,7 @@ auto tRecipeBuildPackage = test("Recipe/buildPackage/tinyCMakeProject") = []
     check(output->configs == eacp::Vector<std::string> {"Release"});
     check(eacp::Files::isFile(prefix / "Release.json"));
     check(eacp::Files::isFile(prefix / "epm-targets.cmake"));
-    check(eacp::Files::isFile(prefix / "lib" / "Release" / "libTiny.a"));
+    check(eacp::Files::isFile(prefix / "lib" / "Release" / tinyArchive()));
 
     // The hook's option reached the child build, and so the fingerprint.
     const auto exported = eacp::Files::readFile(prefix / "export-Release.cmake");
@@ -1011,8 +1020,8 @@ auto tRecipeSyntaxError = test("Recipe/syntaxError") = []
     check(!eacp::Files::isFile(build.executable));
     check(build.error.find(build.log.str()) != std::string::npos);
     check(!build.details.empty());
-    check(build.firstDiagnostic.find("error:") != std::string::npos);
-    check(build.firstDiagnostic.find("epm.cpp:2:") != std::string::npos);
+    check(build.firstDiagnostic.find("error") != std::string::npos);
+    check(namesLineTwo(build.firstDiagnostic));
 };
 
 auto tRecipeManifestLoader = test("Recipe/manifestLoader/describesForTheEnv") = []
@@ -1066,8 +1075,8 @@ auto tRecipeManifestLoaderFails =
     check(!project.has_value());
     check(error.find("did not compile") != std::string::npos);
     check(error.find("compile.log") != std::string::npos);
-    check(error.find("epm.cpp:2:") != std::string::npos);
-    check(error.find("error:") != std::string::npos);
+    check(namesLineTwo(error));
+    check(error.find("error") != std::string::npos);
 };
 
 // The step through the real executable, as epm configure runs it: its input
@@ -1086,7 +1095,6 @@ auto tRecipeLoaderStep = test("Recipe/manifestLoader/runsABuildStep") = []
     input.recipeName = "Recipe";
     auto error = std::string {};
 
-    check(loader.runsSteps());
     const auto output = loader.build(recipeFixture(), input, error);
 
     check(error.empty());
@@ -1127,7 +1135,7 @@ auto tRecipeLoaderStep = test("Recipe/manifestLoader/runsABuildStep") = []
     const auto died = loader.build(recipeFixture(), input, error);
     check(!died.has_value());
     check(error.find("build --package Tiny") != std::string::npos);
-    check(error.find("terminated by signal") != std::string::npos);
+    check(reportsAbort(error));
     check(!eacp::Files::exists(steps / "Tiny.out.json"));
 };
 
@@ -1168,8 +1176,25 @@ auto tRecipeStepQuiet = test("Recipe/step/failurePrintedOnce") = []
 
     check(command.find("--quiet") == std::string::npos);
 
+    // Through the shell the command file is quoted for: on Windows cmd,
+    // which takes the line as written between the quotes after /S /C.
     const auto runInShell = [&](const std::string& line)
-    { return runCommand("/bin/sh", {"-c", line}, runFrom); };
+    {
+        if (!eacp::Platform::isWindows())
+            return runCommand("/bin/sh", {"-c", line}, runFrom);
+
+        auto options = eacp::Processes::ProcessOptions {};
+        options.commandLine = "cmd.exe /S /C \"" + line + "\"";
+        options.workingDirectory = runFrom.str();
+        options.mergeErrorOutput = true;
+        const auto result = eacp::Processes::run(std::move(options));
+
+        auto command = CommandResult {};
+        command.ok = result.launched && result.exitCode == 0;
+        command.exitCode = result.launched ? result.exitCode : -1;
+        command.output = result.output;
+        return command;
+    };
 
     const auto byHand = runInShell(command);
     check(!byHand.ok && byHand.exitCode == 1);
@@ -1418,14 +1443,16 @@ auto tRecipeNoEntry = test("Recipe/noEntryPoint") = []
 
     check(!build.ok);
     check(!eacp::Files::isFile(build.executable));
-    check(build.details.find("main") != std::string::npos);
+
+    // What the linker misses: main, or on Windows the entry point or the
+    // subsystem it would have implied.
+    check(build.details.find("main") != std::string::npos
+          || build.details.find("entry point") != std::string::npos
+          || build.details.find("subsystem") != std::string::npos);
 };
 
 auto tRecipeMissingSource = test("Recipe/missingSource") = []
 {
-    if (eacp::Platform::isWindows())
-        return;
-
     auto root = eacp::TemporaryFile {};
     const auto build = buildRecipe(root.path() / "epm.cpp", CacheRoot {root.path()});
 

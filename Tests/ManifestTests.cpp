@@ -108,6 +108,11 @@ auto tManifestShorthand = test("Manifest/expandGitUrl") = []
           == "https://gitlab.com/a/b.git");
     check(expandGitUrl("git@github.com:a/b.git") == "git@github.com:a/b.git");
     check(expandGitUrl("/srv/git/b") == "/srv/git/b");
+    check(expandGitUrl("C:/git/b") == "C:/git/b");
+    check(expandGitUrl("c:\\git\\b") == "c:\\git\\b");
+    check(isLocalRepository("D:/x"));
+    check(!isLocalRepository("D:x"));
+    check(!isLocalRepository("fmtlib/fmt"));
     check(expandGitUrl("file:///srv/git/b") == "file:///srv/git/b");
     check(expandGitUrl("").empty());
 };

@@ -7,8 +7,9 @@ on:
     inputs:
       smoke:
         description: >-
-          Build and run Examples/HelloEacp with the just-built epm (on macOS
-          also HelloGraph under Xcode and NestedGraph for the iOS simulator)
+          Build and run Examples/HelloEacp and HelloGraph with the just-built
+          epm (on macOS also HelloGraph under Xcode and NestedGraph for the
+          iOS simulator)
         type: boolean
         default: false
       package:
@@ -152,6 +153,24 @@ jobs:
             ${{ matrix.cmake-flags }}
           cmake --build build-hello
           "./build-hello/hello$EXE_SUFFIX"
+
+      # (a2) The recipe path with this epm, on every platform: epm compiles
+      # HelloGraph's epm.cpp with the compiler that built it (cl's command
+      # line on Windows) and runs it, eacp is built into (a)'s cache, and
+      # epm_add_recipe builds the recipe as a target of the consumer, whose
+      # -configure target runs the whole configure again in it.
+      - name: HelloGraph smoke test
+        if: inputs.smoke
+        run: |
+          cmake -S Examples/HelloGraph -B build-hello-graph -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            "-DEPM_EXECUTABLE=$ROOT/build/Apps/epm/epm$EXE_SUFFIX" \
+            "-DEPM_CACHE=$ROOT/.epm-cache" -DEPM_VERBOSE=ON \
+            ${{ matrix.cmake-flags }}
+          ls "$ROOT/.epm-cache"/recipe/*/epm-recipe$EXE_SUFFIX
+          cmake --build build-hello-graph
+          "./build-hello-graph/hello$EXE_SUFFIX"
+          [ -f "build-hello-graph/HelloGraphRecipe$EXE_SUFFIX" ]
+          cmake --build build-hello-graph --target HelloGraphRecipe-configure
 
       # The consumer smoke tests below share one cache, $CONSUMER_CACHE: (b)
       # starts it empty, (c) deletes only its tool/ directory and (d) reuses

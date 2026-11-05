@@ -67,7 +67,9 @@ longer-term design and background.
     per-config archives: the install prefix's, found beside the binary, or
     beside `env.epmExecutable` through `recipeSdkFor`, else the build tree's
     baked in through `RecipeSdk.cpp.in` and `file(GENERATE)`), `RecipeBuild`
-    (one compiler call into `<cache>/recipe/<key12>/epm-recipe`), `RecipeRun`
+    (one compiler call into `<cache>/recipe/<key12>/epm-recipe`, GCC and Clang
+    spellings or cl's, for cl and clang-cl, which need the MSVC environment of a
+    developer prompt), `RecipeRun`
     (runs its `describe` in a scratch directory and reads the `Project`
     back).
   - `Cache/` — `CacheRoot`, `SourceCache`, `BinaryCache` (entries under
@@ -101,9 +103,7 @@ longer-term design and background.
   `configure` is a bootstrapper: it compiles the root `epm.cpp` into the cache
   and runs that executable's `configure` with the same (absolute) arguments
   in the manifest's directory, its stdout streamed, its stderr passed on and
-  its exit code returned, an env naming this epm when `env.json` names none;
-  where there are no recipe executables (Windows) it runs `runConfigure` in
-  its own process over a `RecipeManifestLoader`.
+  its exit code returned, an env naming this epm when `env.json` names none.
 - `CMake/` — vendored `CPM.cmake`, `Find<dep>.cmake` shims (one
   `CPMAddPackage` each), `get_epm.cmake` (the file consumers vendor: finds
   the binary, then registers the provider when there is an `epm.cpp`),
@@ -153,14 +153,14 @@ longer-term design and background.
   target, a whole configure in that executable, refreshing
   `<build>/epm/graph.cmake` with everything cached and the dependencies'
   steps still in their cached recipe executables, its `describe` command and
-  `describe --exe`; skipped without git and on Windows), `GraphIos.cmake`
+  `describe --exe`; skipped without git), `GraphIos.cmake`
   (ctest `epm_graph_ios`: the same fixtures for an iOS simulator consumer,
   `-DCMAKE_SYSTEM_NAME=iOS` without a toolchain file, under Xcode and Ninja:
   the child builds get the target system, the entries are
   `ios-simulator-<arch>` simulator archives and the app links; skipped off
   macOS and without the simulator SDK) and
-  `InstallRoundTrip.cmake` (ctest `epm_install_round_trip`, not on Windows:
-  the installed epm through a symlink, `recipe-sdk`, `describe` and a
+  `InstallRoundTrip.cmake` (ctest `epm_install_round_trip`: the installed epm
+  through a symlink (the binary itself on Windows), `recipe-sdk`, `describe` and a
   `configure` of an empty recipe against the prefix only, and which `bin/epm`
   a second configuration's install leaves).
 - `Examples/` — consumer projects: `HelloEacp` (`epm_add_package`),

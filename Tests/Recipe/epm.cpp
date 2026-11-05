@@ -4,9 +4,11 @@
 
 #include <epm/Recipe/Recipe.h>
 
+#include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Process/Process.h>
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/FilePath.h>
+#include <eacp/Core/Utils/Strings.h>
 
 #include <cstdlib>
 #include <filesystem>
@@ -45,7 +47,13 @@ struct TestProject final : Recipe
 
         // A package named by what a child process prints.
         if (env().profile == "shell")
-            add(eacp::Processes::run("/bin/sh", {"-c", "printf shell"}).output);
+        {
+            const auto printed =
+                eacp::Platform::isWindows()
+                    ? eacp::Processes::run("cmd.exe", {"/c", "echo shell"}).output
+                    : eacp::Processes::run("/bin/sh", {"-c", "printf shell"}).output;
+            add(eacp::Strings::trim(printed));
+        }
 
         // A package named after the directory the recipe runs in.
         if (env().profile == "cwd")

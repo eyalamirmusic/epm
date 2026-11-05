@@ -1,8 +1,9 @@
 # Installs the build tree into a fresh prefix and runs the installed epm
-# through a symlink, as one on PATH is: `recipe-sdk` must name the prefix's
-# headers and archives and nothing of the build or source tree, and `describe`
-# must compile and run Tests/Recipe/epm.cpp against them. Then checks which
-# bin/epm a later install of another configuration leaves (share/epm/epm-config).
+# through a symlink, as one on PATH is (on Windows, where a symlink needs a
+# privilege, the binary itself): `recipe-sdk` must name the prefix's headers
+# and archives and nothing of the build or source tree, and `describe` must
+# compile and run Tests/Recipe/epm.cpp against them. Then checks which bin/epm
+# a later install of another configuration leaves (share/epm/epm-config).
 #
 #   cmake -DBUILD_DIR=<build> -DCONFIG=<config> [-DWORK_DIR=<dir>]
 #         -P Tests/InstallRoundTrip.cmake
@@ -12,8 +13,9 @@ cmake_minimum_required(VERSION 3.25)
 get_filename_component(repo_dir "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 
 if (CMAKE_HOST_WIN32)
-    message(STATUS "epm-install-round-trip: skipped: no epm.cpp recipes on Windows yet")
-    return()
+    set(suffix ".exe")
+else ()
+    set(suffix "")
 endif ()
 
 foreach (var IN ITEMS BUILD_DIR CONFIG)
@@ -53,8 +55,14 @@ endfunction()
 
 install_config("${CONFIG}")
 
-set(epm "${WORK_DIR}/path/epm")
-file(CREATE_LINK "${prefix}/bin/epm" "${epm}" SYMBOLIC)
+set(binary "${prefix}/bin/epm${suffix}")
+
+if (CMAKE_HOST_WIN32)
+    set(epm "${binary}")
+else ()
+    set(epm "${WORK_DIR}/path/epm")
+    file(CREATE_LINK "${binary}" "${epm}" SYMBOLIC)
+endif ()
 
 # recipe-sdk: the prefix's include/ and lib/<config>/, nothing of the trees.
 run_checked("${epm}" recipe-sdk --out "${WORK_DIR}/recipe-sdk.cmake")
@@ -122,7 +130,7 @@ foreach (file IN ITEMS graph.cmake graph.json)
     endif ()
 endforeach ()
 
-if (NOT output MATCHES "/epm-recipe configure --manifest ")
+if (NOT output MATCHES "/epm-recipe(\\.exe)? configure --manifest ")
     message(FATAL_ERROR "epm-install-round-trip: configure ran no recipe "
             "executable:\n${output}")
 endif ()
@@ -138,16 +146,16 @@ if (NOT installed_config STREQUAL "${CONFIG}")
 endif ()
 
 function(expect_binary_kept kept why)
-    file(READ "${prefix}/bin/epm" binary LIMIT 6)
+    file(READ "${binary}" contents LIMIT 6)
 
-    if (kept AND NOT binary STREQUAL "marker")
+    if (kept AND NOT contents STREQUAL "marker")
         message(FATAL_ERROR "epm-install-round-trip: bin/epm replaced: ${why}")
-    elseif (NOT kept AND binary STREQUAL "marker")
+    elseif (NOT kept AND contents STREQUAL "marker")
         message(FATAL_ERROR "epm-install-round-trip: bin/epm kept: ${why}")
     endif ()
 endfunction()
 
-file(WRITE "${prefix}/bin/epm" "marker")
+file(WRITE "${binary}" "marker")
 file(WRITE "${config_file}" "Release\n")
 install_config(Debug)
 expect_binary_kept(ON "a Debug install over a Release binary")
@@ -156,12 +164,12 @@ file(WRITE "${config_file}" "Debug\n")
 install_config(Debug)
 expect_binary_kept(OFF "a Debug install over a Debug binary")
 
-file(WRITE "${prefix}/bin/epm" "marker")
+file(WRITE "${binary}" "marker")
 file(WRITE "${config_file}" "RelWithDebInfo\n")
 install_config(Debug)
 expect_binary_kept(OFF "a Debug install over a RelWithDebInfo binary")
 
-file(WRITE "${prefix}/bin/epm" "marker")
+file(WRITE "${binary}" "marker")
 file(WRITE "${config_file}" "Debug\n")
 install_config(Release)
 expect_binary_kept(OFF "a Release install over a Debug binary")

@@ -245,11 +245,6 @@ std::optional<Project> SelfRecipeLoader::loadFile(const FilePath& file,
     return others.loadFile(file, env, error);
 }
 
-bool SelfRecipeLoader::runsSteps() const
-{
-    return others.runsSteps();
-}
-
 std::optional<BuildOutput> SelfRecipeLoader::build(const FilePath& file,
                                                    const BuildInput& input,
                                                    std::string& error)

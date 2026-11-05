@@ -35,6 +35,6 @@ public:
 
 // The default steps, a plain CMakePackage, run in this process: what `epm
 // resolve` runs for a package, and `epm configure` for one whose step has no
-// recipe executable to run in (a root without an epm.cpp, Windows).
+// recipe executable to run in (a root without an epm.cpp).
 BuildOutput buildInProcess(const BuildInput& input);
 } // namespace epm

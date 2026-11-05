@@ -553,6 +553,17 @@ function(epm_use_manifest manifest)
     epm_provider_register("${EPM_DIR}/graph.cmake" PREPARE epm_configure_graph)
 endfunction()
 
+# The compiler family of a CMAKE_CXX_COMPILER_ID and its
+# CMAKE_CXX_COMPILER_FRONTEND_VARIANT: MSVC for cl and for clang-cl, which
+# share an ABI; else the id itself.
+function(epm_recipe_compiler_family id frontend out_var)
+    if (id STREQUAL "MSVC" OR frontend STREQUAL "MSVC")
+        set(${out_var} MSVC PARENT_SCOPE)
+    else ()
+        set(${out_var} "${id}" PARENT_SCOPE)
+    endif ()
+endfunction()
+
 # Defines epm::recipe, once per configure, from what `epm recipe-sdk` says the
 # epm binary builds a recipe executable with: an INTERFACE IMPORTED target with
 # the include directories, definitions, C++ standard and compile options, which
@@ -670,7 +681,14 @@ function(epm_recipe_sdk)
 
     # The archives hold epm's C++ types, compiled by epm's compiler: another
     # compiler family need not share their ABI (standard library, mangling).
-    if (NOT CMAKE_CXX_COMPILER_ID STREQUAL EPM_RECIPE_COMPILER_ID)
+    # cl and clang-cl are one family: clang-cl's id is Clang, but it takes
+    # cl's command line (an MSVC frontend) and targets the MSVC ABI.
+    epm_recipe_compiler_family("${CMAKE_CXX_COMPILER_ID}"
+            "${CMAKE_CXX_COMPILER_FRONTEND_VARIANT}" ours_family)
+    epm_recipe_compiler_family("${EPM_RECIPE_COMPILER_ID}"
+            "${EPM_RECIPE_COMPILER_FRONTEND}" epms_family)
+
+    if (NOT ours_family STREQUAL epms_family)
         get_filename_component(prefix "${EPM_EXECUTABLE}" DIRECTORY)
         get_filename_component(prefix "${prefix}" DIRECTORY)
         set(text "this build compiles C++ with ${CMAKE_CXX_COMPILER_ID} "
@@ -778,11 +796,39 @@ function(epm_recipe_sdk)
     endif ()
 
     # epm-recipe's warning flags, which the recipe header compiles clean under,
-    # are only meant for the compiler that built epm.
-    foreach (option IN LISTS EPM_RECIPE_COMPILE_OPTIONS)
+    # are only meant for the compiler family that built epm: with the mismatch
+    # allowed above, another family does without them.
+    if (ours_family STREQUAL epms_family)
         set_property(TARGET epm::recipe APPEND PROPERTY INTERFACE_COMPILE_OPTIONS
-                "$<$<CXX_COMPILER_ID:${EPM_RECIPE_COMPILER_ID}>:${option}>")
-    endforeach ()
+                ${EPM_RECIPE_COMPILE_OPTIONS})
+    endif ()
+
+    # On the MSVC ABI a recipe's objects must be compiled against the runtime
+    # library of the archives they link (LNK2038 otherwise): the one of the
+    # SDK configuration each of this build's configurations maps to, which is
+    # not always the same-named one (a build tree's epm has one
+    # configuration). epm_add_recipe gives the target this property: the
+    # fallback configuration's runtime, under one $<IF> per configuration
+    # mapped above.
+    set(runtime "")
+
+    if (epms_family STREQUAL "MSVC"
+            AND DEFINED EPM_RECIPE_MSVC_RUNTIME_${fallback_config})
+        set(runtime "${EPM_RECIPE_MSVC_RUNTIME_${fallback_config}}")
+
+        foreach (config IN LISTS mapped_configs)
+            epm_recipe_config_preference("${config}" "${configs}" preference)
+            list(GET preference 0 sdk_config)
+
+            if (NOT config STREQUAL "NOCONFIG"
+                    AND DEFINED EPM_RECIPE_MSVC_RUNTIME_${sdk_config})
+                set(runtime
+                        "$<IF:$<CONFIG:${config}>,${EPM_RECIPE_MSVC_RUNTIME_${sdk_config}},${runtime}>")
+            endif ()
+        endforeach ()
+    endif ()
+
+    set_property(GLOBAL PROPERTY EPM_RECIPE_MSVC_RUNTIME_LIBRARY "${runtime}")
 
     set(ours "${CMAKE_CXX_COMPILER}")
     set(epms "${EPM_RECIPE_CXX_COMPILER}")
@@ -848,10 +894,9 @@ endfunction()
 # `<target> describe --env <env.json> [--out <project.json>]` prints the
 # Project describe() declares, as JSON.
 #
-# Does nothing on Windows yet (RecipeBuild does not compile recipes with MSVC's
-# command-line shape), when cross-compiling (a recipe runs on the host, against
-# epm's host libraries), and in a project that is not the top-level one (a
-# package added from source; a child build epm runs gets a stub from
+# Does nothing when cross-compiling (a recipe runs on the host, against epm's
+# host libraries), and in a project that is not the top-level one (a package
+# added from source; a child build epm runs gets a stub from
 # epm-export.cmake).
 function(epm_add_recipe target)
     cmake_parse_arguments(EPM_ARGS "" "SOURCE" "" ${ARGN})
@@ -859,12 +904,6 @@ function(epm_add_recipe target)
     if (EPM_ARGS_UNPARSED_ARGUMENTS)
         message(FATAL_ERROR
                 "epm_add_recipe: unknown arguments: ${EPM_ARGS_UNPARSED_ARGUMENTS}")
-    endif ()
-
-    if (WIN32 OR CMAKE_HOST_WIN32)
-        message(STATUS "epm: epm_add_recipe(${target}) does nothing: no epm.cpp "
-                "recipes on Windows yet")
-        return()
     endif ()
 
     if (NOT PROJECT_IS_TOP_LEVEL)
@@ -915,6 +954,14 @@ function(epm_add_recipe target)
         set_target_properties(${target} PROPERTIES
                 CXX_STANDARD ${standard}
                 CXX_STANDARD_REQUIRED ON)
+    endif ()
+
+    # The runtime library of the archives each configuration links
+    # (epm_recipe_sdk); the default elsewhere.
+    get_property(runtime GLOBAL PROPERTY EPM_RECIPE_MSVC_RUNTIME_LIBRARY)
+
+    if (runtime)
+        set_target_properties(${target} PROPERTIES MSVC_RUNTIME_LIBRARY "${runtime}")
     endif ()
 
     # A host program: a universal (or foreign-architecture) build of the

@@ -122,10 +122,8 @@ struct GraphResult
 // package whose dependency ended up in source goes to source too. A source
 // package's step runs in the executable as well, for the options its hooks
 // set (BuildOutput::options, graph.cmake's OPTIONS); it must record source.
-// A package whose owner has no recipe, and every package where the loader
-// runs no steps (Windows), get the default steps in this process; there, an
-// owner with custom steps (StepOwner::customBuild) is an error unless the
-// package is in source mode.
+// A package whose owner has no recipe gets the default steps in this
+// process.
 GraphResult resolvePlan(const GraphPlan& plan,
                         const Env& env,
                         const CacheRoot& cache,

@@ -228,31 +228,12 @@ int configure()
         if (!inputs)
             return fail(error);
 
-        const auto cache = epm::configureCache(args);
-        auto loader =
-            epm::RecipeManifestLoader {cache, epm::configureStepsDirectory(args)};
-
-        if (loader.runsSteps())
-            return configureInRecipe(args, inputs->env, cache);
-
-        // No recipe executables (Windows): the graph in this process, which
-        // fails at the first recipe, as buildRecipe does there.
-        const auto result = epm::runConfigure(args, loader);
-
-        if (!result.ok)
-        {
-            if (!result.details.empty())
-                Console::printError(result.details);
-
-            return fail(result.error);
-        }
+        return configureInRecipe(args, inputs->env, epm::configureCache(args));
     }
     catch (const std::exception& error)
     {
         return fail(error.what());
     }
-
-    return 0;
 }
 
 int graphCMake()
