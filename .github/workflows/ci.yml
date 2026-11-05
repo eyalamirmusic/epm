@@ -1,12 +1,13 @@
 name: CI
 
-# Every branch push and pull request: unit tests and the HelloEacp smoke test
-# on all five targets, plus the packages as workflow artifacts (so a broken
+# Pushes to main and pull requests (feature branches run it through a PR, or
+# by hand with workflow_dispatch): unit tests and the HelloEacp smoke test on
+# all five targets, plus the packages as workflow artifacts (so a broken
 # install shows up before it reaches a release branch). Tags are built by
 # release.yml.
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
