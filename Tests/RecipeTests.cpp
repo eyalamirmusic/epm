@@ -253,12 +253,13 @@ auto tRecipeBuildsAndRuns = test("Recipe/buildAndRun") = []
         check(mac.project->packages[0].options.at("FMT_DOC") == "OFF");
     }
 
-    const auto linux = runRecipe(build.executable, envForSystem("Linux"));
-    check(linux.project.has_value() && linux.project->packages.size() == 2);
+    // Not `linux`: GNU dialects predefine it as a macro.
+    const auto linuxRun = runRecipe(build.executable, envForSystem("Linux"));
+    check(linuxRun.project.has_value() && linuxRun.project->packages.size() == 2);
 
-    if (linux.project && linux.project->packages.size() == 2)
+    if (linuxRun.project && linuxRun.project->packages.size() == 2)
     {
-        const auto& uuid = linux.project->packages[1];
+        const auto& uuid = linuxRun.project->packages[1];
         check(uuid.name == "uuid");
         check(uuid.git == "/opt/epm/libuuid");
         check(uuid.mode == "source");
@@ -755,8 +756,18 @@ auto tRecipeMainConfigureCwd =
     check(runRecipeMain(fromWork, createNamedAfterCwd, work) == 0);
     check(eacp::Files::readFile(work / "out" / "graph.json") == graph);
 
-    const auto command =
-        eacp::Files::readFile(work / "out" / "steps" / "project.command");
+    // The root's step runs from its directory too. Where there are no recipe
+    // executables (Windows) it runs the default steps in this process
+    // instead, which keep no steps/ files.
+    const auto commandFile = work / "out" / "steps" / "project.command";
+
+    if (!RecipeManifestLoader {CacheRoot {work / "cache"}}.runsSteps())
+    {
+        check(!eacp::Files::exists(commandFile));
+        return;
+    }
+
+    const auto command = eacp::Files::readFile(commandFile);
     check(command.starts_with("# run from: " + project.str() + "\n"));
 };
 
@@ -1013,10 +1024,10 @@ auto tRecipeManifestLoader = test("Recipe/manifestLoader/describesForTheEnv") = 
     auto loader = RecipeManifestLoader {CacheRoot {root.path()}};
     auto error = std::string {};
 
-    const auto linux =
+    const auto linuxProject =
         loader.load(recipeFixture().parentDirectory(), envForSystem("Linux"), error);
     check(error.empty());
-    check(linux.has_value() && linux->packages.size() == 2);
+    check(linuxProject.has_value() && linuxProject->packages.size() == 2);
 
     const auto none =
         loader.load(root.path() / "no-recipe-here", envForSystem("Linux"), error);

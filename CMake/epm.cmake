@@ -265,7 +265,10 @@ function(epm_write_overrides file)
                     set(home "$ENV{USERPROFILE}")
                 endif ()
 
-                string(REGEX REPLACE "^~" "${home}" value "${value}")
+                # Not REGEX REPLACE: a Windows home's backslashes would be
+                # escapes in its replacement.
+                string(SUBSTRING "${value}" 1 -1 rest)
+                set(value "${home}${rest}")
             endif ()
 
             file(TO_CMAKE_PATH "${value}" value)
