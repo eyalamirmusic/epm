@@ -29,7 +29,10 @@ struct TestProject final : Recipe
 {
     void describe() override
     {
-        add("fmt", "fmtlib/fmt", "11.0.2").option("FMT_DOC", "OFF");
+        // Release where a Debug build links it: everywhere but the MSVC ABI.
+        add("fmt", "fmtlib/fmt", "11.0.2")
+            .option("FMT_DOC", "OFF")
+            .releaseIfPossible();
 
         if (env().systemName == "Linux")
         {

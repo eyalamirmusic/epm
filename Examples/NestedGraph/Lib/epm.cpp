@@ -1,6 +1,6 @@
-// Lib's dependencies: eacp, pinned to source, so a library developer builds
-// and steps through the eacp it links. An app using Lib can take the binary
-// cache back (App/epm.cpp).
+// Lib's dependencies: eacp, prebuilt from the binary cache, Release where a
+// Debug build links it. An app using Lib (App/epm.cpp) gets the same eacp
+// through this file.
 
 #include <epm/Recipe/Recipe.h>
 
@@ -10,7 +10,7 @@ namespace
 {
 // How eacp is built into the cache: the default CMake flow, without its tests
 // and examples. Lib owns these steps, so they run in Lib's recipe executable
-// wherever Lib is used, an app taking eacp prebuilt included.
+// wherever Lib is used, in an app as much as here.
 struct Eacp final : CMakePackage
 {
     void configure(CMakeBuild& build) override
@@ -24,7 +24,11 @@ struct Lib final : Recipe
 {
     void describe() override
     {
-        auto eacp = add<Eacp>("eacp", "eyalamirmusic/eacp", "main").mode("source");
+        // Prebuilt (the default mode), and Release only where a Debug build
+        // of Lib or of an app using it links Release archives: everywhere but
+        // the MSVC ABI, which gets the build's own configuration instead.
+        auto eacp =
+            add<Eacp>("eacp", "eyalamirmusic/eacp", "main").releaseIfPossible();
 
         for (auto option: {"EACP_BUILD_GRAPHICS", "EACP_BUILD_WEBVIEW"})
             eacp.option(option, "OFF");

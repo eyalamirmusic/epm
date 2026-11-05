@@ -1,5 +1,7 @@
 #pragma once
 
+#include <epm/Spec/Env.h>
+
 #include <eacp/Core/Utils/Containers.h>
 
 #include <optional>
@@ -8,10 +10,13 @@
 
 namespace epm
 {
-// The configuration a requested name is built as: Debug and Release as they
-// are, RelWithDebInfo and MinSizeRel as Release (any case); nullopt for any
-// other name.
+// The configuration a requested name is built as: Debug, Release and
+// RelWithDebInfo as they are, MinSizeRel as Release (any case); nullopt for
+// any other name.
 std::optional<std::string> buildConfigFor(std::string_view name);
+
+// The name is built as Debug: against a debug runtime on the MSVC ABI.
+bool isDebugConfig(std::string_view name);
 
 // The names in canonical order (Debug, Release, RelWithDebInfo, MinSizeRel,
 // then any others as given), without duplicates.
@@ -26,9 +31,20 @@ eacp::Vector<std::string> missingConfigs(const eacp::Vector<std::string>& presen
                                          const eacp::Vector<std::string>& wanted);
 
 // Which available config a consumer config links: the same name (any case),
-// else Release, else the first available. `available` must not be empty.
+// else Release, else RelWithDebInfo, else the first available. `available`
+// must not be empty.
 std::string mapConsumerConfig(std::string_view consumer,
                               const eacp::Vector<std::string>& available);
+
+// Why the consumer cannot link a package whose configs are `available`, on
+// the MSVC ABI: a build of the consumer (its build type, or each type of a
+// multi-config generator) maps to a config of the other kind, Debug against
+// release or the reverse, and the debug and release runtimes do not link
+// (_ITERATOR_DEBUG_LEVEL, RuntimeLibrary). nullopt elsewhere, when every
+// build maps to its own kind, or when the consumer's runtime has no debug
+// variant (msvcRuntimeHasDebug), which links release archives from Debug.
+std::optional<std::string>
+    configLinkProblem(const Env& env, const eacp::Vector<std::string>& available);
 
 // The export namespace of a config's child build: epm_debug::, epm_release::.
 std::string exportNamespace(std::string_view config);

@@ -101,8 +101,8 @@ void describe() override
 ```
 
 Mode is per package, not per config, so on a multi-config generator the root caches
-every config. `Examples/NestedGraph` is the runnable version, with eacp as the
-pinned dependency.
+every config. `Examples/NestedGraph` has the same shape, a library and an app using
+it from a sibling directory, with eacp prebuilt and Release only in both.
 
 ## 2. Manifest `epm.cpp`
 
@@ -160,11 +160,17 @@ A recipe is two phases of user code, each run in its recipe executable:
   The handle stays valid across later `add` calls. Unset fields are empty; the binary
   applies defaults. (`Project::add` and the free functions `setOption`, `addConfig`,
   `setMode` and `setAbiMatch`, which these wrap, remain for code that holds a
-  `Project`.)
+  `Project`.) `releaseIfPossible()` is `config("Release")` wherever a Debug build of
+  the project links a Release build of the package, which is everywhere but the MSVC
+  ABI (cl, clang-cl: `env().cxxCompilerFrontend`, `msvcAbi`), whose debug and release
+  runtimes do not mix; there it leaves the configs as they are, `auto` unless the recipe
+  set some, so a Debug build caches a Debug build of the package (`PoC.md` §9, which
+  also says what the binary refuses). The examples use it for eacp.
 - `env()` is the consumer's `env.json` (`Spec/Env.h`): generator, build type,
-  compiler, `systemName`, `systemProcessor`, `crossCompiling`, `osxArchitectures`
-  (for an Apple device or simulator SDK, the ones it builds by default when the
-  consumer sets none), deployment target and the rest, plus `profile`; `PoC.md` §2.
+  compiler (`cxxCompilerId`, `cxxCompilerFrontend`), `systemName`, `systemProcessor`,
+  `crossCompiling`, `osxArchitectures` (for an Apple device or simulator SDK, the ones
+  it builds by default when the consumer sets none), deployment target, the MSVC
+  runtime library (`msvcRuntime`) and the rest, plus `profile`; `PoC.md` §2.
   A consumer cross-compiling without a toolchain file (`-DCMAKE_SYSTEM_NAME=iOS`)
   has its child builds told the target system and sysroot too (`PoC.md` §5). Every recipe in the graph, the root's and each dependency's, is described
   for the same `env`, in both phases. A recipe's `describe` run without `--env`
@@ -425,8 +431,9 @@ mismatch as such rather than half reading the file: the recipe as above, epm as
    libraries; libcurl on Linux, which `eacp-network` links). Under cl or clang-cl
    (`RecipeSdk::compilerFrontend`, `clCommandLine`) the same in cl's spelling: `/std:`,
    the configuration's flags as they are (their `/O` level; a Debug `/RTC1` takes no
-   `/O` after it), the runtime library of epm's archives (`/MD`, `/MDd`:
-   `RecipeSdk::msvcRuntime`, which a recipe's objects must match), `/I`, `/D`, the
+   `/O` after it), the runtime library of epm's archives (`/MT`, `/MTd`, the static one
+   epm builds with by default: `RecipeSdk::msvcRuntime`, which a recipe's objects must
+   match), `/I`, `/D`, the
    object beside the executable (`/Fo`), `/Fe:`, then the archives and the link options
    after `/link`, a system library as `<name>.lib`, with CMake's standard libraries
    (`kernel32.lib`, `gdi32.lib`, ...; `CMAKE_CXX_STANDARD_LIBRARIES`, which every link
@@ -570,9 +577,12 @@ the same-named configuration when epm has it, else Debug for Debug and Release f
 anything else (RelWithDebInfo, MinSizeRel, a custom or empty configuration), then the
 other of the two. On the MSVC ABI the recipe target's `MSVC_RUNTIME_LIBRARY` follows
 the same mapping (a Debug build of the project against a Release-only build tree epm
-compiles the recipe with `/MD`): objects and archives compiled against different
-runtimes do not link (LNK2038). So it works the same with an installed epm as with one
-built from a checkout: the SDK always comes from the binary.
+compiles the recipe with `/MT`, the static runtime epm builds with by default): objects
+and archives compiled against different runtimes do not link (LNK2038). A project whose
+`CMAKE_MSVC_RUNTIME_LIBRARY` is of the other kind than epm's (DLL against static, §2)
+gets one warning: the recipe executable takes epm's runtime, its dependencies the
+project's. So it works the same with an installed epm as with one built from a
+checkout: the SDK always comes from the binary.
 
 - The archives hold epm's C++ types, compiled by epm's compiler, and another compiler
   family need not share their ABI. A project whose compiler family (its
@@ -602,6 +612,22 @@ Limits:
   from `INCLUDE` and `LIB`, which a developer command prompt (vcvarsall) sets and a
   Visual Studio generator's MSBuild sets for its own compiles only. A configure run
   outside one fails at the first recipe, saying so.
+- On the MSVC ABI, one runtime library throughout. epm builds itself and its recipe
+  libraries with the static runtime (`MultiThreaded$<$<CONFIG:Debug>:Debug>`, its
+  top-level `CMakeLists.txt`), and `epm.cmake` defaults `CMAKE_MSVC_RUNTIME_LIBRARY` to
+  the same for the project that includes it, in the including scope before any target
+  (a top-level include runs inside `project()`, before the compiler is known, so it is
+  set everywhere and read only by cl and clang-cl), with `CMAKE_POLICY_DEFAULT_CMP0091`
+  for subdirectories whose `cmake_minimum_required` predates the variable. The
+  project's value, or CMake's DLL default when it set the variable empty, goes into
+  `env.json` as `msvcRuntime` and from there into every child build and the
+  fingerprint (`PoC.md` §2, §5, §9), so the dependencies always match the project's
+  objects. A project that chose the other kind (set the variable before the include, or
+  with `-D`) keeps it; its recipe executable still links epm's archives, so
+  `epm_add_recipe` compiles it with epm's runtime (§7) and warns once that the two
+  differ. Static and dynamic entries never share a cache directory. A Debug build and a
+  release build do not mix either: `releaseIfPossible()` above, and `PoC.md` §9 for what
+  the configure refuses.
 
 ## 3. Overrides `overrides.json`
 

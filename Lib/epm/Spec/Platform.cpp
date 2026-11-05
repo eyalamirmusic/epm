@@ -85,4 +85,22 @@ bool crossCompilesWithoutToolchain(const Env& env)
     return env.crossCompiling && env.toolchainFile.empty()
            && !env.systemName.empty();
 }
+
+bool msvcAbi(const Env& env)
+{
+    return env.cxxCompilerId == "MSVC" || env.cxxCompilerFrontend == "MSVC";
+}
+
+std::string msvcRuntimeOf(const Env& env)
+{
+    if (!msvcAbi(env))
+        return {};
+
+    return env.msvcRuntime.empty() ? staticMsvcRuntime : env.msvcRuntime;
+}
+
+bool msvcRuntimeHasDebug(std::string_view runtime)
+{
+    return runtime.find("Debug") != std::string_view::npos;
+}
 } // namespace epm

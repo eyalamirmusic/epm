@@ -31,12 +31,10 @@ struct HelloGraph final : Recipe
         for (auto option: {"EACP_BUILD_GRAPHICS", "EACP_BUILD_WEBVIEW"})
             eacp.option(option, "OFF");
 
-        eacp.config("Release");
-
-        // -DEPM_PROFILE=debug-deps also caches eacp's Debug build, to step
-        // into it from a debugger.
-        if (env().profile == "debug-deps")
-            eacp.config("Debug");
+        // Prebuilt (the default mode), and Release only where a Debug build
+        // of hello links Release archives: everywhere but the MSVC ABI, which
+        // gets this build's own configuration instead.
+        eacp.releaseIfPossible();
     }
 };
 } // namespace

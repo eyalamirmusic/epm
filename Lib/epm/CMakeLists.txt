@@ -436,11 +436,15 @@ else ()
 endif ()
 
 # The runtime library epm-recipe's objects were compiled against, which a
-# recipe's must match (LNK2038 otherwise): the target's MSVC_RUNTIME_LIBRARY,
-# else CMake's default for it.
-if (MSVC)
-    set(EPM_SDK_MSVC_RUNTIME
-            "$<IF:$<BOOL:$<TARGET_PROPERTY:epm-recipe,MSVC_RUNTIME_LIBRARY>>,$<TARGET_PROPERTY:epm-recipe,MSVC_RUNTIME_LIBRARY>,MultiThreaded$<$<CONFIG:Debug>:Debug>DLL>")
+# recipe's must match (LNK2038 otherwise): CMAKE_MSVC_RUNTIME_LIBRARY, the
+# static runtime by default (the top-level CMakeLists.txt), else CMake's own
+# default for it. The variable, not the target's property: the property holds
+# the variable's generator expression as text, which $<TARGET_PROPERTY> would
+# hand file(GENERATE) unevaluated.
+if (MSVC AND NOT CMAKE_MSVC_RUNTIME_LIBRARY STREQUAL "")
+    set(EPM_SDK_MSVC_RUNTIME "${CMAKE_MSVC_RUNTIME_LIBRARY}")
+elseif (MSVC)
+    set(EPM_SDK_MSVC_RUNTIME "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 else ()
     set(EPM_SDK_MSVC_RUNTIME "")
 endif ()

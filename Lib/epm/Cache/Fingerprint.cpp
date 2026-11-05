@@ -46,6 +46,7 @@ AbiFingerprint fingerprintFor(const Request& request,
     fingerprint.osxArchitectures = env.osxArchitectures;
     fingerprint.osxDeploymentTarget = env.osxDeploymentTarget;
     fingerprint.cxxStandard = env.cxxStandard;
+    fingerprint.msvcRuntime = msvcRuntimeOf(env);
     fingerprint.toolchainFile = env.toolchainFile;
     fingerprint.options = request.options;
     fingerprint.sourceId = sourceId;
@@ -86,7 +87,8 @@ bool abiMatches(const AbiFingerprint& recorded,
     const auto sameBase =
         recorded.schema == wanted.schema && recorded.platform == wanted.platform
         && recorded.options == wanted.options && recorded.sourceId == wanted.sourceId
-        && recorded.deps == wanted.deps;
+        && recorded.deps == wanted.deps
+        && recorded.msvcRuntime == wanted.msvcRuntime;
 
     if (policy == AbiMatch::any || !sameBase)
         return sameBase;
@@ -130,6 +132,7 @@ std::optional<std::string> abiNote(const AbiFingerprint& recorded,
             recorded.osxDeploymentTarget,
             current.osxDeploymentTarget);
     compare("cxxStandard", recorded.cxxStandard, current.cxxStandard);
+    compare("msvcRuntime", recorded.msvcRuntime, current.msvcRuntime);
     compare("toolchainFile", recorded.toolchainFile, current.toolchainFile);
     compare(
         "toolchainFileHash", recorded.toolchainFileHash, current.toolchainFileHash);

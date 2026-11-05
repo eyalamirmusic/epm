@@ -107,11 +107,24 @@ Vector<std::string> configureArguments(const ChildBuild& build)
             addDefinition(arguments, "CMAKE_ANDROID_ARCH_ABI", env.androidAbi);
     }
 
-    addDefinition(arguments, "CMAKE_C_COMPILER", env.cCompiler);
+    // A C++-only consumer names no C compiler. CMake refuses a child build
+    // mixing clang-cl for C++ with the cl it would pick for C, and both
+    // compile C with the same executable, so the child gets it for C too.
+    const auto cCompiler =
+        env.cCompiler.empty() && msvcAbi(env) ? env.cxxCompiler : env.cCompiler;
+
+    addDefinition(arguments, "CMAKE_C_COMPILER", cCompiler);
     addDefinition(arguments, "CMAKE_CXX_COMPILER", env.cxxCompiler);
     addDefinition(arguments, "CMAKE_OSX_ARCHITECTURES", env.osxArchitectures);
     addDefinition(arguments, "CMAKE_OSX_DEPLOYMENT_TARGET", env.osxDeploymentTarget);
     addDefinition(arguments, "CMAKE_CXX_STANDARD", env.cxxStandard);
+
+    if (msvcAbi(env))
+    {
+        addDefinition(arguments, "CMAKE_MSVC_RUNTIME_LIBRARY", msvcRuntimeOf(env));
+        addDefinition(arguments, "CMAKE_POLICY_DEFAULT_CMP0091", "NEW");
+    }
+
     addDefinition(arguments,
                   "CMAKE_ARCHIVE_OUTPUT_DIRECTORY",
                   (build.prefix / "lib" / build.config).str());

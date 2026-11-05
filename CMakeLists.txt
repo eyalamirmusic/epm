@@ -20,6 +20,17 @@ if (MSVC)
     add_compile_options(/EHsc)
 endif ()
 
+# The static runtime library on the MSVC ABI (cl, clang-cl): epm's default for
+# itself and its recipe libraries, and, through epm.cmake, for every project
+# using it and that project's dependencies (Docs/Graph.md §2). The policy
+# default carries the variable into a dependency whose cmake_minimum_required
+# predates it (CMake 3.15), which would otherwise take the DLL runtime.
+if (NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif ()
+
+set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
+
 option(EPM_VERBOSE_CONFIGURE
         "Print the third-party fetch and probe detail hidden by default" OFF)
 

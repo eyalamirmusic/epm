@@ -527,6 +527,16 @@ private:
             }
         }
 
+        if (merged.effective.request.mode != "source")
+        {
+            if (auto linkProblem =
+                    configLinkProblem(inputs.env, merged.effective.request.configs))
+            {
+                fail(name + ": " + *linkProblem);
+                return std::nullopt;
+            }
+        }
+
         const auto owner = stepOwner(name, node);
 
         if (!owner)

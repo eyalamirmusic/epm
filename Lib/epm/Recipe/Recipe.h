@@ -24,7 +24,7 @@
 //         void describe() override
 //         {
 //             auto fmt = add<Fmt>("fmt", "fmtlib/fmt", "11.0.2");
-//             fmt.option("FMT_TEST", "OFF");
+//             fmt.option("FMT_TEST", "OFF").releaseIfPossible();
 //             add("nlohmann_json", "nlohmann/json", "v3.11.3");
 //
 //             if (env().profile == "debug-deps")
@@ -59,18 +59,26 @@ namespace epm
 class PackageDecl
 {
 public:
-    PackageDecl(Project& projectToUse, int indexToUse);
+    PackageDecl(Project& projectToUse, int indexToUse, const Env& envToUse);
 
     PackageDecl& option(std::string key, std::string value);
     PackageDecl& config(std::string config);
     PackageDecl& mode(std::string mode);
     PackageDecl& abiMatch(std::string abiMatch);
 
+    // config("Release") where a Debug build of the project links a Release
+    // build of the package: everywhere but the MSVC ABI (cl, clang-cl), whose
+    // debug and release runtimes do not mix. There it leaves the configs as
+    // they are, auto unless the recipe set some: the project's own build
+    // type, or Debug and Release under a multi-config generator.
+    PackageDecl& releaseIfPossible();
+
     ManifestPackage& package() const;
 
 private:
     Project* project;
     int index;
+    const Env* env;
 };
 
 // An epm.cpp's project. describe() declares the packages it depends on, for

@@ -270,7 +270,19 @@ auto tRecipeBuildsAndRuns = test("Recipe/buildAndRun") = []
         check(mac.project->packages[0].git == "fmtlib/fmt");
         check(mac.project->packages[0].tag == "11.0.2");
         check(mac.project->packages[0].options.at("FMT_DOC") == "OFF");
+        check(mac.project->packages[0].configs
+              == eacp::Vector<std::string> {"Release"});
     }
+
+    // releaseIfPossible() leaves the configs alone on the MSVC ABI.
+    auto msvc = envForSystem("Windows");
+    msvc.cxxCompilerId = "Clang";
+    msvc.cxxCompilerFrontend = "MSVC";
+    const auto msvcRun = runRecipe(build.executable, msvc);
+    check(msvcRun.project.has_value() && !msvcRun.project->packages.empty());
+
+    if (msvcRun.project && !msvcRun.project->packages.empty())
+        check(msvcRun.project->packages[0].configs.empty());
 
     // Not `linux`: GNU dialects predefine it as a macro.
     const auto linuxRun = runRecipe(build.executable, envForSystem("Linux"));

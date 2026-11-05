@@ -18,12 +18,13 @@ constexpr auto envFixture = R"({ "schema": 1,
   "buildType": "Debug", "configurationTypes": [],
   "cCompiler": "/usr/bin/cc", "cxxCompiler": "/usr/bin/c++",
   "cxxCompilerId": "AppleClang", "cxxCompilerVersion": "17.0.0.17000013",
+  "cxxCompilerFrontend": "GNU",
   "systemName": "Darwin", "systemProcessor": "arm64",
   "osxArchitectures": "", "osxDeploymentTarget": "11.0",
   "osxSysroot": "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
   "androidAbi": "",
   "cxxStandard": "20",
-  "toolchainFile": "" })";
+  "toolchainFile": "", "msvcRuntime": "" })";
 
 constexpr auto requestFixture = R"({ "schema": 2,
   "name": "eacp",
@@ -61,6 +62,8 @@ auto tEnvParses = test("Spec/env/parsesPoCFixture") = []
     check(env->osxSysroot == "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk");
     check(env->androidAbi.empty());
     check(env->cxxStandard == "20");
+    check(env->cxxCompilerFrontend == "GNU");
+    check(env->msvcRuntime.empty());
 };
 
 auto tEnvRoundTrip = test("Spec/env/roundTrip") = []

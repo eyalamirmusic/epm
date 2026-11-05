@@ -28,11 +28,13 @@ macro(expect_error spec)
     endif ()
 endmacro()
 
-# auto, single-config generator: the build type, mapped to Debug or Release.
+# auto, single-config generator: the build type as it is built: Debug, Release
+# or RelWithDebInfo; MinSizeRel, an empty or an unknown type as Release.
 expect_configs(auto FALSE Debug "Debug")
 expect_configs(auto FALSE Release "Release")
 expect_configs(auto FALSE "" "Release")
-expect_configs(auto FALSE RelWithDebInfo "Release")
+expect_configs(auto FALSE RelWithDebInfo "RelWithDebInfo")
+expect_configs(auto FALSE relwithdebinfo "RelWithDebInfo")
 expect_configs(auto FALSE MinSizeRel "Release")
 expect_configs(auto FALSE debug "Debug")
 expect_configs(auto FALSE Profile "Release")
@@ -44,13 +46,14 @@ expect_configs(auto TRUE "" "Debug;Release")
 expect_configs(auto TRUE Debug "Debug;Release")
 expect_configs(auto TRUE Release "Debug;Release")
 
-# Explicit lists: mapped, deduplicated, Debug first, any case.
+# Explicit lists: mapped, deduplicated, Debug, Release, RelWithDebInfo, any case.
 expect_configs(Release FALSE Debug "Release")
 expect_configs(Debug TRUE "" "Debug")
 expect_configs("Release;Debug" FALSE "" "Debug;Release")
 expect_configs("Debug;Release" TRUE "" "Debug;Release")
-expect_configs("RelWithDebInfo" FALSE Debug "Release")
-expect_configs("MinSizeRel;Release;RelWithDebInfo" FALSE "" "Release")
+expect_configs("RelWithDebInfo" FALSE Debug "RelWithDebInfo")
+expect_configs("MinSizeRel;Release;RelWithDebInfo" FALSE "" "Release;RelWithDebInfo")
+expect_configs("RelWithDebInfo;Debug;MinSizeRel" FALSE "" "Debug;Release;RelWithDebInfo")
 expect_configs("debug;RELEASE" FALSE "" "Debug;Release")
 
 # Unknown names are refused.

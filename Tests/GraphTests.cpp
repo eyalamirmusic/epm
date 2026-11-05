@@ -354,9 +354,17 @@ auto tMergeConfigs = test("Graph/merge/configs") = []
           == eacp::Vector<std::string> {"Release"});
     check(*resolveConfigs({"auto"}, multi)
           == eacp::Vector<std::string> {"Debug", "Release"});
-    check(*resolveConfigs({"RelWithDebInfo", "debug"}, single)
-          == eacp::Vector<std::string> {"Debug", "Release"});
+    check(*resolveConfigs({"RelWithDebInfo", "debug", "MinSizeRel"}, single)
+          == eacp::Vector<std::string> {"Debug", "Release", "RelWithDebInfo"});
     check(!resolveConfigs({"Profile"}, single).has_value());
+
+    auto withDebugInfo = Env {};
+    withDebugInfo.buildType = "RelWithDebInfo";
+    check(*resolveConfigs({}, withDebugInfo)
+          == eacp::Vector<std::string> {"RelWithDebInfo"});
+    withDebugInfo.buildType = "MinSizeRel";
+    check(*resolveConfigs({}, withDebugInfo)
+          == eacp::Vector<std::string> {"Release"});
 
     auto layers = MergeLayers {};
     layers.root = ManifestPackage {"b", "a/b", "v1", {}, {"Fast"}, {}, {}};
@@ -562,6 +570,43 @@ auto tGraphRootOptionsOnly = test("Graph/walk/rootMayOnlyAddOptions") = []
     const auto orphan = sources.plan(inputsFor(orphanRoot));
     check(!orphan.ok);
     check(orphan.error.find("C:") == 0);
+};
+
+// On the MSVC ABI a Debug consumer needs a Debug config of every prebuilt
+// package (configLinkProblem); a source package links whatever it builds.
+auto tGraphMsvcDebug = test("Graph/walk/msvcDebugNeedsADebugConfig") = []
+{
+    auto sources = FakeSources {};
+    sources.add("A", "v1");
+
+    auto root = Project {};
+    addConfig(root.add("A", "org/A", "v1"), "Release");
+
+    auto inputs = inputsFor(root);
+    inputs.env.cxxCompilerId = "Clang";
+    inputs.env.cxxCompilerFrontend = "MSVC";
+
+    const auto plan = sources.plan(inputs);
+    check(!plan.ok);
+    check(plan.error.find("A: a Debug build of this project cannot link its "
+                          "Release build")
+          == 0);
+
+    auto debugToo = inputs;
+    addConfig(debugToo.project.packages[0], "Debug");
+    check(sources.plan(debugToo).ok);
+
+    auto releaseRuntime = inputs;
+    releaseRuntime.env.msvcRuntime = "MultiThreaded";
+    check(sources.plan(releaseRuntime).ok);
+
+    auto fromSource = inputs;
+    setMode(fromSource.project.packages[0], "source");
+    check(sources.plan(fromSource).ok);
+
+    auto gnu = inputs;
+    gnu.env.cxxCompilerFrontend = "GNU";
+    check(sources.plan(gnu).ok);
 };
 
 auto tGraphCycle = test("Graph/walk/cycleIsAnError") = []

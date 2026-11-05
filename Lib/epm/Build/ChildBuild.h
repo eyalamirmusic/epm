@@ -59,9 +59,12 @@ struct ChildBuild
 // The `cmake -S -B` arguments of PoC §5. Toolchain values the consumer left
 // empty are not passed at all; the target system, processor and sysroot only
 // when it cross-compiles without a toolchain file
-// (crossCompilesWithoutToolchain). With a dependencyGraph also EPM_NESTED,
-// EPM_GRAPH, EPM_EXECUTABLE and epm-nested.cmake after epm-export.cmake in
-// CMAKE_PROJECT_TOP_LEVEL_INCLUDES (Docs/Graph.md §10).
+// (crossCompilesWithoutToolchain). On the MSVC ABI the consumer's runtime
+// library (msvcRuntimeOf), with the policy (CMP0091) that makes a project
+// with an older cmake_minimum_required honour it, and the C++ compiler for
+// C as well when the consumer enabled no C. With a dependencyGraph
+// also EPM_NESTED, EPM_GRAPH, EPM_EXECUTABLE and epm-nested.cmake after
+// epm-export.cmake in CMAKE_PROJECT_TOP_LEVEL_INCLUDES (Docs/Graph.md §10).
 eacp::Vector<std::string> configureArguments(const ChildBuild& build);
 
 eacp::Vector<std::string> buildArguments(const ChildBuild& build);

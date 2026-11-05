@@ -172,6 +172,29 @@ jobs:
           [ -f "build-hello-graph/HelloGraphRecipe$EXE_SUFFIX" ]
           cmake --build build-hello-graph --target HelloGraphRecipe-configure
 
+      # (a3) The same consumer as a Debug build on the MSVC ABI, where a Debug
+      # program cannot link Release archives: HelloGraph's releaseIfPossible()
+      # leaves eacp's configs to the build type there, so (a)'s cache entry
+      # gains a Debug build, and the Debug hello links it with the static
+      # debug runtime. Elsewhere a Debug build links the Release entry.
+      - name: HelloGraph Debug smoke test
+        if: inputs.smoke
+        run: |
+          cmake -S Examples/HelloGraph -B build-hello-graph-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            "-DEPM_EXECUTABLE=$ROOT/build/Apps/epm/epm$EXE_SUFFIX" \
+            "-DEPM_CACHE=$ROOT/.epm-cache" -DEPM_VERBOSE=ON \
+            ${{ matrix.cmake-flags }}
+          cmake --build build-hello-graph-debug
+          "./build-hello-graph-debug/hello$EXE_SUFFIX"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            ls "$ROOT/.epm-cache"/bin/eacp/*/*/lib/Debug/
+          else
+            if ls "$ROOT/.epm-cache"/bin/eacp/*/*/lib/Debug/ 2>/dev/null; then
+              echo "::error::a Debug build of eacp was cached off the MSVC ABI"
+              exit 1
+            fi
+          fi
+
       # The consumer smoke tests below share one cache, $CONSUMER_CACHE: (b)
       # starts it empty, (c) deletes only its tool/ directory and (d) reuses
       # the tool entry (c) built, so each reuses the eacp build of the step
@@ -287,9 +310,9 @@ jobs:
 
       # (f) An iOS simulator consumer under Xcode, without a toolchain file:
       # NestedGraph's App, with the sibling Lib from source and eacp prebuilt
-      # (every config, as Xcode is multi-config) for the simulator's
-      # architectures. The app has to be a simulator binary for each of them,
-      # and eacp's cache entry an ios-simulator one.
+      # (Release only, which the Debug configuration links as well) for the
+      # simulator's architectures. The app has to be a simulator binary for
+      # each of them, and eacp's cache entry an ios-simulator one.
       - name: NestedGraph iOS simulator smoke test
         if: inputs.smoke && runner.os == 'macOS'
         run: |

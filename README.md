@@ -106,10 +106,7 @@ struct HelloGraph final : Recipe
         for (auto option: {"EACP_BUILD_GRAPHICS", "EACP_BUILD_WEBVIEW"})
             eacp.option(option, "OFF");
 
-        eacp.config("Release");
-
-        if (env().profile == "debug-deps")    // -DEPM_PROFILE=debug-deps
-            eacp.config("Debug");
+        eacp.config("Release");    // prebuilt, Release only: Debug links it too
     }
 };
 } // namespace
@@ -131,8 +128,17 @@ its hooks still set the options its `add_subdirectory` gets): `add<T>` names the
 adjust the default CMake build, or from `Package` for steps of its own), and a
 plain `add` gets the default ones, which build any CMake project. Dependencies
 with an `epm.cpp` of their own are walked the same way, and their own recipe
-builds them. Recipes run on macOS and Linux; Windows has only
-`epm_add_package` for now.
+builds them. Recipes run on macOS, Linux and Windows (there, from a Visual
+Studio developer prompt, with cl or clang-cl). In a recipe,
+`releaseIfPossible()` asks for a package's Release build only where a Debug
+build of your project links it, which is everywhere but Windows.
+
+**Windows runtime library.** epm builds itself, its recipe libraries and, by
+default, your project and every dependency with the static runtime
+(`CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>`), so a
+program needs no Visual C++ redistributable. Set the variable before including
+`get_epm.cmake` (or with `-D`) for the DLL one: your dependencies follow your
+project, and are cached apart from the static builds.
 
 **Debugging.** With `epm_add_recipe`, the recipe is a target of your build,
 and that executable can run the whole configure itself: it describes, fetches,
@@ -158,11 +164,14 @@ Two cache variables, set with `-D` or before the first `epm_add_package`:
 
 - `EPM_CONFIGS` (default `auto`): which configurations of each package to build
   and cache. `auto` builds your `CMAKE_BUILD_TYPE` with a single-config
-  generator (Ninja, Makefiles; empty, `RelWithDebInfo` and `MinSizeRel` mean
-  Release) and Debug + Release with a multi-config one (Xcode, Visual Studio).
-  An explicit list such as `-DEPM_CONFIGS="Debug;Release"` builds those.
-  Configurations are added to a cached build as they are needed; one that is
-  there is never rebuilt.
+  generator (Ninja, Makefiles; Debug, Release or RelWithDebInfo, the last with
+  symbols of its own; empty and `MinSizeRel` mean Release) and Debug + Release
+  with a multi-config one (Xcode, Visual Studio). An explicit list such as
+  `-DEPM_CONFIGS="Debug;Release"` builds those. Configurations are added to a
+  cached build as they are needed; one that is there is never rebuilt. A build
+  links the same-named configuration, else Release; on Windows (the MSVC ABI)
+  a Debug build needs a Debug one, as the debug and release runtimes do not
+  mix, and the configure says so rather than the linker.
 - `EPM_ABI_MATCH` (default `compatible`): which cached build may be used.
   `compatible` accepts one made with the same compiler family and major version
   (so Xcode's clang and the command-line tools' clang share builds), the same
@@ -302,7 +311,7 @@ tag and push `vX.Y.Z`. That is all: no version or hash lives anywhere else in
 the repository, and consumers build the new tag within a day.
 
 The Linux binaries are built on Ubuntu 24.04 and need glibc 2.38 or newer and
-`libcurl.so.4`; the Windows binaries need the Visual C++ runtime. An archive's
+`libcurl.so.4`; the Windows binaries link the runtime statically. An archive's
 epm compiles recipes with the compiler CI built it with, at CI's path, and its
 libraries come from that compiler: where that path does not exist, it cannot
 run an `epm.cpp`, so a project with a manifest is better served by
