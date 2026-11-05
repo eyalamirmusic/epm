@@ -640,16 +640,16 @@ endfunction()
 # build directory is configured only the first time, so a later call is an
 # incremental build; the compilers of that first configure stay (delete the
 # entry to change them), except that one configured with other `settings`
-# (before EPM_UNITY_BUILD, say) is configured again in place with these. Each
-# step of a first build prints a status line, with `what` naming the epm being
-# built. Sets build_dirs, the build directories used.
+# (before EPM_UNITY_BUILD_DEPENDENCIES, say) is configured again in place with
+# these. Each step of a first build prints a status line, with `what` naming
+# the epm being built. Sets build_dirs, the build directories used.
 function(get_epm_build_configs source_dir tool_dir log what)
     get_epm_consumer_toolchain()
     get_epm_is_multi_config("${tool_generator}" multi_config)
 
     # Recorded in each build directory's epm-configured. An epm that predates an
     # option only warns that it is unused.
-    set(settings -DEPM_UNITY_BUILD=ON)
+    set(settings -DEPM_UNITY_BUILD=ON -DEPM_UNITY_BUILD_DEPENDENCIES=ON)
     set(common_args -S "${source_dir}" ${toolchain_args} -DEPM_ENABLE_TESTS=OFF
             ${settings} "-DCMAKE_INSTALL_PREFIX=${tool_dir}")
 

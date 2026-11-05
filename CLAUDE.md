@@ -243,11 +243,13 @@ delete a published tag.
 `epmTests`, not its dependencies) as unity builds; it is OFF by default, for
 the per-file `compile_commands.json`, and ON in get_epm's builds, so file-local
 names must be unique across each target's sources.
+`EPM_UNITY_BUILD_DEPENDENCIES=ON` (OFF by default, ON in get_epm's builds)
+does the same for the dependencies: it forces `EACP_UNITY_BUILD` and
+`MIRO_UNITY_BUILD` on and sets `UNITY_BUILD` on ResEmbed (fmt, miniz and
+NanoTest are one source per library, ea_data_structures header-only).
 `EPM_CI_BUILD=ON` (OFF by default, ON for epm's own configures in CI and
 `Docker/run-linux-ci.sh`) mirrors CI's flag set, as eacp's `EACP_CI_BUILD`:
-`EPM_UNITY_BUILD`, `EACP_UNITY_BUILD`, `MIRO_UNITY_BUILD` and `UNITY_BUILD`
-on ResEmbed (fmt, miniz and NanoTest are one source per library,
-ea_data_structures header-only).
+both of the above.
 Use a local eacp with `-DCPM_eacp_SOURCE=/path/to/eacp`.
 
 ## Code style

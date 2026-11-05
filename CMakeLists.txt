@@ -37,15 +37,24 @@ option(EPM_VERBOSE_CONFIGURE
 # Off by default: a unity build collapses the per-file entries of
 # compile_commands.json that LSP tooling reads. get_epm.cmake turns it on.
 option(EPM_UNITY_BUILD "Compile epm's own targets as CMake unity builds" OFF)
+option(EPM_UNITY_BUILD_DEPENDENCIES
+        "Compile epm's dependencies as CMake unity builds" OFF)
 option(EPM_CI_BUILD "Mirror the exact flag set used by CI builds" OFF)
 
-# CI's flag set, as eacp's EACP_CI_BUILD: unity builds for epm and for every
-# dependency with sources to batch. Cache variables, so they are set before
-# the dependencies' own option() calls read them. fmt, miniz and NanoTest's
-# libraries are one source each, and ea_data_structures is header-only.
+# CI's flag set, as eacp's EACP_CI_BUILD.
 if (EPM_CI_BUILD)
     set(EPM_UNITY_BUILD ON CACHE BOOL
             "Compile epm's own targets as CMake unity builds" FORCE)
+    set(EPM_UNITY_BUILD_DEPENDENCIES ON CACHE BOOL
+            "Compile epm's dependencies as CMake unity builds" FORCE)
+endif ()
+
+# Every dependency with sources to batch: eacp and Miro through their own
+# switches, set before their option() calls read them and forced, so turning
+# this on in an existing build directory overrides the OFF those calls cached;
+# ResEmbed below. fmt, miniz and NanoTest's libraries are one source each, and
+# ea_data_structures is header-only.
+if (EPM_UNITY_BUILD_DEPENDENCIES)
     set(EACP_UNITY_BUILD ON CACHE BOOL
             "Compile eacp libraries as CMake unity builds" FORCE)
     set(MIRO_UNITY_BUILD ON CACHE BOOL
@@ -97,8 +106,7 @@ if (EPM_ENABLE_TESTS)
     add_subdirectory(Tests)
 endif ()
 
-# epm's own targets only: its dependencies have switches of their own
-# (EACP_UNITY_BUILD, MIRO_UNITY_BUILD), which their projects keep unity-clean.
+# epm's own targets only: its dependencies are EPM_UNITY_BUILD_DEPENDENCIES'.
 if (EPM_UNITY_BUILD)
     set(epm_unity_targets epm-recipe epm)
 
@@ -110,6 +118,6 @@ if (EPM_UNITY_BUILD)
 endif ()
 
 # ResEmbed (through eacp-core and Miro) has no unity switch of its own.
-if (EPM_CI_BUILD)
+if (EPM_UNITY_BUILD_DEPENDENCIES)
     set_target_properties(ResEmbed PROPERTIES UNITY_BUILD ON)
 endif ()

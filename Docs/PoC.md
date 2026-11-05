@@ -397,8 +397,9 @@ endif()
 epm/
   CMakeLists.txt            CMake 3.31; options EPM_ENABLE_TESTS (default ON when top-level),
                             EPM_UNITY_BUILD (epm's own targets; default OFF),
-                            EPM_CI_BUILD (CI's flags: unity for epm and its
-                            dependencies; default OFF);
+                            EPM_UNITY_BUILD_DEPENDENCIES (eacp, Miro, ResEmbed;
+                            default OFF), EPM_CI_BUILD (CI's flags: both of
+                            those; default OFF);
                             install: bin/epm, lib/<Config>/, include/,
                             share/epm/cmake/{epm,epm-provider}.cmake,
                             share/epm/epm-config (§8)
@@ -569,8 +570,9 @@ stays (*Install*, below):
   one, `<entry>/build-<generator>`, built and installed with `--config Debug` and
   `--config Release`. Since the generator does not follow the consumer's, consumers
   with different generators share a `local-<hash>` entry's build directories.
-- Every configure gets `-DEPM_ENABLE_TESTS=OFF`, `-DEPM_UNITY_BUILD=ON` (epm's own
-  targets as unity builds; an older tag ignores it) and, unless the environment sets
+- Every configure gets `-DEPM_ENABLE_TESTS=OFF`, `-DEPM_UNITY_BUILD=ON` and
+  `-DEPM_UNITY_BUILD_DEPENDENCIES=ON` (epm's own targets and its dependencies as unity
+  builds; an older tag ignores them) and, unless the environment sets
   `CPM_SOURCE_CACHE`, `-DCPM_SOURCE_CACHE=<entry>/cpm`, so both builds share one
   download of epm's dependencies.
 - It is a host build. Each step runs through `cmake -E env --unset=…`
@@ -595,8 +597,9 @@ stays (*Install*, below):
 - A build directory is configured once (`epm-configured` is written in it after the
   configure succeeds); later builds are incremental, and the compilers of that first
   configure stay: delete the entry to change them. `epm-configured` holds the settings
-  get_epm passes (`-DEPM_UNITY_BUILD=ON`); a directory configured with others, such as
-  one from before that option, is configured again in place with them.
+  get_epm passes (`-DEPM_UNITY_BUILD=ON;-DEPM_UNITY_BUILD_DEPENDENCIES=ON`); a
+  directory configured with others, such as one from before an option, is configured
+  again in place with them.
 - A cold build prints `-- epm: building epm v0.1.3 into <entry> (Debug and Release;
   first time only)`, then one status line per phase (`-- epm: epm v0.1.3: configuring
   Debug`, `building Debug`, `installing Debug`, the same for Release; one `configuring`
