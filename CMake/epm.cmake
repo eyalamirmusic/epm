@@ -52,12 +52,17 @@
 #                               platform cache directory, as the binary does)
 #   EPM_VERBOSE                 pass --verbose and echo the binary's output
 #   EPM_CONFIGS                 auto (the default): a single-config generator
-#                               gets CMAKE_BUILD_TYPE (empty, RelWithDebInfo and
-#                               MinSizeRel mean Release), a multi-config one
+#                               gets CMAKE_BUILD_TYPE (Debug, Release or
+#                               RelWithDebInfo; empty, MinSizeRel and any
+#                               other mean Release), a multi-config one
 #                               Debug;Release. Or a list of Debug, Release,
-#                               RelWithDebInfo, MinSizeRel (the last two are
-#                               built as Release). A cache entry gains configs
-#                               as they are asked for; it never rebuilds one.
+#                               RelWithDebInfo, MinSizeRel (built as Release).
+#                               A cache entry gains configs as they are asked
+#                               for; it never rebuilds one. A build links the
+#                               same-named config, else Release, else
+#                               RelWithDebInfo; on the MSVC ABI a Debug build
+#                               needs a Debug one (the runtimes do not mix),
+#                               which the binary checks.
 #   EPM_ABI_MATCH               which cached build may be used: compatible
 #                               (default: same platform, compiler id and major
 #                               version, deployment target, C++ standard,
@@ -76,6 +81,14 @@
 # EPM_PROFILE (variable, else environment) is no override: it goes into
 # env.json, where an epm.cpp may branch on it (env.profile).
 #
+# On the MSVC ABI (cl, clang-cl) this module defaults CMAKE_MSVC_RUNTIME_LIBRARY
+# to the static runtime, epm's own (MultiThreaded$<$<CONFIG:Debug>:Debug>), for
+# the project's targets; set it before the include (or with -D) for another.
+# Dependencies always follow the project's (env.json's msvcRuntime, part of the
+# fingerprint), so they link. epm's own archives, which a recipe executable
+# links, have the runtime epm was built with: epm_add_recipe warns when the
+# project chose the other kind and compiles the recipe with epm's.
+#
 # Files exchanged with the binary live under ${CMAKE_BINARY_DIR}/epm/:
 #   env.json                    toolchain description, written once per configure
 #   overrides.json              the overrides above (manifest flow)
@@ -88,52 +101,66 @@ include_guard(GLOBAL)
 
 include("${CMAKE_CURRENT_LIST_DIR}/epm-provider.cmake")
 
+# The configuration a requested name is built as (the binary's buildConfigFor):
+# Debug, Release and RelWithDebInfo as they are, MinSizeRel as Release, any
+# case; empty for another name.
+function(epm_build_config name out_var)
+    string(TOLOWER "${name}" lower)
+
+    if (lower STREQUAL "debug")
+        set(${out_var} Debug PARENT_SCOPE)
+    elseif (lower STREQUAL "relwithdebinfo")
+        set(${out_var} RelWithDebInfo PARENT_SCOPE)
+    elseif (lower MATCHES "^(release|minsizerel)$")
+        set(${out_var} Release PARENT_SCOPE)
+    else ()
+        set(${out_var} "" PARENT_SCOPE)
+    endif ()
+endfunction()
+
 # Resolves an EPM_CONFIGS value into the configs to build and cache, each one
-# Debug or Release (RelWithDebInfo and MinSizeRel are built as Release), Debug
-# first. `auto` (or empty) takes `build_type` for a single-config generator,
-# where an empty or unknown type means Release, and Debug;Release for a
-# multi-config one. Sets `error_var` instead for an unknown config name.
+# Debug, Release or RelWithDebInfo (epm_build_config), in that order. `auto`
+# (or empty) takes `build_type` for a single-config generator, where an empty
+# or unknown type means Release, and Debug;Release for a multi-config one.
+# Sets `error_var` instead for an unknown config name.
 function(epm_resolve_configs spec is_multi_config build_type out_var error_var)
     set(configs "")
     set(error "")
     string(TOLOWER "${spec}" lower_spec)
 
     if (lower_spec STREQUAL "auto" OR lower_spec STREQUAL "")
-        string(TOLOWER "${build_type}" lower_type)
-
         if (is_multi_config)
             set(configs Debug Release)
-        elseif (lower_type STREQUAL "debug")
-            set(configs Debug)
         else ()
-            set(configs Release)
+            epm_build_config("${build_type}" built)
+
+            if (built STREQUAL "")
+                set(built Release)
+            endif ()
+
+            set(configs ${built})
         endif ()
     else ()
-        set(debug FALSE)
-        set(release FALSE)
+        set(wanted "")
 
         foreach (config IN LISTS spec)
-            string(TOLOWER "${config}" lower)
+            epm_build_config("${config}" built)
 
-            if (lower STREQUAL "debug")
-                set(debug TRUE)
-            elseif (lower MATCHES "^(release|relwithdebinfo|minsizerel)$")
-                set(release TRUE)
-            else ()
+            if (built STREQUAL "")
                 set(error "EPM_CONFIGS has an unknown configuration '${config}': "
                         "give auto, or a list of Debug, Release, RelWithDebInfo "
                         "and MinSizeRel")
                 break()
             endif ()
+
+            list(APPEND wanted ${built})
         endforeach ()
 
-        if (debug AND NOT error)
-            list(APPEND configs Debug)
-        endif ()
-
-        if (release AND NOT error)
-            list(APPEND configs Release)
-        endif ()
+        foreach (config IN ITEMS Debug Release RelWithDebInfo)
+            if (config IN_LIST wanted AND NOT error)
+                list(APPEND configs ${config})
+            endif ()
+        endforeach ()
 
         if (NOT configs AND NOT error)
             set(error "EPM_CONFIGS lists no configuration")
@@ -351,6 +378,41 @@ function(epm_osx_deployment_target out_var)
     set(${out_var} "${target}" PARENT_SCOPE)
 endfunction()
 
+# The compiler is cl or clang-cl (CMAKE_CXX_COMPILER_FRONTEND_VARIANT): the MSVC
+# ABI, with its runtime library rules.
+function(epm_is_msvc_abi out_var)
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC"
+            OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+        set(${out_var} TRUE PARENT_SCOPE)
+    else ()
+        set(${out_var} FALSE PARENT_SCOPE)
+    endif ()
+endfunction()
+
+# env.json's msvcRuntime: the runtime library the project's targets get on the
+# MSVC ABI, CMAKE_MSVC_RUNTIME_LIBRARY, or CMake's own default when that is
+# empty; empty elsewhere.
+function(epm_msvc_runtime out_var)
+    epm_is_msvc_abi(msvc_abi)
+
+    if (NOT msvc_abi)
+        set(${out_var} "" PARENT_SCOPE)
+    elseif ("${CMAKE_MSVC_RUNTIME_LIBRARY}" STREQUAL "")
+        set(${out_var} "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL" PARENT_SCOPE)
+    else ()
+        set(${out_var} "${CMAKE_MSVC_RUNTIME_LIBRARY}" PARENT_SCOPE)
+    endif ()
+endfunction()
+
+# "dynamic" for a DLL runtime library, "static" for the other kind.
+function(epm_msvc_runtime_kind runtime out_var)
+    if (runtime MATCHES "DLL")
+        set(${out_var} dynamic PARENT_SCOPE)
+    else ()
+        set(${out_var} static PARENT_SCOPE)
+    endif ()
+endfunction()
+
 # Tests/EpmConfigsAuto.cmake, Tests/EpmOverrides.cmake and Tests/EpmEnv.cmake
 # want the functions above only.
 if (EPM_FUNCTIONS_ONLY)
@@ -365,6 +427,19 @@ if (NOT EPM_EXECUTABLE)
 endif ()
 
 epm_set_policies()
+
+# The static runtime library on the MSVC ABI, unless the project chose one: in
+# the scope that included this module, before any of its targets (a top-level
+# include runs inside project(), before the compiler is known, so this is set
+# everywhere and read only by cl and clang-cl). The policy default carries it
+# into a subdirectory whose cmake_minimum_required predates CMP0091.
+if (NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif ()
+
+if (NOT DEFINED CMAKE_POLICY_DEFAULT_CMP0091)
+    set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
+endif ()
 
 # These three are empty by default (EPM_BUILD_MISSING_BINARIES unset), so a
 # default never overrides a manifest's setting.
@@ -440,6 +515,7 @@ function(epm_write_env)
             "cxxCompiler=CMAKE_CXX_COMPILER"
             "cxxCompilerId=CMAKE_CXX_COMPILER_ID"
             "cxxCompilerVersion=CMAKE_CXX_COMPILER_VERSION"
+            "cxxCompilerFrontend=CMAKE_CXX_COMPILER_FRONTEND_VARIANT"
             "systemName=CMAKE_SYSTEM_NAME"
             "systemProcessor=CMAKE_SYSTEM_PROCESSOR"
             "osxSysroot=CMAKE_OSX_SYSROOT"
@@ -472,6 +548,24 @@ function(epm_write_env)
     endif ()
 
     epm_json_set_string(json androidAbi "${android_abi}")
+
+    # The runtime library the dependencies must share with the project's
+    # targets. Under the old policy the variable never reaches a target, and
+    # the project would link the DLL runtime against static dependencies.
+    epm_msvc_runtime(msvc_runtime)
+    epm_json_set_string(json msvcRuntime "${msvc_runtime}")
+
+    if (NOT msvc_runtime STREQUAL "")
+        cmake_policy(GET CMP0091 runtime_policy)
+
+        if (NOT runtime_policy STREQUAL "NEW")
+            message(FATAL_ERROR "epm: this project's targets ignore "
+                    "CMAKE_MSVC_RUNTIME_LIBRARY (${msvc_runtime}), which epm "
+                    "builds its dependencies with: policy CMP0091 is not NEW. "
+                    "Raise cmake_minimum_required to 3.15 or newer, or add "
+                    "cmake_policy(SET CMP0091 NEW) before the first target.")
+        endif ()
+    endif ()
 
     # For epm.cpp recipes to branch on; epm itself gives it no meaning.
     set(profile "${EPM_PROFILE}")
@@ -829,6 +923,27 @@ function(epm_recipe_sdk)
     endif ()
 
     set_property(GLOBAL PROPERTY EPM_RECIPE_MSVC_RUNTIME_LIBRARY "${runtime}")
+
+    # epm's archives come with one runtime library, the static one unless epm
+    # was built with another: a project that chose the other kind still gets
+    # a recipe executable that links, compiled with epm's, while its
+    # dependencies follow the project (env.json's msvcRuntime).
+    if (NOT runtime STREQUAL "")
+        epm_msvc_runtime(project_runtime)
+        epm_msvc_runtime_kind("${project_runtime}" project_kind)
+        epm_msvc_runtime_kind("${EPM_RECIPE_MSVC_RUNTIME_${fallback_config}}"
+                epms_kind)
+
+        if (NOT project_kind STREQUAL epms_kind)
+            message(WARNING "epm: this project links the ${project_kind} runtime "
+                    "library (CMAKE_MSVC_RUNTIME_LIBRARY is ${project_runtime}), "
+                    "but ${origin} and its recipe libraries were built with the "
+                    "${epms_kind} one: the recipe executable is compiled with "
+                    "epm's runtime, the project's dependencies with the "
+                    "project's. Build epm with the project's runtime, or leave "
+                    "CMAKE_MSVC_RUNTIME_LIBRARY to epm's default, to have one.")
+        endif ()
+    endif ()
 
     set(ours "${CMAKE_CXX_COMPILER}")
     set(epms "${EPM_RECIPE_CXX_COMPILER}")

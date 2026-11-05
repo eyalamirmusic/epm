@@ -18,7 +18,7 @@ namespace epm
 // whose objects are std::maps, so keys (options included) come out sorted.
 struct AbiFingerprint
 {
-    int schema = 2;
+    int schema = 3;
     std::string platform;
     std::string compilerId;
     std::string compilerVersion;
@@ -29,6 +29,9 @@ struct AbiFingerprint
     std::string osxArchitectures;
     std::string osxDeploymentTarget;
     std::string cxxStandard;
+
+    // The MSVC runtime library (msvcRuntimeOf); empty off the MSVC ABI.
+    std::string msvcRuntime;
     std::string toolchainFile;
 
     // sha256 of the toolchain file's contents; empty without one.
@@ -51,6 +54,7 @@ struct AbiFingerprint
                  osxArchitectures,
                  osxDeploymentTarget,
                  cxxStandard,
+                 msvcRuntime,
                  toolchainFile,
                  toolchainFileHash,
                  options,
@@ -65,7 +69,8 @@ struct AbiFingerprint
 //               contents; compiler path, minor/patch version and processor
 //               may differ
 //   any         same platform, options and source
-// Every policy also requires the same dependencies (deps).
+// Every policy also requires the same dependencies (deps) and, on the MSVC
+// ABI, the same runtime library (msvcRuntime): nothing links across those.
 enum class AbiMatch
 {
     strict,

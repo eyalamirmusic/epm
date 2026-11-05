@@ -1,5 +1,5 @@
-// App's dependencies: Lib, which brings eacp pinned to source. App takes the
-// binary cache back for eacp where it can, while Lib stays a source build.
+// App's dependencies: Lib, which brings eacp, prebuilt, as Lib's epm.cpp
+// declares it.
 
 #include <epm/Recipe/Recipe.h>
 
@@ -14,11 +14,6 @@ struct App final : Recipe
         // Where Lib would be published. CMakeLists.txt points EPM_Lib_SOURCE
         // at the sibling directory, so this is never fetched here.
         add("Lib", "example/Lib", "v1");
-
-        // The root only adds to what Lib declares: no git, no tag. Mode is per
-        // package, so a multi-config generator caches every config.
-        if (env().isMultiConfig || env().buildType == "Release")
-            add("eacp").mode("prebuilt");
     }
 };
 } // namespace

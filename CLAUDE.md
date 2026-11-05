@@ -38,8 +38,10 @@ longer-term design and background.
     entry, `customBuild` for `add<T>`), `Overrides` (`overrides.json`, filled
     from the environment): Miro-reflected structs whose field names are the
     JSON keys; `JsonFile.h` loads and saves them. `Platform` names the target
-    platform from `Env`, and says when a child build must be told the target
-    system (`crossCompilesWithoutToolchain`).
+    platform from `Env`, says when a child build must be told the target
+    system (`crossCompilesWithoutToolchain`), and tells the MSVC ABI
+    (`msvcAbi`) and its runtime library (`msvcRuntimeOf`: the consumer's, else
+    the static default, `staticMsvcRuntime`).
   - `Recipe/` — `epm.cpp` recipes, each a standalone executable whose
     contract with epm is JSON. Recipe API (`epm-recipe`): `Recipe.h` (the
     header a recipe includes: `Recipe : CMakePackage`, `describe()`,
@@ -77,8 +79,11 @@ longer-term design and background.
     `Fingerprint` (the ABI fingerprint and the `EPM_ABI_MATCH` policies),
     `CacheListing` (`epm cache ls`), `PackageLock` (eacp `IPC::Lock`, hence
     the `eacp-network` dependency).
-  - `Build/` — `ChildBuild`, `Harvest`, `Configs` (config mapping and the
-    facade's `$<CONFIG>` selector). `CMake/epm-export.cmake` and
+  - `Build/` — `ChildBuild`, `Harvest`, `Configs` (config mapping, Debug,
+    Release and RelWithDebInfo each a config of its own and MinSizeRel built
+    as Release, the facade's `$<CONFIG>` selector, and `configLinkProblem`,
+    the MSVC ABI's rule that a Debug build links only a Debug config, checked
+    at configure time by the graph walk and `epm resolve`). `CMake/epm-export.cmake` and
     `CMake/epm-provider.cmake` (as the core of `epm-nested.cmake`, the
     provider of nested child builds) are compiled into `epm-recipe`, so into
     epm and every recipe executable, through `Build/EmbeddedScripts.cpp.in`.
@@ -165,8 +170,11 @@ longer-term design and background.
   a second configuration's install leaves).
 - `Examples/` — consumer projects: `HelloEacp` (`epm_add_package`),
   `HelloGraph` (the same through `epm.cpp` and `find_package`) and
-  `NestedGraph` (`Lib`, pinning eacp to source, and `App`, using the sibling
-  `Lib` through `EPM_Lib_SOURCE` and taking eacp prebuilt for Release).
+  `NestedGraph` (`Lib`, taking eacp prebuilt, and `App`, using the sibling
+  `Lib` through `EPM_Lib_SOURCE`). Every example takes its dependencies
+  prebuilt and, through `releaseIfPossible()` (`EPM_CONFIGS` under `MSVC` in
+  HelloEacp), Release only where a Debug build links Release archives: on the
+  MSVC ABI they follow the build type instead.
 
 ## Build
 
@@ -176,7 +184,12 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-A top-level single-config build defaults `CMAKE_BUILD_TYPE` to Release.
+A top-level single-config build defaults `CMAKE_BUILD_TYPE` to Release. On
+the MSVC ABI (cl, clang-cl) epm builds with the static runtime library
+(`CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>`, with
+`CMAKE_POLICY_DEFAULT_CMP0091=NEW` for its dependencies), `epm.cmake` defaults
+a consumer to the same, and child builds get the consumer's value, which is in
+the fingerprint (`Docs/Graph.md` §2).
 `cmake --install build --config <C> --prefix <dir>` installs only `bin/epm`
 (the Release one; another config only when no Release one is there),
 `lib/<C>/lib{epm-recipe,eacp-network,eacp-core,fmt,miniz,Miro,ResEmbed}.a`

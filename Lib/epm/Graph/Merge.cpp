@@ -114,10 +114,8 @@ std::optional<Vector<std::string>> resolveConfigs(const Vector<std::string>& con
         if (env.isMultiConfig)
             return Vector<std::string> {"Debug", "Release"};
 
-        if (Strings::toLower(env.buildType) == "debug")
-            return Vector<std::string> {"Debug"};
-
-        return Vector<std::string> {"Release"};
+        return Vector<std::string> {
+            buildConfigFor(env.buildType).value_or("Release")};
     }
 
     for (const auto& config: configs)

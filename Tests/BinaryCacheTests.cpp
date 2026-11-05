@@ -148,7 +148,9 @@ auto tAdditivePlan = test("BinaryCache/additive/onlyMissingConfigsAreBuilt") = [
           == Configs {"Debug"});
     check(
         missingConfigs(both.configs, buildConfigsFor({"Debug", "Release"})).empty());
-    check(missingConfigs(both.configs, buildConfigsFor({"RelWithDebInfo"})).empty());
+    check(missingConfigs(both.configs, buildConfigsFor({"MinSizeRel"})).empty());
+    check(missingConfigs(both.configs, buildConfigsFor({"RelWithDebInfo"}))
+          == Configs {"RelWithDebInfo"});
 };
 
 auto tEntriesOnDisk = test("BinaryCache/entries/readFromDisk") = []

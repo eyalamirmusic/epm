@@ -1,4 +1,5 @@
 #include <epm/Cache/Fingerprint.h>
+#include <epm/Spec/Platform.h>
 
 #include <NanoTest/NanoTest.h>
 
@@ -170,6 +171,32 @@ auto tFpCompatibleCounts = test("Fingerprint/compatibleChecksAbiFields") = []
         check(!abiMatches(base, other, AbiMatch::compatible));
         check(abiMatches(base, other, AbiMatch::any));
     }
+};
+
+// On the MSVC ABI the runtime library is part of every policy: archives of
+// one never link with objects of another. Elsewhere it is empty.
+auto tFpMsvcRuntime = test("Fingerprint/msvcRuntime") = []
+{
+    auto env = fingerprintEnv();
+    env.systemName = "Windows";
+    env.systemProcessor = "ARM64";
+    env.cxxCompilerId = "Clang";
+    env.cxxCompilerFrontend = "MSVC";
+
+    const auto base = fingerprintWith(env);
+    check(base.schema == 3);
+    check(base.msvcRuntime == staticMsvcRuntime);
+    check(fingerprintWith(fingerprintEnv()).msvcRuntime.empty());
+
+    auto dll = env;
+    dll.msvcRuntime = "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL";
+    const auto dynamic = fingerprintWith(dll);
+    check(fingerprintId(dynamic) != fingerprintId(base));
+
+    for (const auto policy: {AbiMatch::strict, AbiMatch::compatible, AbiMatch::any})
+        check(!abiMatches(base, dynamic, policy));
+
+    check(abiNote(base, dynamic) == "built with a different msvcRuntime");
 };
 
 auto tFpParse = test("Fingerprint/parseAbiMatch") = []

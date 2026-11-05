@@ -1,5 +1,6 @@
 # Self-test of env.json's Apple architecture and deployment-target fallbacks in
-# CMake/epm.cmake (epm_osx_architectures, epm_osx_deployment_target).
+# CMake/epm.cmake (epm_osx_architectures, epm_osx_deployment_target), and of
+# its MSVC runtime library (epm_msvc_runtime).
 #
 #   cmake -P Tests/EpmEnv.cmake
 
@@ -61,6 +62,35 @@ expect(epm_osx_deployment_target "2.0" CMAKE_SYSTEM_NAME=visionOS
         CMAKE_XCODE_ATTRIBUTE_XROS_DEPLOYMENT_TARGET=2.0)
 expect(epm_osx_deployment_target "" CMAKE_SYSTEM_NAME=Darwin
         CMAKE_XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET=14.0)
+
+# The runtime library on the MSVC ABI only (cl, or clang-cl's MSVC frontend):
+# the project's, or CMake's own default when the project left it empty.
+expect(epm_msvc_runtime "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        CMAKE_CXX_COMPILER_ID=MSVC
+        "CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>")
+expect(epm_msvc_runtime "MultiThreadedDLL" CMAKE_CXX_COMPILER_ID=Clang
+        CMAKE_CXX_COMPILER_FRONTEND_VARIANT=MSVC
+        CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL)
+expect(epm_msvc_runtime "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
+        CMAKE_CXX_COMPILER_ID=MSVC)
+expect(epm_msvc_runtime "" CMAKE_CXX_COMPILER_ID=Clang
+        CMAKE_CXX_COMPILER_FRONTEND_VARIANT=GNU
+        CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded)
+expect(epm_msvc_runtime "" CMAKE_CXX_COMPILER_ID=AppleClang)
+
+foreach (case IN ITEMS "MultiThreaded=static" "MultiThreadedDebug=static"
+        "MultiThreadedDLL=dynamic" "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL=dynamic")
+    string(REPLACE "=" ";" case "${case}")
+    list(GET case 0 runtime)
+    list(GET case 1 expected)
+    epm_msvc_runtime_kind("${runtime}" actual)
+
+    if (NOT actual STREQUAL expected)
+        message(SEND_ERROR "epm_msvc_runtime_kind(${runtime}) is '${actual}', "
+                "expected '${expected}'")
+        set(failures 1)
+    endif ()
+endforeach ()
 
 if (failures)
     message(FATAL_ERROR "epm env checks failed")

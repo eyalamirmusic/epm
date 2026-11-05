@@ -87,6 +87,35 @@ auto tPlatWindows = test("Platform/windows") = []
     check(platformName(platformEnv("Windows", "ARM64")) == "windows-arm64");
 };
 
+auto tPlatMsvcAbi = test("Platform/msvcAbi") = []
+{
+    auto cl = platformEnv("Windows", "AMD64");
+    cl.cxxCompilerId = "MSVC";
+    check(msvcAbi(cl));
+    check(msvcRuntimeOf(cl) == staticMsvcRuntime);
+
+    auto clangCl = platformEnv("Windows", "ARM64");
+    clangCl.cxxCompilerId = "Clang";
+    clangCl.cxxCompilerFrontend = "MSVC";
+    check(msvcAbi(clangCl));
+
+    clangCl.msvcRuntime = "MultiThreadedDLL";
+    check(msvcRuntimeOf(clangCl) == "MultiThreadedDLL");
+
+    auto gnu = platformEnv("Windows", "AMD64");
+    gnu.cxxCompilerId = "Clang";
+    gnu.cxxCompilerFrontend = "GNU";
+    gnu.msvcRuntime = "MultiThreaded";
+    check(!msvcAbi(gnu));
+    check(msvcRuntimeOf(gnu).empty());
+    check(!msvcAbi(platformEnv("Linux", "x86_64")));
+
+    check(msvcRuntimeHasDebug(staticMsvcRuntime));
+    check(msvcRuntimeHasDebug("MultiThreadedDebugDLL"));
+    check(!msvcRuntimeHasDebug("MultiThreaded"));
+    check(!msvcRuntimeHasDebug("MultiThreadedDLL"));
+};
+
 auto tPlatLinux = test("Platform/linux") = []
 {
     check(platformName(platformEnv("Linux", "x86_64")) == "linux-x64");

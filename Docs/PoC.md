@@ -56,12 +56,13 @@ All under `${CMAKE_BINARY_DIR}/epm/`.
   "buildType": "Debug", "configurationTypes": [],
   "cCompiler": "/usr/bin/cc", "cxxCompiler": "/usr/bin/c++",
   "cxxCompilerId": "AppleClang", "cxxCompilerVersion": "17.0.0.17000013",
+  "cxxCompilerFrontend": "GNU",
   "systemName": "Darwin", "systemProcessor": "arm64", "crossCompiling": false,
   "osxArchitectures": "", "osxDeploymentTarget": "11.0",
   "osxSysroot": "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
   "androidAbi": "",
   "cxxStandard": "20",
-  "toolchainFile": "",
+  "toolchainFile": "", "msvcRuntime": "",
   "profile": "",
   "epmExecutable": "/path/to/epm" }
 ```
@@ -81,12 +82,25 @@ the fingerprint carry the architecture and child builds build exactly it; and an
 `epm_osx_deployment_target`).
 Empty string / empty array when a variable is unset. Written at the first `epm_add_package`
 call (not at include time), once per configure. `cCompiler` is empty when the consumer does
-not enable C; the binary must not pass an empty `-DCMAKE_C_COMPILER` to child builds.
+not enable C; the binary must not pass an empty `-DCMAKE_C_COMPILER` to child builds (on
+the MSVC ABI it passes the C++ compiler for C too: cl and clang-cl compile both, and
+CMake refuses a build mixing clang-cl with the cl it would pick for C).
 `makeProgram` (`CMAKE_MAKE_PROGRAM`) is passed to a child build that reuses the consumer's
 generator, so a build tool that is not on PATH (CLion's bundled ninja) is still found.
 `epmExecutable` is `EPM_EXECUTABLE`, the epm binary running the configure: the recipe SDK
 is found from its install prefix (`RecipeSdk`, §8), and a child build with dependencies
 gets it as its `EPM_EXECUTABLE`. Like `profile`, it is in no fingerprint.
+`cxxCompilerFrontend` is `CMAKE_CXX_COMPILER_FRONTEND_VARIANT`: `MSVC` for cl and for
+clang-cl, which takes cl's command line and targets the MSVC ABI (`msvcAbi`). There,
+and only there, `msvcRuntime` is the runtime library the consumer's targets get
+(`CMAKE_MSVC_RUNTIME_LIBRARY`, or CMake's own default, the DLL one, when the consumer
+left it empty): `epm.cmake` defaults the variable to the static runtime,
+`MultiThreaded$<$<CONFIG:Debug>:Debug>`, epm's own (`Docs/Graph.md` §2), in the scope
+that includes it, before any target. Every child build is given the same value (§5), and
+it is part of the fingerprint (§9): objects and archives compiled against different
+runtimes do not link (LNK2038). A consumer whose policy CMP0091 is not NEW would ignore
+the variable while its dependencies honour it, so `epm_write_env` stops the configure
+there.
 
 ### `requests/<name>.json` (one per `epm_add_package` call)
 
@@ -107,8 +121,8 @@ configs the consumer needs, each `Debug` or `Release`. `abiMatch` is `EPM_ABI_MA
 (`compatible`, `strict` or `any`). Both are explained in §9. The binary reads schema 2
 only and refuses any other with "the request for eacp has schema 1, but this epm reads
 schema 2: epm.cmake and the epm binary come from different versions …"; it also refuses
-an empty `configs`, a config other than Debug, Release, RelWithDebInfo or MinSizeRel (the
-last two are built as Release) and an unknown `abiMatch`.
+an empty `configs`, a config other than Debug, Release, RelWithDebInfo or MinSizeRel
+(MinSizeRel is built as Release) and an unknown `abiMatch`.
 
 Invocation: `epm resolve --request <json> --env <json> --response <cmake> [--cache <dir>]
 [--verbose]`. `--cache` is passed only when the CMake variable `EPM_CACHE` is set;
@@ -197,6 +211,7 @@ every path epm writes and matches has one spelling.
 (`AbiFingerprint`, recorded in `manifest.json`) holds `schema` (2), `platform`,
 `compilerId`, `compilerVersion` (full), `compilerMajor`, `compilerPath`, `systemName`,
 `systemProcessor`, `osxArchitectures`, `osxDeploymentTarget`, `cxxStandard`,
+`msvcRuntime` (the runtime library on the MSVC ABI, §2; empty elsewhere),
 `toolchainFile` and `toolchainFileHash` (sha256 of its contents, when there is one),
 `options` (sorted) and `sourceId`. The canonical form is Miro's compact output of the
 struct (`Miro::toJSONString`): Miro objects are `std::map`s, so every key, options
@@ -255,6 +270,8 @@ cmake -S <src> -B <builddir> -G <generator>
                                                      # cross-compiling without a toolchain file
       -DCMAKE_C_COMPILER=… -DCMAKE_CXX_COMPILER=…
       -DCMAKE_OSX_ARCHITECTURES=… -DCMAKE_OSX_DEPLOYMENT_TARGET=… -DCMAKE_CXX_STANDARD=…
+      -DCMAKE_MSVC_RUNTIME_LIBRARY=… -DCMAKE_POLICY_DEFAULT_CMP0091=NEW
+                                                     # the MSVC ABI only: the consumer's runtime (§2)
       -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY=<prefix>/lib/<Config>
       -DCPM_SOURCE_CACHE=<cache>/cpm
       -DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=<builddir>/epm-export.cmake
@@ -348,11 +365,12 @@ endif()
 ```
 
   The selector maps each consumer config to the same-named config if the entry has it,
-  else Release if present, else the first available, as nested `$<IF:$<CONFIG:…>,…,…>`
-  expressions: `epm_release::${name}` alone for {Release}; for {Debug, Release,
-  RelWithDebInfo}
+  else Release, else RelWithDebInfo, else the first available, as nested
+  `$<IF:$<CONFIG:…>,…,…>` expressions: `epm_release::${name}` alone for {Release}; for
+  {Debug, Release, RelWithDebInfo}
   `$<IF:$<CONFIG:Debug>,epm_debug::…,$<IF:$<CONFIG:RelWithDebInfo>,epm_relwithdebinfo::…,epm_release::…>>`.
-  So with {Release} only, a Debug consumer links the Release archives. The list of exported
+  So with {Release} only, a Debug consumer links the Release archives, except on the
+  MSVC ABI, where the binary refuses the request instead (§9). The list of exported
   names is the union of the `.names` files. Known PoC limitation: the facade covers every
   exported name (including nested deps such as `Miro`, `fmt`); if the consumer defines one
   of those itself the guard keeps the consumer's target and the program may end up with
@@ -652,12 +670,26 @@ single-config build of epm defaults
 package to build and cache. `epm.cmake` resolves it, since it knows the generator, and
 sends the result as the request's `configs`:
 
-- `auto`: a single-config generator gets the consumer's `CMAKE_BUILD_TYPE` (empty,
-  `RelWithDebInfo`, `MinSizeRel` or any other type mean Release); a multi-config
-  generator (Xcode, Visual Studio, Ninja Multi-Config) gets `Debug;Release`.
+- `auto`: a single-config generator gets the consumer's `CMAKE_BUILD_TYPE` as it is
+  built: Debug, Release or RelWithDebInfo (empty, `MinSizeRel` or any other type mean
+  Release); a multi-config generator (Xcode, Visual Studio, Ninja Multi-Config) gets
+  `Debug;Release`.
 - An explicit list, e.g. `Release` or `Debug;Release`, of Debug, Release, RelWithDebInfo
-  and MinSizeRel (any case; the last two are built as Release). Anything else stops the
+  and MinSizeRel (any case; MinSizeRel is built as Release). Anything else stops the
   configure. `epm_resolve_configs` implements it (`Tests/EpmConfigsAuto.cmake`).
+
+RelWithDebInfo is a configuration of its own, built with `CMAKE_BUILD_TYPE=RelWithDebInfo`
+into its own `lib/RelWithDebInfo`, so a RelWithDebInfo consumer steps through its
+dependencies with symbols; a consumer configuration the entry lacks links Release, else
+RelWithDebInfo (`mapConsumerConfig`, the selector of §5). On the MSVC ABI a Debug build
+compiles against the debug runtime (`_DEBUG`, `_ITERATOR_DEBUG_LEVEL`), whose objects do
+not link with release archives, nor release objects with Debug ones: there the binary
+refuses, at configure time, a prebuilt package whose configs give one of the consumer's
+builds (its build type, or every type of a multi-config generator) a config of the other
+kind (`configLinkProblem`), unless the consumer's `msvcRuntime` has no debug variant
+(`MultiThreaded` alone gives a Debug build the release runtime). The fix it names: add
+that config (a recipe's `releaseIfPossible()`, `Docs/Graph.md` §2, or `EPM_CONFIGS`), or
+change the runtime.
 
 Configs are **additive within an entry**: a Ninja Release configure builds only Release;
 a later Ninja Debug configure finds that entry, builds only Debug and adds it (its own
@@ -671,8 +703,8 @@ the current one:
 | policy       | must be equal                                                        |
 |--------------|----------------------------------------------------------------------|
 | `strict`     | every recorded field (the 0.1.2 behaviour)                           |
-| `compatible` | platform, compilerId, compilerMajor, osxDeploymentTarget, cxxStandard, options, sourceId, toolchainFileHash |
-| `any`        | platform, options, sourceId                                          |
+| `compatible` | platform, compilerId, compilerMajor, osxDeploymentTarget, cxxStandard, msvcRuntime, options, sourceId, toolchainFileHash |
+| `any`        | platform, msvcRuntime, options, sourceId                             |
 
 `compatible` ignores the compiler path, its minor and patch version and
 `systemProcessor` (the platform already encodes the architecture), so Xcode's clang and

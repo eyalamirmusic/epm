@@ -1,5 +1,6 @@
 #include "Configs.h"
 
+#include <epm/Spec/Platform.h>
 #include <epm/Util/Text.h>
 
 #include <eacp/Core/Utils/Strings.h>
@@ -36,10 +37,15 @@ std::optional<std::string> buildConfigFor(std::string_view name)
     if (!config)
         return std::nullopt;
 
-    if (*config == "Debug")
+    if (*config == "Debug" || *config == "RelWithDebInfo")
         return config;
 
     return "Release";
+}
+
+bool isDebugConfig(std::string_view name)
+{
+    return buildConfigFor(name) == "Debug";
 }
 
 Vector<std::string> canonicalConfigs(const Vector<std::string>& names)
@@ -85,10 +91,42 @@ std::string mapConsumerConfig(std::string_view consumer,
         if (Strings::equalsCaseInsensitive(config, consumer))
             return config;
 
-    if (available.contains("Release"))
-        return "Release";
+    for (const auto* preferred: {"Release", "RelWithDebInfo"})
+        if (available.contains(preferred))
+            return preferred;
 
     return available[0];
+}
+
+std::optional<std::string> configLinkProblem(const Env& env,
+                                             const Vector<std::string>& available)
+{
+    if (!msvcAbi(env) || available.empty()
+        || !msvcRuntimeHasDebug(msvcRuntimeOf(env)))
+        return std::nullopt;
+
+    const auto builds = env.isMultiConfig ? env.configurationTypes
+                                          : Vector<std::string> {env.buildType};
+
+    for (const auto& build: builds)
+    {
+        const auto linked = mapConsumerConfig(build, available);
+
+        if (isDebugConfig(build) == isDebugConfig(linked))
+            continue;
+
+        const auto name = build.empty() ? std::string {"Release"} : build;
+        const auto kind = isDebugConfig(build) ? "Debug" : "Release";
+        return "a " + name + " build of this project cannot link its " + linked
+               + " build on the MSVC ABI, where the debug and release runtimes do "
+                 "not mix. Add "
+               + kind
+               + " to its configs (releaseIfPossible() in a recipe, or "
+                 "EPM_CONFIGS), or give the "
+               + name + " build the release runtime (CMAKE_MSVC_RUNTIME_LIBRARY)";
+    }
+
+    return std::nullopt;
 }
 
 std::string exportNamespace(std::string_view config)

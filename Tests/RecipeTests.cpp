@@ -270,7 +270,19 @@ auto tRecipeBuildsAndRuns = test("Recipe/buildAndRun") = []
         check(mac.project->packages[0].git == "fmtlib/fmt");
         check(mac.project->packages[0].tag == "11.0.2");
         check(mac.project->packages[0].options.at("FMT_DOC") == "OFF");
+        check(mac.project->packages[0].configs
+              == eacp::Vector<std::string> {"Release"});
     }
+
+    // releaseIfPossible() leaves the configs alone on the MSVC ABI.
+    auto msvc = envForSystem("Windows");
+    msvc.cxxCompilerId = "Clang";
+    msvc.cxxCompilerFrontend = "MSVC";
+    const auto msvcRun = runRecipe(build.executable, msvc);
+    check(msvcRun.project.has_value() && !msvcRun.project->packages.empty());
+
+    if (msvcRun.project && !msvcRun.project->packages.empty())
+        check(msvcRun.project->packages[0].configs.empty());
 
     // Not `linux`: GNU dialects predefine it as a macro.
     const auto linuxRun = runRecipe(build.executable, envForSystem("Linux"));
@@ -315,12 +327,18 @@ auto tRecipeBuildsAndRuns = test("Recipe/buildAndRun") = []
     if (inFixture.project && inFixture.project->packages.size() == 2)
         check(inFixture.project->packages[1].name == "Recipe");
 
-    // A relative path is not looked up on PATH.
+    // A relative path is not looked up on PATH. There is none across Windows
+    // drives (a CI workspace on D:, the temporary cache on C:).
     const auto relative = std::filesystem::relative(
         eacp::toStdPath(build.executable), std::filesystem::current_path());
-    const auto fromRelative = runRecipe(FilePath {relative}, envForSystem("Darwin"));
-    check(fromRelative.error.empty());
-    check(fromRelative.project.has_value());
+
+    if (!relative.empty())
+    {
+        const auto fromRelative =
+            runRecipe(FilePath {relative}, envForSystem("Darwin"));
+        check(fromRelative.error.empty());
+        check(fromRelative.project.has_value());
+    }
 };
 
 auto tRecipeCacheHit = test("Recipe/cacheHit") = []

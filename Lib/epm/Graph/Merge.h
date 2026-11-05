@@ -62,9 +62,10 @@ struct MergeResult
 };
 
 // The configs a configs value asks for: empty or ["auto"] (any case) by the
-// PoC rule from `env` (multi-config: Debug, Release; else the build type,
-// where anything but Debug means Release); otherwise each name as it is
-// built, canonical. nullopt for a name that is not a configuration.
+// PoC rule from `env` (multi-config: Debug, Release; else the build type as
+// it is built, buildConfigFor, where an empty or unknown one means Release);
+// otherwise each name as it is built, canonical. nullopt for a name that is
+// not a configuration.
 std::optional<eacp::Vector<std::string>>
     resolveConfigs(const eacp::Vector<std::string>& configs, const Env& env);
 

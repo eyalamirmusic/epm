@@ -1,6 +1,7 @@
 #include <epm/Build/ChildBuild.h>
 #include <epm/Emit/Response.h>
 #include <epm/Resolve/Resolve.h>
+#include <epm/Spec/Platform.h>
 
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Utils/Files.h>
@@ -118,6 +119,36 @@ auto tDecidePrebuilt = test("Resolve/decide/prebuilt") = []
 {
     check(decide(modeRequest("prebuilt"), true) == Decision::useBinary);
     check(decide(modeRequest("prebuilt", false), false) == Decision::buildBinary);
+};
+
+// A child build on the MSVC ABI gets the consumer's runtime library, the
+// static one by default, under the policy that makes any project honour it.
+auto tChildBuildMsvcRuntime = test("ChildBuild/msvcRuntimeArguments") = []
+{
+    auto build = sampleChildBuild();
+    build.env.cxxCompilerId = "MSVC";
+
+    const auto arguments = configureArguments(build);
+    check(arguments.contains(std::string {"-DCMAKE_MSVC_RUNTIME_LIBRARY="}
+                             + staticMsvcRuntime));
+    check(arguments.contains(std::string {"-DCMAKE_POLICY_DEFAULT_CMP0091=NEW"}));
+
+    build.env.msvcRuntime = "MultiThreadedDLL";
+    check(configureArguments(build).contains(
+        std::string {"-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL"}));
+
+    // A C++-only consumer: the child compiles C with the same clang-cl or cl.
+    build.env.cCompiler.clear();
+    build.env.cxxCompiler = "C:/llvm/bin/clang-cl.exe";
+    check(configureArguments(build).contains(
+        std::string {"-DCMAKE_C_COMPILER=C:/llvm/bin/clang-cl.exe"}));
+
+    build.env.cxxCompilerId = "GNU";
+
+    for (const auto& argument: configureArguments(build))
+        check(argument.find("MSVC_RUNTIME") == std::string::npos
+              && argument.find("CMP0091") == std::string::npos
+              && argument.find("CMAKE_C_COMPILER") == std::string::npos);
 };
 
 auto tRequestErrors = test("Resolve/requestErrors") = []

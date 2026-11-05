@@ -27,6 +27,10 @@ struct Env
     std::string cxxCompiler;
     std::string cxxCompilerId;
     std::string cxxCompilerVersion;
+
+    // CMAKE_CXX_COMPILER_FRONTEND_VARIANT: MSVC for cl and for clang-cl, which
+    // takes cl's command line and targets the MSVC ABI (msvcAbi).
+    std::string cxxCompilerFrontend;
     std::string systemName;
     std::string systemProcessor;
 
@@ -45,6 +49,12 @@ struct Env
     std::string androidAbi;
     std::string cxxStandard;
     std::string toolchainFile;
+
+    // CMAKE_MSVC_RUNTIME_LIBRARY as the consumer's targets get it, on the MSVC
+    // ABI only (epm.cmake defaults it to the static runtime); empty elsewhere.
+    // Every child build is given it (msvcRuntimeOf), and it is part of the
+    // fingerprint: archives of one runtime do not link with objects of another.
+    std::string msvcRuntime;
 
     // EPM_PROFILE (CMake variable, else environment): a name for epm.cpp
     // recipes to branch on. epm itself gives it no meaning, and it is not
@@ -68,6 +78,7 @@ struct Env
                  cxxCompiler,
                  cxxCompilerId,
                  cxxCompilerVersion,
+                 cxxCompilerFrontend,
                  systemName,
                  systemProcessor,
                  crossCompiling,
@@ -77,6 +88,7 @@ struct Env
                  androidAbi,
                  cxxStandard,
                  toolchainFile,
+                 msvcRuntime,
                  profile,
                  epmExecutable)
 };

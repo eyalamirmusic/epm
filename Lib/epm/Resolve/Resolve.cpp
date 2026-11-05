@@ -1,5 +1,6 @@
 #include "Resolve.h"
 
+#include <epm/Build/Configs.h>
 #include <epm/Recipe/CMakePackage.h>
 #include <epm/Util/Log.h>
 
@@ -78,6 +79,10 @@ ResolveResult
 {
     if (auto error = requestError(request))
         return failure(*error);
+
+    if (request.mode != "source")
+        if (auto problem = configLinkProblem(env, request.configs))
+            return failure(request.name + ": " + *problem);
 
     const auto source =
         fetchSource(cache, request.name, request.gitUrl, request.gitRef);

@@ -1,10 +1,13 @@
 #include "Recipe.h"
 
+#include <epm/Spec/Platform.h>
+
 namespace epm
 {
-PackageDecl::PackageDecl(Project& projectToUse, int indexToUse)
+PackageDecl::PackageDecl(Project& projectToUse, int indexToUse, const Env& envToUse)
     : project(&projectToUse)
     , index(indexToUse)
+    , env(&envToUse)
 {
 }
 
@@ -32,6 +35,14 @@ PackageDecl& PackageDecl::abiMatch(std::string abiMatch)
     return *this;
 }
 
+PackageDecl& PackageDecl::releaseIfPossible()
+{
+    if (!msvcAbi(*env))
+        addConfig(package(), "Release");
+
+    return *this;
+}
+
 ManifestPackage& PackageDecl::package() const
 {
     return project->packages[index];
@@ -40,7 +51,7 @@ ManifestPackage& PackageDecl::package() const
 PackageDecl Recipe::add(std::string name, std::string git, std::string tag)
 {
     described.add(std::move(name), std::move(git), std::move(tag));
-    return {described, described.packages.size() - 1};
+    return {described, described.packages.size() - 1, env()};
 }
 
 const Project& Recipe::project() const
