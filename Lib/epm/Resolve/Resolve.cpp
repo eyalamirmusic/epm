@@ -10,7 +10,7 @@ namespace epm
 {
 namespace
 {
-ResolveResult failure(std::string error, std::string details = {})
+ResolveResult resolveFailure(std::string error, std::string details = {})
 {
     auto result = ResolveResult {};
     result.error = std::move(error);
@@ -22,7 +22,7 @@ ResolveResult failure(std::string error, std::string details = {})
 ResolveResult resolveResultFor(const BuildOutput& output)
 {
     if (!output.ok())
-        return failure(output.error, output.details);
+        return resolveFailure(output.error, output.details);
 
     auto result = ResolveResult {};
     result.ok = true;
@@ -78,17 +78,17 @@ ResolveResult
     resolvePackage(const Request& request, const Env& env, const CacheRoot& cache)
 {
     if (auto error = requestError(request))
-        return failure(*error);
+        return resolveFailure(*error);
 
     if (request.mode != "source")
         if (auto problem = configLinkProblem(env, request.configs))
-            return failure(request.name + ": " + *problem);
+            return resolveFailure(request.name + ": " + *problem);
 
     const auto source =
         fetchSource(cache, request.name, request.gitUrl, request.gitRef);
 
     if (!source.ok)
-        return failure(source.error);
+        return resolveFailure(source.error);
 
     return resolveSnapshot(request, env, cache, source.snapshot);
 }

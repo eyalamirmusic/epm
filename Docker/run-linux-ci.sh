@@ -21,7 +21,7 @@ docker run --rm \
         clang++ --version
         cmake -S /src -B /work/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
-            -DCMAKE_LINKER_TYPE=LLD
+            -DCMAKE_LINKER_TYPE=LLD -DEPM_CI_BUILD=ON
         cmake --build /work/build --parallel
         /work/build/Apps/epm/epm --version
         ctest --test-dir /work/build --output-on-failure "$@"

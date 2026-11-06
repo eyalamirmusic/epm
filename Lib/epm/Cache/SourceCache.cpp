@@ -124,7 +124,7 @@ bool removeGitMetadata(const FilePath& directory)
     return true;
 }
 
-SourceResult failure(std::string error)
+SourceResult sourceFailure(std::string error)
 {
     auto result = SourceResult {};
     result.error = std::move(error);
@@ -178,8 +178,8 @@ SourceResult fetchSource(const CacheRoot& cache,
     const auto resolved = resolveCommit(url, ref);
 
     if (!resolved.commit)
-        return failure("cannot resolve " + ref + " of " + url + ": "
-                       + resolved.error);
+        return sourceFailure("cannot resolve " + ref + " of " + url + ": "
+                             + resolved.error);
 
     auto result = SourceResult {};
     result.snapshot.commit = *resolved.commit;
@@ -200,7 +200,8 @@ SourceResult fetchSource(const CacheRoot& cache,
     auto lock = PackageLock {cache, name, packageLockTimeout};
 
     if (!lock.isLocked())
-        return failure("timed out waiting for another epm process using " + name);
+        return sourceFailure("timed out waiting for another epm process using "
+                             + name);
 
     if (Files::isFile(marker))
         return result;
@@ -210,29 +211,29 @@ SourceResult fetchSource(const CacheRoot& cache,
     auto staging = TemporaryFile {cache.tmp(), "-src-" + name};
 
     if (!Files::createDirectories(staging.path()))
-        return failure("cannot create " + staging.path().str());
+        return sourceFailure("cannot create " + staging.path().str());
 
     if (auto error =
             checkoutCommit(staging.path(), url, ref, result.snapshot.commit))
-        return failure("fetching " + url + " at " + result.snapshot.commit + ": "
-                       + *error);
+        return sourceFailure("fetching " + url + " at " + result.snapshot.commit
+                             + ": " + *error);
 
     if (auto error = updateSubmodules(staging.path()))
-        return failure("fetching submodules of " + url + ": " + *error);
+        return sourceFailure("fetching submodules of " + url + ": " + *error);
 
     if (!removeGitMetadata(staging.path()))
-        return failure("cannot remove .git from " + staging.path().str());
+        return sourceFailure("cannot remove .git from " + staging.path().str());
 
     if (!Files::removeAll(result.snapshot.directory)
         || !Files::moveFile(staging.path(), result.snapshot.directory))
-        return failure("cannot move the snapshot into "
-                       + result.snapshot.directory.str());
+        return sourceFailure("cannot move the snapshot into "
+                             + result.snapshot.directory.str());
 
     const auto markerValue =
         SourceMarker {url, result.snapshot.commit, utcTimestamp()};
 
     if (!saveJsonFile(marker, markerValue))
-        return failure("cannot write " + marker.str());
+        return sourceFailure("cannot write " + marker.str());
 
     return result;
 }

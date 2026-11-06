@@ -45,8 +45,14 @@ struct Env
     // CMAKE_OSX_SYSROOT: tells an iOS simulator build from a device build.
     std::string osxSysroot;
 
-    // CMAKE_ANDROID_ARCH_ABI (or the NDK toolchain's ANDROID_ABI).
+    // Android only (epm_android_setting): CMAKE_ANDROID_ARCH_ABI, the API level
+    // (CMAKE_SYSTEM_VERSION), CMAKE_ANDROID_NDK and CMAKE_ANDROID_STL_TYPE, or
+    // the NDK legacy toolchain file's ANDROID_ABI, ANDROID_PLATFORM_LEVEL,
+    // ANDROID_NDK and ANDROID_STL.
     std::string androidAbi;
+    std::string androidApi;
+    std::string androidNdk;
+    std::string androidStl;
     std::string cxxStandard;
     std::string toolchainFile;
 
@@ -86,6 +92,9 @@ struct Env
                  osxDeploymentTarget,
                  osxSysroot,
                  androidAbi,
+                 androidApi,
+                 androidNdk,
+                 androidStl,
                  cxxStandard,
                  toolchainFile,
                  msvcRuntime,

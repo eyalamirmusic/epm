@@ -23,11 +23,11 @@ using namespace eacp;
 
 namespace
 {
-constexpr auto failureLines = 20;
+constexpr auto stepFailureLines = 20;
 
 std::string withLastLines(std::string error, std::string_view output)
 {
-    if (const auto tail = lastLines(output, failureLines); !tail.empty())
+    if (const auto tail = lastLines(output, stepFailureLines); !tail.empty())
         error += "\n" + tail;
 
     return error;

@@ -34,6 +34,41 @@ set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
 option(EPM_VERBOSE_CONFIGURE
         "Print the third-party fetch and probe detail hidden by default" OFF)
 
+# Off by default: a unity build collapses the per-file entries of
+# compile_commands.json that LSP tooling reads. get_epm.cmake turns it on.
+option(EPM_UNITY_BUILD "Compile epm's own targets as CMake unity builds" OFF)
+option(EPM_UNITY_BUILD_DEPENDENCIES
+        "Compile epm's dependencies as CMake unity builds" OFF)
+option(EPM_CI_BUILD "Mirror the exact flag set used by CI builds" OFF)
+
+# CI's flag set, as eacp's EACP_CI_BUILD.
+if (EPM_CI_BUILD)
+    set(EPM_UNITY_BUILD ON CACHE BOOL
+            "Compile epm's own targets as CMake unity builds" FORCE)
+    set(EPM_UNITY_BUILD_DEPENDENCIES ON CACHE BOOL
+            "Compile epm's dependencies as CMake unity builds" FORCE)
+endif ()
+
+# Every dependency with sources to batch: eacp and Miro through their own
+# switches, set before their option() calls read them and forced, so turning
+# this on in an existing build directory overrides the OFF those calls cached;
+# ResEmbed below. fmt, miniz and NanoTest's libraries are one source each, and
+# ea_data_structures is header-only.
+if (EPM_UNITY_BUILD_DEPENDENCIES)
+    set(EACP_UNITY_BUILD ON CACHE BOOL
+            "Compile eacp libraries as CMake unity builds" FORCE)
+    set(MIRO_UNITY_BUILD ON CACHE BOOL
+            "Enable CMake unity build for the Miro library" FORCE)
+endif ()
+
+# GCC exempts the main file's own types from -Wsubobject-linkage, and in a
+# unity batch every source is an include, so each anonymous-namespace member
+# warns. eacp adds the same only in its own directory.
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(
+            "$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<BOOL:$<TARGET_PROPERTY:UNITY_BUILD>>>:-Wno-subobject-linkage>")
+endif ()
+
 # Same knobs as eacp's ConfigureLog.cmake: keep a clean configure down to CPM's
 # one line per package.
 if (EPM_VERBOSE_CONFIGURE)
@@ -69,4 +104,20 @@ option(EPM_ENABLE_TESTS "Enable Tests for epm" ${PROJECT_IS_TOP_LEVEL})
 if (EPM_ENABLE_TESTS)
     enable_testing()
     add_subdirectory(Tests)
+endif ()
+
+# epm's own targets only: its dependencies are EPM_UNITY_BUILD_DEPENDENCIES'.
+if (EPM_UNITY_BUILD)
+    set(epm_unity_targets epm-recipe epm)
+
+    if (TARGET epmTests)
+        list(APPEND epm_unity_targets epmTests)
+    endif ()
+
+    set_target_properties(${epm_unity_targets} PROPERTIES UNITY_BUILD ON)
+endif ()
+
+# ResEmbed (through eacp-core and Miro) has no unity switch of its own.
+if (EPM_UNITY_BUILD_DEPENDENCIES)
+    set_target_properties(ResEmbed PROPERTIES UNITY_BUILD ON)
 endif ()

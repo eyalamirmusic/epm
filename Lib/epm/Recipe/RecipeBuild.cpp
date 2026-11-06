@@ -22,7 +22,7 @@ namespace
 {
 constexpr auto executableFileName =
     Platform::isWindows() ? "epm-recipe.exe" : "epm-recipe";
-constexpr auto failureLines = 30;
+constexpr auto compileFailureLines = 30;
 
 // What recipes are built against for one epm binary: its SDK, the binary's
 // hash and recipeInputsHash. The binary is rebuilt with whatever a recipe
@@ -95,7 +95,7 @@ std::string firstErrorLine(std::string_view output)
     return {};
 }
 
-RecipeBuild failure(std::string error, std::string details = {})
+RecipeBuild recipeBuildFailure(std::string error, std::string details = {})
 {
     auto build = RecipeBuild {};
     build.error = std::move(error);
@@ -261,7 +261,7 @@ RecipeBuild compile(const RecipeSdk& sdk,
         Files::removeFile(temporary);
         build.error = "the recipe " + source.str() + " did not compile ("
                       + result.error + "); see " + log.str();
-        build.details = lastLines(result.output, failureLines);
+        build.details = lastLines(result.output, compileFailureLines);
         build.firstDiagnostic = firstErrorLine(result.output);
         return build;
     }
@@ -328,21 +328,23 @@ RecipeBuild buildRecipe(const FilePath& sourceToBuild,
     const auto source = resolvedPath(sourceToBuild);
 
     if (!Files::isFile(source))
-        return failure("no recipe at " + source.str());
+        return recipeBuildFailure("no recipe at " + source.str());
 
     const auto& toolchain = toolchainFor(epmExecutable);
     const auto& sdk = toolchain.sdk;
 
     if (toolchain.executableHash.empty())
-        return failure("cannot hash the epm executable "
-                       + toolchain.epmExecutable.str());
+        return recipeBuildFailure("cannot hash the epm executable "
+                                  + toolchain.epmExecutable.str());
 
     if (recipeLibraries(sdk).empty())
-        return failure("this epm has no recipe libraries for its configuration '"
-                       + sdk.config + "'");
+        return recipeBuildFailure(
+            "this epm has no recipe libraries for its configuration '" + sdk.config
+            + "'");
 
     if (!toolchain.inputsHash)
-        return failure("cannot read this epm's recipe libraries and headers");
+        return recipeBuildFailure(
+            "cannot read this epm's recipe libraries and headers");
 
     const auto key = recipeKey(sdk,
                                toolchain.executableHash,
@@ -363,18 +365,20 @@ RecipeBuild buildRecipe(const FilePath& sourceToBuild,
         return cached;
 
     if (!Files::isFile(sdk.compiler))
-        return failure("the compiler that built epm is gone: " + sdk.compiler);
+        return recipeBuildFailure("the compiler that built epm is gone: "
+                                  + sdk.compiler);
 
     if (clCommandLine(sdk) && !msvcEnvironmentIsSet())
-        return failure("cannot compile " + source.str() + " with " + sdk.compiler
-                       + ": INCLUDE and LIB are not set; run from a Visual "
-                         "Studio developer command prompt (vcvarsall)");
+        return recipeBuildFailure(
+            "cannot compile " + source.str() + " with " + sdk.compiler
+            + ": INCLUDE and LIB are not set; run from a Visual "
+              "Studio developer command prompt (vcvarsall)");
 
     const auto lock = PackageLock {cache, "recipe-" + key, packageLockTimeout};
 
     if (!lock.isLocked())
-        return failure("timed out waiting for another epm to compile "
-                       + source.str());
+        return recipeBuildFailure("timed out waiting for another epm to compile "
+                                  + source.str());
 
     if (Files::isFile(executable))
         return cached;

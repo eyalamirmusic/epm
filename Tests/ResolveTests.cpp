@@ -340,11 +340,30 @@ auto tConfigureArgumentsAndroid = test("ChildBuild/configureArguments/android") 
     build.env.crossCompiling = true;
     build.env.systemProcessor = "aarch64";
     build.env.androidAbi = "arm64-v8a";
+    build.env.androidApi = "26";
+    build.env.androidNdk = "/sdk/ndk/30.0.16248370";
+    build.env.androidStl = "c++_static";
     const auto arguments = configureArguments(build);
 
     check(arguments.contains("-DCMAKE_SYSTEM_NAME=Android"));
     check(arguments.contains("-DCMAKE_SYSTEM_PROCESSOR=aarch64"));
     check(arguments.contains("-DCMAKE_ANDROID_ARCH_ABI=arm64-v8a"));
+    check(arguments.contains("-DCMAKE_ANDROID_NDK=/sdk/ndk/30.0.16248370"));
+    check(arguments.contains("-DCMAKE_SYSTEM_VERSION=26"));
+    check(arguments.contains("-DCMAKE_ANDROID_STL_TYPE=c++_static"));
+
+    // The NDK's toolchain file gets its own variables, which it otherwise
+    // defaults, and names the system itself.
+    build.env.toolchainFile = "/sdk/ndk/30.0.16248370/build/cmake/"
+                              "android.toolchain.cmake";
+    const auto withToolchain = configureArguments(build);
+    check(!namesTargetSystem(withToolchain));
+    check(withToolchain.contains("-DANDROID_ABI=arm64-v8a"));
+    check(withToolchain.contains("-DANDROID_PLATFORM=android-26"));
+    check(withToolchain.contains("-DANDROID_STL=c++_static"));
+
+    for (const auto& argument: withToolchain)
+        check(!argument.starts_with("-DCMAKE_ANDROID_NDK="));
 };
 
 auto tConfigureArgumentsNested = test("ChildBuild/configureArguments/nested") = []

@@ -15,7 +15,7 @@ using namespace eacp;
 
 namespace
 {
-constexpr auto manifestFileName = "manifest.json";
+constexpr auto entryManifestFileName = "manifest.json";
 
 FilePath markerFor(const FilePath& prefix, const std::string& config)
 {
@@ -54,7 +54,8 @@ FilePath entryPrefix(const CacheRoot& cache,
 
 std::optional<BinaryEntry> readEntry(const FilePath& prefix)
 {
-    const auto manifest = loadJsonFile<EntryManifest>(prefix / manifestFileName);
+    const auto manifest =
+        loadJsonFile<EntryManifest>(prefix / entryManifestFileName);
 
     if (!manifest || manifest->schema != EntryManifest {}.schema)
         return std::nullopt;
@@ -66,7 +67,7 @@ std::optional<BinaryEntry> readEntry(const FilePath& prefix)
 
     for (const auto& file: Files::listFiles(prefix, options))
     {
-        if (file.fileName() == manifestFileName)
+        if (file.fileName() == entryManifestFileName)
             continue;
 
         const auto marker = loadJsonFile<ConfigMarker>(file);
@@ -153,7 +154,7 @@ std::optional<BinaryEntry> createEntry(const CacheRoot& cache,
 
     const auto manifest = EntryManifest {2, fingerprint, sourceId, utcTimestamp()};
 
-    if (!saveJsonFile(prefix / manifestFileName, manifest))
+    if (!saveJsonFile(prefix / entryManifestFileName, manifest))
         return std::nullopt;
 
     return BinaryEntry {prefix, fingerprint, {}, manifest.createdAt};
