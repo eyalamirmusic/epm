@@ -54,8 +54,21 @@ void fillPackage(PackageOverride& package,
     if (auto text = lookup(prefix + "OPTIONS"))
         for (auto& [key, value]: parseOptionList(*text))
             package.options.emplace(key, value);
+
+    if (!package.fetchSource)
+        package.fetchSource = boolFrom(lookup, prefix + "FETCH_SOURCE");
 }
 } // namespace
+
+bool fetchesSourceOf(const Overrides& overrides, const std::string& name)
+{
+    const auto package = overrides.packages.find(name);
+
+    if (package != overrides.packages.end() && package->second.fetchSource)
+        return *package->second.fetchSource;
+
+    return overrides.fetchSources.value_or(true);
+}
 
 std::map<std::string, std::string> parseOptionList(std::string_view text)
 {
@@ -91,13 +104,16 @@ Overrides withEnvironment(Overrides fromCMake,
         overrides.buildMissingBinaries =
             boolFrom(lookup, "EPM_BUILD_MISSING_BINARIES");
 
+    if (!overrides.fetchSources)
+        overrides.fetchSources = boolFrom(lookup, "EPM_FETCH_SOURCES");
+
     for (const auto& name: names)
     {
         auto package = overrides.packages[name];
         fillPackage(package, name, lookup);
 
         if (package.mode.empty() && package.source.empty() && package.configs.empty()
-            && package.options.empty())
+            && package.options.empty() && !package.fetchSource)
             overrides.packages.erase(name);
         else
             overrides.packages[name] = std::move(package);

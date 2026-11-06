@@ -1,0 +1,10 @@
+# The consumer of Tests/Relocate.cmake: takes Reloc prebuilt, from wherever
+# EPM_CACHE puts the cache.
+cmake_minimum_required(VERSION 3.25)
+list(APPEND CMAKE_PROJECT_TOP_LEVEL_INCLUDES "@GET_EPM@")
+project(RelocConsumer CXX)
+
+find_package(Reloc REQUIRED)
+
+add_executable(app Main.cpp)
+target_link_libraries(app PRIVATE Reloc::Reloc)

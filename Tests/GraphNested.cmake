@@ -6,10 +6,18 @@
 #
 #   default       both prebuilt; Mid's child build loads Leaf through the
 #                 injected provider; Mid's entry records Leaf's fingerprint in
-#                 deps and does not re-export Leaf; Leaf's build step, which
+#                 deps and does not re-export Leaf, and carries a copy of the
+#                 ${Leaf_SOURCE_DIR}/include it names, which in its child
+#                 build is Leaf's snapshot in the cache; Leaf's build step, which
 #                 Mid declares with add<LeafSteps>, runs in Mid's recipe
 #                 executable, and again by hand from <build>/epm/steps/
 #   cached        a fresh build directory reuses both entries
+#   no-sources    EPM_FETCH_SOURCES=OFF: no SOURCE_DIR for a prebuilt Leaf,
+#                 one for Mid through EPM_Mid_FETCH_SOURCE=ON
+#   mid-source-leaf-prebuilt
+#                 EPM_Mid_MODE=source over the prebuilt Leaf, with
+#                 EPM_FETCH_SOURCES=OFF: Leaf's snapshot is fetched anyway,
+#                 since Mid reads ${Leaf_SOURCE_DIR}/include
 #   source        EPM_MODE=source: both added as subdirectories
 #   leaf-source   EPM_Leaf_MODE=source forces Mid into source (§5 rule 6)
 #   leaf-checkout EPM_Leaf_SOURCE=<checkout>: Leaf's repository is hidden, so
@@ -104,10 +112,14 @@ function(git directory)
     endif ()
 endfunction()
 
-# Commits everything in ${repos}/<name> and tags it v1.
+# Commits everything in ${repos}/<name> and tags it v1. It serves partial
+# fetches and commits by hash, as GitHub does, so the walk's fetch of an
+# epm.cpp alone (--filter=blob:none, then that one blob) runs as it would there.
 function(make_repository name)
     set(directory "${repos}/${name}")
     git("${directory}" init -q)
+    git("${directory}" config uploadpack.allowFilter true)
+    git("${directory}" config uploadpack.allowAnySHA1InWant true)
     git("${directory}" add -A)
     git("${directory}" commit -q -m "${name}")
     git("${directory}" tag v1)
@@ -407,7 +419,8 @@ endfunction()
 # Every config marker in the cache, with its contents: unchanged when nothing
 # was built.
 function(cache_markers out_var)
-    file(GLOB markers "${cache}/bin/*/*/*/*.json")
+    file(GLOB markers "${cache}/bin/*/*/*/manifest.json"
+            "${cache}/bin/*/*/*/configs/*/epm-config.json")
     list(SORT markers)
     set(text "")
 
@@ -429,13 +442,23 @@ foreach (name IN ITEMS Leaf Mid)
     expect_equal("${name}'s mode" "${mode}" prebuilt)
     graph_value(${name} prefix prefix)
 
-    foreach (file IN ITEMS manifest.json Release.json epm-targets.cmake)
+    foreach (file IN ITEMS manifest.json configs/Release/epm-config.json
+            epm-targets.cmake)
         if (NOT EXISTS "${prefix}/${file}")
             fail("${name}'s entry ${prefix} has no ${file}")
         endif ()
     endforeach ()
 
     set(${name}_prefix "${prefix}")
+
+    # Prebuilt, each still has its snapshot as SOURCE_DIR (EPM_FETCH_SOURCES
+    # is on by default), for a consumer reading CMake modules from there.
+    graph_value(${name} source_dir sourceDir)
+    string(FIND "${source_dir}" "${cache}/src/${name}/" snapshot_at)
+
+    if (NOT IS_DIRECTORY "${source_dir}" OR NOT snapshot_at EQUAL 0)
+        fail("${name}'s sourceDir '${source_dir}' is not its snapshot in the cache")
+    endif ()
 endforeach ()
 
 graph_value(Leaf leaf_fingerprint fingerprint)
@@ -450,23 +473,41 @@ expect_equal("Mid's entry fingerprint deps.Leaf" "${entry_deps}"
 
 # Mid's entry exports Mid alone, links Leaf by its facade name and defines no
 # Leaf target of its own.
-file(READ "${Mid_prefix}/export-Release.cmake.names" names)
+set(mid_release "${Mid_prefix}/configs/Release")
+file(READ "${mid_release}/export-Release.cmake.names" names)
 expect_equal("Mid's exported names" "${names}" "Mid\n")
-file(READ "${Mid_prefix}/export-Release.cmake.aliases" aliases)
+file(READ "${mid_release}/export-Release.cmake.aliases" aliases)
 expect_equal("Mid's exported aliases" "${aliases}" "Mid::Mid Mid\n")
 
-foreach (file IN ITEMS epm-targets.cmake export-Release.cmake)
-    file(READ "${Mid_prefix}/${file}" text)
+foreach (file IN ITEMS "${Mid_prefix}/epm-targets.cmake"
+        "${mid_release}/export-Release.cmake")
+    file(READ "${file}" text)
 
     if (text MATCHES "add_library\\(\"?(epm_release::)?Leaf[\" ]")
         fail("Mid's ${file} defines a Leaf target:\n${text}")
     endif ()
 endforeach ()
 
-file(READ "${Mid_prefix}/export-Release.cmake" mid_export)
+# Mid records Leaf's entry per policy too: compatible compares that key, so a
+# Mid built elsewhere against a compatible Leaf entry still matches.
+graph_value(Mid graph_compatible request compatibleDeps Leaf)
+string(JSON entry_compatible GET "${mid_manifest}" fingerprint compatibleDeps Leaf)
+expect_equal("Mid's entry fingerprint compatibleDeps.Leaf" "${entry_compatible}"
+        "${graph_compatible}")
+
+file(READ "${mid_release}/export-Release.cmake" mid_export)
 
 if (NOT mid_export MATCHES "INTERFACE_LINK_LIBRARIES \"[^\"]*Leaf")
     fail("Mid's export-Release.cmake does not link Leaf:\n${mid_export}")
+endif ()
+
+# Mid names ${Leaf_SOURCE_DIR}/include, Leaf's snapshot in the cache: the
+# harvest copied it into Mid's entry and names the copy.
+string(FIND "${mid_export}" "/include/dep/Leaf/include" leaf_include_at)
+
+if (leaf_include_at EQUAL -1
+        OR NOT EXISTS "${mid_release}/include/dep/Leaf/include/Leaf.h")
+    fail("Mid's entry lacks its copy of \${Leaf_SOURCE_DIR}/include:\n${mid_export}")
 endif ()
 
 # Leaf's build step ran in Mid's recipe executable: the option its add<LeafSteps>
@@ -567,6 +608,57 @@ endforeach ()
 
 build_and_run("11 1")
 
+# 2b. EPM_FETCH_SOURCES=OFF: prebuilt packages get no SOURCE_DIR, unless
+# EPM_<Name>_FETCH_SOURCE asks for one; the entries are the same.
+configure_consumer(no-sources -DEPM_FETCH_SOURCES=OFF -DEPM_Mid_FETCH_SOURCE=ON)
+expect_loaded(prebuilt)
+graph_value(Leaf source_dir sourceDir)
+expect_equal("Leaf's sourceDir with EPM_FETCH_SOURCES=OFF" "${source_dir}" "")
+graph_value(Mid source_dir sourceDir)
+
+if (NOT IS_DIRECTORY "${source_dir}")
+    fail("Mid's sourceDir with EPM_Mid_FETCH_SOURCE=ON is '${source_dir}'")
+endif ()
+
+foreach (name IN ITEMS Leaf Mid)
+    graph_value(${name} prefix prefix)
+    expect_equal("${name}'s prefix" "${prefix}" "${${name}_prefix}")
+endforeach ()
+
+build_and_run("11 1")
+
+# 2c. Mid from source over a prebuilt Leaf, with EPM_FETCH_SOURCES=OFF: Mid's
+# CMakeLists.txt reads ${Leaf_SOURCE_DIR}/include, so Leaf's snapshot is
+# fetched for it whatever the consumer asked.
+configure_consumer(mid-source-leaf-prebuilt -DEPM_Mid_MODE=source
+        -DEPM_FETCH_SOURCES=OFF)
+string(FIND "${output}" "-- epm: Leaf (prebuilt, " leaf_at)
+string(FIND "${output}" "-- epm: Mid (source, " mid_at)
+
+if (leaf_at EQUAL -1 OR mid_at EQUAL -1)
+    fail("expected Leaf prebuilt and Mid from source:\n${output}")
+endif ()
+
+graph_value(Leaf source_dir sourceDir)
+
+if (NOT EXISTS "${source_dir}/include/Leaf.h")
+    fail("Leaf's sourceDir '${source_dir}' holds no include/Leaf.h")
+endif ()
+
+file(READ "${build}/epm/graph.cmake" graph_cmake)
+string(FIND "${graph_cmake}" "set(epm_Leaf_SOURCE_DIR \"${source_dir}\")" set_at)
+
+if (set_at EQUAL -1)
+    fail("graph.cmake does not give Leaf's SOURCE_DIR:\n${graph_cmake}")
+endif ()
+
+if (NOT IS_DIRECTORY "${build}/_deps/Mid-build"
+        OR EXISTS "${build}/_deps/Leaf-build")
+    fail("expected Mid alone added as a subdirectory")
+endif ()
+
+build_and_run("11 1")
+
 # 3. Every package from source.
 configure_consumer(source -DEPM_MODE=source)
 expect_loaded(source)
@@ -663,7 +755,8 @@ string(JSON leaf_owner GET "${leaf_input}" recipeName)
 expect_equal("Leaf's step recipeName" "${leaf_owner}" "Mid")
 
 if (multi_config)
-    foreach (marker IN ITEMS Debug.json Release.json)
+    foreach (marker IN ITEMS configs/Debug/epm-config.json
+            configs/Release/epm-config.json)
         if (NOT EXISTS "${prefix}/${marker}")
             fail("Leaf's entry ${prefix} has no ${marker}")
         endif ()

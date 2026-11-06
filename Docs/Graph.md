@@ -232,7 +232,8 @@ context arguments:
 | `env()`, `cache()`, `verbose()`       | the consumer's env, the cache root, `--verbose`                      |
 | `dependencies()`                      | the direct dependencies, resolved before this step: name, mode and, when prebuilt, the entry's fingerprint hash, prefix, `epm-targets.cmake` and configs |
 | `dependencyGraph()`                   | `graph.cmake` of the dependency closure (§10); empty without dependencies |
-| `fetch()`                             | the source checkout: the one epm handed over, else fetched into the source cache (cheap once a snapshot is complete). A fetch takes the package lock, which `cached()` holds while its callback runs, and eacp's `IPC::Lock` is not re-entrant: a fetch the callback would have to make throws `BuildError` at once rather than wait out the timeout. Fetch before `cached()` |
+| `resolveSource()`                     | the source's commit and `sourceId`, all `fingerprint()` needs, without fetching it (as epm resolved it before the step; else `git ls-remote`). Its `directory` is set only when the checkout is there already (a snapshot in the cache, an `EPM_<Name>_SOURCE` override) |
+| `fetch()`                             | the source checkout: the one epm handed over, else the commit `resolveSource()` names fetched into the source cache (cheap once a snapshot is complete). Inside `cached()`'s callback it fetches under the package lock `cached()` holds. Called outside the callback, it also makes the checkout the package's `SOURCE_DIR` when the step ends with `exportPrefix()` (§7) |
 | `fingerprint(source)`                 | the ABI fingerprint (`PoC.md` §3) of `spec()` for that source        |
 | `fingerprint(source, build)`          | the same with `build`'s options and definitions in place of `spec().options` |
 | `cached(wanted, buildMissing)`        | the binary entry, as the mode decides (below)                        |
@@ -244,21 +245,33 @@ context arguments:
 
 - In mode `source` it returns nothing (the consumer builds from source).
 - It picks an entry for `wanted` under `spec().abiMatch` (default `compatible`) and
-  the request's configs (`pickEntry`, ranked as `PoC.md` §9 says), logs it, and lets
+  the request's configs (`pickEntry`, ranked as `PoC.md` §9 says); when that pick
+  lacks a needed config, it copies what the cache stores hold into the local cache
+  first (`PoC.md` §3, *Cache stores*) and picks again. It logs the pick, and lets
   `decide` (`Spec/Request.h`) choose: an entry
-  holding every config is used as it is; `auto` with `buildMissingBinaries` off and no
-  complete entry returns nothing; `binary-only` throws, naming what the cache lacks.
+  holding every config this compiler can link (`configUsableBy`: a config of LTO
+  objects only links with the compiler that built it, `PoC.md` §9) is used as it is;
+  `auto` with `buildMissingBinaries` off and no complete entry returns nothing;
+  `binary-only` throws, naming what the cache lacks.
 - Otherwise, under the package lock (`Cache/PackageLock`; a timeout is an error), it
   picks again (another process may have built the entry meanwhile) or creates the
-  entry, clears what the missing configs left behind, and calls `buildMissing` once
-  with a `Prefix` whose `configs()` are those to build. Once the callback has
-  returned, each of them it left harvested in the prefix (an export file with its
-  `.names`) is added to the entry (marker, then `epm-targets.cmake`); one it left
-  without fails the step. Nothing marks a config earlier: a callback that throws (a
-  failed child build, an `afterBuild` hook that throws) adds none of them, so a first
-  build that fails leaves an entry holding only `manifest.json`, which the next run
-  picks and builds into.
+  entry (whole, by one rename), and calls `buildMissing` once with a `Prefix` whose
+  `configs()` are those to build and whose `stagedEntry()` is a fresh private
+  directory laid out as the entry (`bin/<name>/<platform>/.staging/<name>`), which the
+  build goes into. Once the callback has returned, each config it left harvested in
+  its staged unit (an export file with its `.names`) is published into the entry: its
+  marker, with the hash of every file, then one rename of the unit (`PoC.md` §5); one
+  it left without fails the step. A config of LTO objects goes into the exact entry for
+  `wanted` instead when the entry picked was recorded for another compiler. Nothing is
+  published earlier: a callback that throws (a failed child build, an `afterBuild`
+  hook that throws) publishes none of them and its staging is deleted, so a first
+  build that fails leaves an entry holding only `manifest.json` and the facade, which
+  the next run picks and builds into. The lock only spares a second local build:
+  publishing is atomic, and of two processes that build the same config the second
+  finds the first's unit and drops its own.
 - It returns a `Prefix` (`Recipe/Prefix.h`): `path()` (`bin/<name>/<platform>/<fp12>`),
+  `configDirectory(config)` (inside the callback, the config's staged unit, where a
+  hook adds files; afterwards the published one, never modified),
   `entry()`, `wanted()` (the fingerprint asked for, which under `compatible` or `any`
   may differ from the entry's; the difference is the configure note) and `configs()`
   (inside the callback, the configs to build; afterwards, those that call built, empty
@@ -272,19 +285,29 @@ may throw it too; the step reports it as its error. Any other exception becomes
 The default steps, `Package::build()` (and `CMakePackage::build()` with its hooks):
 
 ```cpp
-auto source = fetch();
+auto source = resolveSource();                          // commit and sourceId, no fetch
 auto build = cmake(source);
 configure(build);                                       // hook
 auto wanted = fingerprint(source, build);
 
 if (auto prefix = cached(wanted, [&](const Prefix& missing) {
-        build.into(missing).run();
+        build.source(fetch().directory)                 // only when it builds
+            .into(missing)
+            .run();
         afterBuild(missing);                            // hook
     }))
     exportPrefix(*prefix);
 else
-    useSource(build);                                   // source mode: the hook's options too
+    useSource(build);                                   // source mode: fetches; the hook's options too
 ```
+
+So the default steps fetch a package's source only to build it or for source mode: a
+package whose entry is in the cache, or in a cache store, is used without its source
+(the configure fetches it afterwards for the consumer's `SOURCE_DIR` unless
+`EPM_FETCH_SOURCES` is off, §7).
+A hook that reads the source calls `fetch()` itself (which also keeps the package's
+`SOURCE_DIR`, §7). Steps of their own that call `fetch()` before `cached()`, as recipes
+written before this did, keep working unchanged and always fetch.
 
 `CMakePackage` (`Recipe/CMakePackage.h`) adds the two hooks, empty by default:
 
@@ -339,7 +362,8 @@ build would run.
 
 ```
 <recipe> [configure] [--manifest <epm.cpp>] --env <env.json>
-         --overrides <overrides.json> --out <dir> [--cache <dir>] [--verbose]
+         --overrides <overrides.json> --out <dir> [--cache <dir>]
+         [--cache-store <dir>...] [--verbose]
 <recipe> describe [--env <env.json>] [--out <project.json>]
 <recipe> build --package <name> --in <input.json> --out <output.json> [--quiet]
 ```
@@ -392,10 +416,15 @@ The two files (`Recipe/BuildProtocol.h`, Miro-reflected, field names as the JSON
 - `BuildInput`: `schema` (1); `recipeName` (the package whose `epm.cpp` this is, as
   the graph names it; empty for the root's); `env`; `cacheRoot` (resolved); `request`
   (the effective request, its `deps` holding each direct dependency's fingerprint
-  hash); `source` (optional: `commit`, `sourceId` and `directory` of the checkout epm
-  already has; an `EPM_<Name>_SOURCE` checkout has no commit or sourceId; without it
-  `fetch()` fetches); `dependencies` (one per direct dependency: `name`, `mode`, and
-  when prebuilt `fingerprint`, `prefix`, `targetsFile`, `configs`); `dependencyGraph`;
+  hash, and `compatibleDeps` and `anyDeps` the same entries' keys under those
+  policies, §10); `cacheStores` (the cache stores, in order, `PoC.md` §3); `source`
+  (optional: the `commit` and `sourceId` epm resolved, and the `directory` of the
+  checkout when there is one already, else empty and `fetch()` fetches that commit; an
+  `EPM_<Name>_SOURCE` checkout has a directory but no commit or sourceId; without a
+  source at all `fetch()` resolves the request's ref); `dependencies` (one per direct
+  dependency: `name`, `mode`, and when prebuilt `fingerprint`, `prefix`, `targetsFile`,
+  `configs`); `dependencyGraph`; `dependencySources` (`name`, `gitUrl`, `commit` of
+  each package of the closure whose `SOURCE_DIR` `dependencyGraph` leaves empty, §10);
   `epmExecutable` (the epm binary of the configure: the env's `epmExecutable`, else
   the running executable; a child build with dependencies gets it as
   `EPM_EXECUTABLE`); `verbose`; `customBuild` (the owning declaration came
@@ -406,8 +435,10 @@ The two files (`Recipe/BuildProtocol.h`, Miro-reflected, field names as the JSON
   options of the fingerprint `exportPrefix` recorded, a hook's included; empty after a
   plain `useSource()`, when the request's stand); when prebuilt `prefix`, `platform`,
   `configs`, `note` (how the entry's toolchain differs from the current one) and
-  `fingerprintHash` (full hex, which dependents record in their `deps`); when the step
-  failed `error` (one line) and `details`.
+  `fingerprintHash` (full hex, which dependents record in their `deps`) with
+  `compatibleKey` and `anyKey` (the entry's `abiKey` under those policies, which they
+  record in `compatibleDeps` and `anyDeps`); when the step failed `error` (one line)
+  and `details`.
 
 Both stay schema 1. Each side reads the other's schema on its own first and reports a
 mismatch as such rather than half reading the file: the recipe as above, epm as
@@ -641,16 +672,19 @@ CMake variables win over environment.
   "schema": 1,
   "mode": "", "configs": [], "abiMatch": "", "strict": false,
   "buildMissingBinaries": true,
+  "fetchSources": true,
   "packages": {
-    "<name>": { "mode": "", "source": "/abs/path", "configs": [], "options": {} }
+    "<name>": { "mode": "", "source": "/abs/path", "configs": [], "options": {},
+                "fetchSource": false }
   }
 }
 ```
 
 CMake collects `EPM_MODE`, `EPM_CONFIGS`, `EPM_ABI_MATCH`, `EPM_STRICT`,
-`EPM_BUILD_MISSING_BINARIES` and every `EPM_<Name>_MODE`, `EPM_<Name>_SOURCE`,
-`EPM_<Name>_CONFIGS`, `EPM_<Name>_OPTIONS` (a `;`-list of `KEY=VALUE`, a bare `KEY`
-meaning `ON`) it finds among normal and cache variables. Empty values are left out;
+`EPM_BUILD_MISSING_BINARIES`, `EPM_FETCH_SOURCES` and every `EPM_<Name>_MODE`,
+`EPM_<Name>_SOURCE`, `EPM_<Name>_CONFIGS`, `EPM_<Name>_OPTIONS` (a `;`-list of
+`KEY=VALUE`, a bare `KEY` meaning `ON`) and `EPM_<Name>_FETCH_SOURCE` it finds among
+normal and cache variables. Empty values are left out;
 `EPM_<Name>_SOURCE` is made absolute against `CMAKE_SOURCE_DIR` (a leading `~` is the
 home directory).
 
@@ -660,6 +694,10 @@ home directory).
   request for the PoC's `auto` rule and beats the manifest.
 - `buildMissingBinaries` is optional: written only when `EPM_BUILD_MISSING_BINARIES`
   is set; unset means on.
+- `fetchSources` (`EPM_FETCH_SOURCES`) and a package's `fetchSource`
+  (`EPM_<Name>_FETCH_SOURCE`, which wins for that package) are optional the same way,
+  unset meaning on: whether a prebuilt package's snapshot is fetched for its
+  `SOURCE_DIR` (§7).
 - `EPM_STRICT` from the environment can only turn strict on, since a CMake `OFF`
   cannot be told from an unset one.
 - `EPM_<Name>_*` environment variables are read only for names in the graph.
@@ -686,11 +724,15 @@ The binary records, for every effective value, which source set it (`override`,
 
 ## 5. Graph rules
 
-1. The root recipe is run. Every declared package's source is fetched into the
-   source cache (or taken from `source`). If the checkout holds an `epm.cpp`, it is
-   run too (§2) and its packages are added to the graph, recursively; a checkout
-   without one has no dependencies. Discovery therefore happens before configure
-   continues, by running recipes, not by executing CMake.
+1. The root recipe is run. Every declared package's ref is resolved to a commit and
+   its `epm.cpp` alone is fetched (`PoC.md` §4: the snapshot when the cache has it,
+   else a checkout of that one file), or taken from `source`. If the package has an
+   `epm.cpp`, it is run too (§2) and its packages are added to the graph,
+   recursively; one without has no dependencies. Discovery therefore happens before
+   configure continues, by running recipes, not by executing CMake. The rest of the
+   source is fetched by the package's build step, only when it builds the package or
+   the package is in source mode (§2), and for the dependencies of a package built
+   from source (§7, §10).
 2. The root wins: a package declared by the root keeps the root's values whatever a
    dependency declares.
 3. Among dependencies, the first declaration in a depth-first walk of the root's
@@ -703,9 +745,11 @@ The binary records, for every effective value, which source set it (`override`,
    `fmt: B declares 10.2.1, root declares 11.0.2`, `fmt: B declares mode source,
    root leaves it unset`, `fmt: B declares option FMT_TEST=ON, C declares option
    FMT_TEST=OFF`. `strict` turns the notes into an error and the configure fails.
-5. Packages whose git urls name the same repository (`repositoryKey`: scheme, user,
-   trailing `/` and `.git` dropped, lower case) are reported in the same notes list,
-   so `strict` fails on them too.
+5. Packages whose git urls name the same repository (`repositoryKey`, `Spec/Manifest`:
+   scheme, user, trailing `/` and `.git` dropped, scp-like `host:path` as `host/path`,
+   lower case; a local path or `file://` URL resolved, keeping its case) are reported
+   in the same notes list, so `strict` fails on them too. The same key goes into the
+   `sourceId` (`PoC.md` §3).
 6. A package in `source` mode forces every package that depends on it into `source`
    mode (a binary cannot link a target that only exists in the consumer's build).
 7. Packages are resolved in dependency order, so a package's dependencies have cache
@@ -747,7 +791,7 @@ To build a working checkout instead, point the package at it with
 
 ```
 epm configure --manifest <epm.cpp> --env <env.json> --overrides <overrides.json>
-              --out <dir> [--cache <dir>] [--verbose]
+              --out <dir> [--cache <dir>] [--cache-store <dir>...] [--verbose]
 ```
 
 epm compiles the root recipe (`buildRecipe` against the SDK of the env's
@@ -757,8 +801,12 @@ resolved:
 
 ```
 <cache>/recipe/<key12>/epm-recipe configure --manifest <epm.cpp> --env <env.json>
-    --overrides <overrides.json> --out <dir> --cache <cache> [--verbose]
+    --overrides <overrides.json> --out <dir> --cache <cache>
+    [--cache-store <store>...] [--verbose]
 ```
+
+The cache stores are those given as `--cache-store`, else `EPM_CACHE_STORES` from
+epm's environment, resolved here and passed explicitly (`PoC.md` §3).
 
 Its stdout (progress lines, the steps' output) reaches epm's as it runs, its stderr
 (the failure it reports, `epm: …`) is passed on as epm's own, and its exit code is
@@ -789,7 +837,8 @@ For each package, in dependency order:
 
 1. A package with a dependency that ended up in source goes to source (§5 rules 6 and
    7). Otherwise its request's `deps` get each direct dependency's `fingerprintHash`,
-   as that dependency's step reported it, and the step gets `dependencies` and
+   and `compatibleDeps` and `anyDeps` its `compatibleKey` and `anyKey`, as that
+   dependency's step reported them (§10), and the step gets `dependencies` and
    `dependencyGraph` (`graph.cmake` of the closure, §10).
 2. The configure compiles the owner's recipe (§5 rule 9; cached, §2) and, in the
    `epm.cpp`'s directory, runs
@@ -814,7 +863,8 @@ For each package, in dependency order:
    (`--quiet`), and its progress was already streamed. A step that wrote no output,
    or exited non-zero while its output claims success, fails with the command, how it
    ended (exit code, or the signal that killed it) and the last 20 lines it printed.
-5. A prebuilt result's `fingerprintHash` goes into its dependents' `deps`; a source
+5. A prebuilt result's `fingerprintHash` goes into its dependents' `deps` (and its
+   keys into `compatibleDeps` and `anyDeps`); a source
    result sends them to source. A step asked for source (`spec().mode`) that recorded
    prebuilt fails the configure. The result's `options` go into `graph.json` and
    `graph.cmake` (§7).
@@ -845,20 +895,54 @@ default steps in its own process: it has no recipe, so no custom steps. It stays
 ```cmake
 set(epm_PACKAGES "fmt;C;B")                     # dependency order
 set(epm_fmt_MODE prebuilt)                      # prebuilt | source
-set(epm_fmt_SOURCE_DIR "/cache/src/fmt/<commit>")
+set(epm_fmt_SOURCE_DIR "/cache/src/fmt/<sourceId12>") # empty: EPM_FETCH_SOURCES=OFF
 set(epm_fmt_DEPS "")                            # direct dependencies, names
 set(epm_fmt_OPTIONS "FMT_DOC=OFF;FMT_TEST=OFF") # the step's options, KEY=VALUE list
 # prebuilt only:
 set(epm_fmt_PREFIX "/cache/bin/fmt/<platform>/<fp12>")
 set(epm_fmt_TARGETS_FILE "${epm_fmt_PREFIX}/epm-targets.cmake")
 set(epm_fmt_PLATFORM "macos-arm64")
-set(epm_fmt_CONFIGS "Release")
+set(epm_fmt_CONFIGS "Release")                  # those this consumer can link
 set(epm_fmt_NOTE "")                            # ABI note as today
 set(epm_NOTES "fmt: B declares 10.2.1, root declares 11.0.2")
 ```
 
 `OPTIONS` is what the package's step recorded (§6), hooks included (`FMT_DOC` comes from
 §1's `Fmt::configure`), else the request's options.
+
+`SOURCE_DIR` (and so the provider's `<name>_SOURCE_DIR`) is the snapshot, for a source
+package and, by default, for a prebuilt one too: the top-level consumer gets the
+snapshot of every package of its graph, direct or transitive, as `SOURCE_DIR`, so a
+project reading CMake modules or headers from there (Catch2's
+`list(APPEND CMAKE_MODULE_PATH ${Catch2_SOURCE_DIR}/extras)`) works whether the package
+was built or found. The configure fetches those snapshots after every step, by the
+commit the step resolved: no fingerprint and no step's input depend on it, and the
+entry is the same either way.
+
+`EPM_FETCH_SOURCES=OFF` (or `EPM_<Name>_FETCH_SOURCE=OFF` for one package; `ON` turns
+one back on under a global `OFF`) skips that fetch, so a package found in the cache or a
+cache store is used without cloning its source (`PoC.md` §4), the fast path for
+developers and CI that only consume prebuilts. Its `SOURCE_DIR` is then empty, unless
+something needs the source anyway:
+
+- a package the consumer builds from source (mode `source`, or an
+  `EPM_<Name>_SOURCE` override) depends on it, directly or not: those dependencies'
+  snapshots are fetched whatever the setting, since such a package may read
+  `${<dep>_SOURCE_DIR}` (`target_include_directories(Mid PUBLIC
+  ${Leaf_SOURCE_DIR}/include)` for a header-only dependency);
+- its step asked for it, calling `fetch()` outside `cached()`'s callback (a hook, or
+  steps of its own that fetch first, §2).
+
+A child build that loads the closure (§10) is not the consumer: its graph names the
+snapshots of its prebuilt dependencies only as a dependent built from source needs
+them, fetched by the step only when it builds (`dependencySources`).
+`epm_add_package` follows the same settings (`epm resolve --no-source-dir`).
+
+`CONFIGS` are the entry's configs this consumer can link (`configUsableBy`): a config of
+LTO objects of another compiler, which a compatible entry picked for the others may
+hold, is left out, and the provider sets `EPM_FACADE_CONFIGS` to `CONFIGS` around the
+facade's include, so the facade (`epm-targets.cmake`, the same text in every entry)
+loads only those and its `$<CONFIG>` selector maps every consumer config onto them.
 
 ## 8. CMake: `get_epm.cmake` as the top-level include
 
@@ -930,11 +1014,11 @@ alias `fmt::fmt`. The facade must define the same spellings.
 - Beside `export-<Config>.cmake` and its `.names` it writes `.aliases`, one
   `<alias> <target>` line per alias of an exported target. Aliases of imported
   targets are left out with them.
-- The facade writer (`Build/Harvest`) reads every config's `.aliases` and emits,
-  after the facade targets, a guarded `add_library(<alias> ALIAS <target>)` for each
-  (`if (NOT TARGET <alias>)`).
-- `clearConfig` deletes `.aliases` with the config's other files. Entries built
-  before this have no `.aliases`, and so no aliases, until rebuilt.
+- The facade (`epm-targets.cmake`, the same file in every entry, `PoC.md` §5) reads
+  every published config's `.aliases` when it is loaded and defines, after the facade
+  targets, `add_library(<alias> ALIAS <target>)` for each line whose target it
+  exported (`if (NOT TARGET <alias>)`).
+- The `.aliases` is part of the config's unit, published and hashed with it.
 
 ## 10. Nested child builds
 
@@ -958,6 +1042,15 @@ even when the graph runs in one. The step writes all three files into the child'
 build directory before it configures. `epm-graph.cmake` is §7's `graph.cmake` for the package's
 dependency closure only (`dependencyClosure` in `Graph/Graph.h`, computed by epm and
 handed over as `dependencyGraph`), in dependency order, without notes.
+Its prebuilt packages' `SOURCE_DIR`s are empty there (it is computed before the
+consumer's fetch of §7), and the step's input lists them (`dependencySources`, with
+the ref each commit was resolved from); the first child configure of the step fetches
+each by the commit epm resolved (a server that refuses a fetch by hash is asked for
+that ref instead) and appends `set(epm_<name>_SOURCE_DIR "<snapshot>")` to
+`epm-graph.cmake` (`CMakeBuild::configure`), so a package building against them reads
+`${<name>_SOURCE_DIR}` as in a source build, and a step that finds its entry fetches
+nothing. The harvest copies what the export takes from those snapshots into the unit
+(`include/dep/<name>/…`).
 `epm-nested.cmake` is `CMake/epm-provider.cmake`, compiled into `epm-recipe`, and so
 into epm and every recipe executable, like `epm-export.cmake`
 (`Build/EmbeddedScripts.cpp.in`), followed by
@@ -973,9 +1066,25 @@ The fingerprint (`Cache/Fingerprint`) gains `deps` (from the request's `deps`): 
 sorted map of direct dependency name → the fingerprint hash of the dependency's entry
 actually used, which under `EPM_ABI_MATCH` may be a compatible entry rather than the
 one requested. Changing a dependency therefore changes the entry of everything that
-links it. `EPM_ABI_MATCH` policies include `deps` in the compared set at every level.
-The fingerprint `schema` stays 2; entries made now get new `fp12` names anyway,
-because the canonical JSON now has `deps`.
+links it. The fingerprint `schema` stayed 2 then (entries got new `fp12` names anyway,
+because the canonical JSON had `deps`); it is 4 now, without machine paths (`PoC.md`
+§3).
+
+Beside `deps` it records `compatibleDeps` and `anyDeps`: for each direct dependency,
+the `abiKey` of the entry used under that policy, the hash of its fingerprint
+projected onto what the policy compares (`abiProjection`: `compatible` drops the
+full compiler and C compiler versions, the processor, the architectures, the system
+name and the SDK's minor version; `any` keeps the schema, platform, runtime, options
+and source; both put the dependency's own keys for the policy in its `deps`, so the
+projection is recursive). Each policy compares the dependencies its own way
+(`sameDependencies`): `strict` compares `deps`, every hash, as before; `compatible`
+and `any` compare their keys (a dependency without one falls back to its `deps`
+hash). So a Mid entry CI built against CI's Leaf entry matches, under `compatible`, a
+machine whose own Leaf entry is compatible with CI's (another patch version of the
+compiler): both Leaf entries have the same compatible key, while their `deps` hashes,
+which `strict` still requires to be equal, differ. Without this, every machine that
+picks its own exact Leaf would rebuild Mid. The keys are in the canonical form, so
+they are part of `fp12`, and are the same on every machine for the same entries.
 
 A package's `epm-targets.cmake` does not re-export its dependencies' targets: the
 export skips imported targets already, and the provider loads `epm_X_DEPS` first.
@@ -988,7 +1097,7 @@ this end to end, with Leaf's step run in Mid's recipe executable (Mid declares i
 
 ## 11. Out of scope for this stage
 
-Stores and remote caches, `epm.lock`, `epm why`, case-insensitive names, a CPM shim
+Remote cache stores other than directories (`PoC.md` §3 has directory stores), `epm.lock`, `epm why`, case-insensitive names, a CPM shim
 for dependencies that use CPM instead of a manifest, `find_package` version checks.
 
 Known limitations of what exists:
@@ -1006,6 +1115,4 @@ Known limitations of what exists:
   stops at `epm_add_recipe`'s compiler check (§2) until the entry is deleted (or
   `EPM_RECIPE_ALLOW_COMPILER_MISMATCH` is set). The configure itself is unaffected:
   epm compiles the recipes it runs with its own compiler.
-- The source cache hashes the git url as spelled, so `…/eacp` and `…/eacp.git` are
-  different packages there, although §5 rule 5 calls them the same repository.
 - The `add_library` wrapper of §9 collides with a dependency that wraps it too.

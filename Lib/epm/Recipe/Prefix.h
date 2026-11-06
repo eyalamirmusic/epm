@@ -17,7 +17,8 @@ public:
     Prefix() = default;
     Prefix(BinaryEntry entryToUse,
            AbiFingerprint wantedToUse,
-           eacp::Vector<std::string> configsToUse);
+           eacp::Vector<std::string> configsToUse,
+           eacp::FilePath stagedToUse = {});
 
     // bin/<name>/<platform>/<fp12>.
     const eacp::FilePath& path() const;
@@ -27,8 +28,19 @@ public:
     // the entry already held every one).
     const eacp::Vector<std::string>& configs() const;
 
+    // Inside the callback of cached(): the private directory, laid out as the
+    // entry, that the configs are built into (configs/<Config>/, gen/shared/),
+    // which cached() publishes into the entry once the callback has returned.
+    // Otherwise path().
+    const eacp::FilePath& stagedEntry() const;
+
+    // Where `config`'s files go, configDirectory(stagedEntry(), config): the
+    // unit a step's build and an afterBuild hook add its files to, inside the
+    // callback, and the published one afterwards, which is never modified.
+    eacp::FilePath configDirectory(const std::string& config) const;
+
     // The entry as cached() picked or created it; the configs it holds are
-    // those marked when the Prefix was made.
+    // those published when the Prefix was made.
     const BinaryEntry& entry() const;
 
     // The fingerprint the step asked for, which may differ from the entry's
@@ -39,5 +51,6 @@ private:
     BinaryEntry binaryEntry;
     AbiFingerprint wantedFingerprint;
     eacp::Vector<std::string> configsToBuild;
+    eacp::FilePath staged;
 };
 } // namespace epm

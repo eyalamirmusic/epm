@@ -16,7 +16,9 @@
 
 namespace epm
 {
-// Fetches one package's source; fetchSource into the cache in the binary.
+// Resolves one package's source and fetches what the walk reads of it, its
+// epm.cpp (SourceResult::manifestDirectory, else the snapshot's directory);
+// fetchManifest into the cache in the binary.
 using SourceFetcher = std::function<SourceResult(
     const std::string& name, const std::string& url, const std::string& ref)>;
 
@@ -62,12 +64,20 @@ struct StepOwner
 struct PlannedPackage
 {
     EffectiveRequest effective;
+
+    // Resolved: its directory is set only when the checkout is there already
+    // (an override, a snapshot in the cache); the step fetches it otherwise.
     SourceSnapshot snapshot;
 
     // Direct dependencies: the packages its own epm.cpp declares.
     eacp::Vector<std::string> deps;
     eacp::Vector<std::string> declaredBy;
     StepOwner owner;
+
+    // Prebuilt, its source snapshot is still fetched for the consumer's
+    // <name>_SOURCE_DIR (fetchesSourceOf: EPM_FETCH_SOURCES and
+    // EPM_<Name>_FETCH_SOURCE).
+    bool fetchSource = true;
 };
 
 struct GraphPlan
@@ -80,14 +90,9 @@ struct GraphPlan
     std::string error;
 };
 
-// One spelling per repository, to tell when two names fetch the same one:
-// scheme, user, a trailing slash and ".git" dropped, scp-like "host:path" as
-// "host/path", lower case (local paths keep their case).
-std::string repositoryKey(std::string_view url);
-
 // The rules of Docs/Graph.md §5: walks the root project depth first in
-// declaration order, fetching every package (or taking its
-// EPM_<Name>_SOURCE) and loading its epm.cpp through `loader`, merges each
+// declaration order, resolving every package and fetching its epm.cpp (or
+// taking its EPM_<Name>_SOURCE) and loading it through `loader`, merges each
 // package's effective request (§4), picks the owner of its build step
 // (StepOwner, the step-ownership rule), forces the dependents of source
 // packages into source, and collects the notes (strict makes them an
@@ -123,7 +128,11 @@ struct GraphResult
 // package's step runs in the executable as well, for the options its hooks
 // set (BuildOutput::options, graph.cmake's OPTIONS); it must record source.
 // A package whose owner has no recipe gets the default steps in this
-// process.
+// process. Then the snapshot of each prebuilt package is fetched, by the
+// commit its step resolved, for its SOURCE_DIR: of every one the consumer
+// wants it for (PlannedPackage::fetchSource), and always of those a package
+// in source mode depends on, directly or not. That fetch comes after every
+// step, so it changes no fingerprint and no step's input.
 GraphResult resolvePlan(const GraphPlan& plan,
                         const Env& env,
                         const CacheRoot& cache,

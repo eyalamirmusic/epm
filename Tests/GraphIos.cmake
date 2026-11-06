@@ -250,7 +250,7 @@ function(check_consumer name expected_archs)
                     "${cache}/bin/${package}/${platform}/")
         endif ()
 
-        set(archive "${prefix}/lib/Release/lib${package}.a")
+        set(archive "${prefix}/configs/Release/lib/Release/lib${package}.a")
 
         if (NOT EXISTS "${archive}")
             fail("no ${archive}")

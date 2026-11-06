@@ -27,7 +27,13 @@ struct Node
     Vector<Declaration> declarations;
     bool visiting = false;
     bool done = false;
+
+    // The resolved source; its directory only once the source is fetched.
     SourceSnapshot snapshot;
+
+    // Where the package's epm.cpp is, if it has one: a directory of that file
+    // alone (fetchManifest), or an EPM_<Name>_SOURCE checkout.
+    FilePath manifestDirectory;
     bool hasManifest = false;
     Vector<std::string> deps;
 };
@@ -440,6 +446,7 @@ private:
 
             Log::step("epm: " + name + " from " + source);
             node.snapshot.directory = FilePath {source};
+            node.manifestDirectory = node.snapshot.directory;
             return true;
         }
 
@@ -457,6 +464,9 @@ private:
             return fail(fetched.error);
 
         node.snapshot = fetched.snapshot;
+        node.manifestDirectory = fetched.manifestDirectory.empty()
+                                     ? fetched.snapshot.directory
+                                     : fetched.manifestDirectory;
         return true;
     }
 
@@ -467,15 +477,15 @@ private:
     {
         const auto manifestOf = [&]
         {
-            const auto path = node.snapshot.directory / manifestFileName;
+            const auto path = node.manifestDirectory / manifestFileName;
             return "the manifest of " + name + " (" + path.str() + "): ";
         };
 
-        node.hasManifest = loader.hasManifest(node.snapshot.directory);
+        node.hasManifest = loader.hasManifest(node.manifestDirectory);
 
         auto loadError = std::string {};
         const auto project =
-            loader.load(node.snapshot.directory, inputs.env, loadError);
+            loader.load(node.manifestDirectory, inputs.env, loadError);
 
         if (!project)
             return fail(manifestOf() + loadError);
@@ -546,7 +556,8 @@ private:
                                node.snapshot,
                                node.deps,
                                declarersOf(node),
-                               *owner};
+                               *owner,
+                               fetchesSourceOf(overrides, name)};
     }
 
     // Always a package's own epm.cpp when it has one, even without add<T>
@@ -562,7 +573,7 @@ private:
                 return std::nullopt;
             }
 
-            return StepOwner {name, node.snapshot.directory / manifestFileName};
+            return StepOwner {name, node.manifestDirectory / manifestFileName};
         }
 
         const auto owner = stepsDeclaration(node);
@@ -573,7 +584,7 @@ private:
 
         const auto& declarer = nodes.at(owner.declarer);
         return StepOwner {owner.declarer,
-                          declarer.snapshot.directory / manifestFileName,
+                          declarer.manifestDirectory / manifestFileName,
                           customBuild};
     }
 
@@ -637,6 +648,60 @@ Vector<PackageDependency> packageDependencies(const ResolvedGraph& graph,
     return dependencies;
 }
 
+// The prebuilt packages of `packages` whose source no step fetched, and so
+// that graph.cmake gives no SOURCE_DIR.
+Vector<DependencySource> unfetchedSources(const Vector<ResolvedPackage>& packages)
+{
+    auto sources = Vector<DependencySource> {};
+
+    for (const auto& package: packages)
+        if (package.mode == "prebuilt" && package.sourceDir.empty()
+            && !package.commit.empty())
+            sources.add({package.name,
+                         package.request.gitUrl,
+                         package.request.gitRef,
+                         package.commit});
+
+    return sources;
+}
+
+// The consumer's <name>_SOURCE_DIR of a prebuilt package (Catch2's extras/,
+// a header-only dependency's include/): its snapshot is fetched now, after
+// every step, for each package the consumer wants it for (`wanted`), and for
+// every one a package it builds from source depends on, which may read it.
+std::optional<std::string> fetchConsumerSources(ResolvedGraph& graph,
+                                                const std::set<std::string>& wanted,
+                                                const CacheRoot& cache)
+{
+    auto needed = wanted;
+
+    for (const auto& package: graph.packages)
+        if (package.mode == "source" && !package.deps.empty())
+            for (const auto& source:
+                 unfetchedSources(dependencyClosure(graph, package.deps).packages))
+                needed.insert(source.name);
+
+    for (auto& package: graph.packages)
+    {
+        if (!needed.contains(package.name) || package.mode != "prebuilt"
+            || !package.sourceDir.empty() || package.commit.empty())
+            continue;
+
+        const auto fetched = fetchCommit(cache,
+                                         package.name,
+                                         package.request.gitUrl,
+                                         package.request.gitRef,
+                                         package.commit);
+
+        if (!fetched.ok)
+            return fetched.error;
+
+        package.sourceDir = fetched.snapshot.directory.str();
+    }
+
+    return std::nullopt;
+}
+
 ResolveResult stepFailure(std::string error)
 {
     auto result = ResolveResult {};
@@ -687,30 +752,6 @@ ResolveResult
 }
 } // namespace
 
-std::string repositoryKey(std::string_view url)
-{
-    auto key = std::string {url};
-    const auto isLocal = isLocalRepository(key);
-    const auto scheme = key.find("://");
-
-    if (scheme != std::string::npos)
-        key = key.substr(scheme + 3);
-    else if (const auto colon = key.find(':');
-             colon != std::string::npos && !isLocal)
-        key[colon] = '/';
-
-    if (const auto at = key.find('@'); at != std::string::npos && at < key.find('/'))
-        key = key.substr(at + 1);
-
-    while (key.ends_with('/'))
-        key.pop_back();
-
-    if (key.ends_with(".git"))
-        key.resize(key.size() - 4);
-
-    return isLocal ? key : Strings::toLower(key);
-}
-
 GraphPlan planGraph(const GraphInputs& inputs,
                     const SourceFetcher& fetch,
                     ManifestLoader& loader)
@@ -751,8 +792,16 @@ GraphResult resolvePlan(const GraphPlan& plan,
                         const CacheRoot& cache,
                         ManifestLoader& steps)
 {
+    // What a dependent records of each prebuilt entry, one key per policy.
+    struct EntryKeys
+    {
+        std::string strict;
+        std::string compatible;
+        std::string any;
+    };
+
     auto result = GraphResult {};
-    auto fingerprints = std::map<std::string, std::string> {};
+    auto entryKeys = std::map<std::string, EntryKeys> {};
     auto sourceNames = Vector<std::string> {};
 
     for (const auto& planned: plan.packages)
@@ -774,21 +823,35 @@ GraphResult resolvePlan(const GraphPlan& plan,
         if (request.mode != "source" && !planned.deps.empty())
         {
             for (const auto& dep: planned.deps)
-                request.deps[dep] = fingerprints[dep];
+            {
+                const auto& keys = entryKeys[dep];
+                request.deps[dep] = keys.strict;
+
+                // A step that recorded no key leaves the dependency to its
+                // deps hash (sameDependencies), which is never looser.
+                if (!keys.compatible.empty())
+                    request.compatibleDeps[dep] = keys.compatible;
+
+                if (!keys.any.empty())
+                    request.anyDeps[dep] = keys.any;
+            }
 
             dependencyGraph =
                 graphCMakeText(dependencyClosure(result.graph, planned.deps));
         }
 
-        const auto resolved =
-            runStep(planned,
-                    buildInputFor(request,
-                                  env,
-                                  cache,
-                                  planned.snapshot,
-                                  dependencyGraph,
-                                  packageDependencies(result.graph, planned.deps)),
-                    steps);
+        auto input = buildInputFor(request,
+                                   env,
+                                   cache,
+                                   planned.snapshot,
+                                   dependencyGraph,
+                                   packageDependencies(result.graph, planned.deps));
+
+        if (!dependencyGraph.empty())
+            input.dependencySources = unfetchedSources(
+                dependencyClosure(result.graph, planned.deps).packages);
+
+        const auto resolved = runStep(planned, std::move(input), steps);
 
         if (!resolved.ok)
         {
@@ -798,12 +861,25 @@ GraphResult resolvePlan(const GraphPlan& plan,
         }
 
         if (resolved.response.mode == "prebuilt")
-            fingerprints[request.name] = resolved.fingerprintHash;
+            entryKeys[request.name] = {
+                resolved.fingerprintHash, resolved.compatibleKey, resolved.anyKey};
         else
             sourceNames.add(request.name);
 
         result.graph.packages.add(resolvedPackage(
             planned, std::move(request), std::move(provenance), resolved));
+    }
+
+    auto wanted = std::set<std::string> {};
+
+    for (const auto& planned: plan.packages)
+        if (planned.fetchSource)
+            wanted.insert(planned.effective.request.name);
+
+    if (auto error = fetchConsumerSources(result.graph, wanted, cache))
+    {
+        result.error = *error;
+        return result;
     }
 
     result.graph.notes = plan.notes;
@@ -815,10 +891,13 @@ GraphResult configureGraph(const GraphInputs& inputs,
                            const CacheRoot& cache,
                            ManifestLoader& loader)
 {
+    // Only what the walk reads, each package's epm.cpp: its step fetches the
+    // source when it builds, or when the package is in source mode, and
+    // resolvePlan fetches it last for the consumer's SOURCE_DIR.
     const auto fetch = [&cache](const std::string& name,
                                 const std::string& url,
                                 const std::string& ref)
-    { return fetchSource(cache, name, url, ref); };
+    { return fetchManifest(cache, name, url, ref); };
 
     const auto plan = planGraph(inputs, fetch, loader);
 

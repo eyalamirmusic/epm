@@ -92,6 +92,10 @@
 #                             unset
 #   EPM_CACHE                 cache root (else the EPM_CACHE environment
 #                             variable, else the platform cache directory)
+#   EPM_CACHE_STORES          read-only cache stores binaries are copied from
+#                             when the cache lacks them (else the
+#                             EPM_CACHE_STORES environment variable); used by
+#                             epm.cmake, never by the bootstrap
 #   EPM_VERBOSE               say what is tried; stream the build output
 #   EPM_NESTED                set by epm for its child builds: do nothing
 #

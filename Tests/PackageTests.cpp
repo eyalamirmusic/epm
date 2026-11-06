@@ -1,4 +1,6 @@
+#include <epm/Build/Harvest.h>
 #include <epm/Cache/BinaryCache.h>
+#include <epm/Cache/CacheStore.h>
 #include <epm/Recipe/Recipe.h>
 #include <epm/Resolve/Resolve.h>
 #include <epm/Spec/JsonFile.h>
@@ -58,10 +60,10 @@ BuildInput packageInput(const FilePath& root,
     return input;
 }
 
-// What a harvested build of `config` leaves in the prefix.
+// What a harvested build of `config` leaves in its staged unit.
 void writeFakeExport(const Prefix& prefix, const std::string& config)
 {
-    const auto exportFile = exportFileFor(prefix.path(), config);
+    const auto exportFile = exportFileFor(prefix.configDirectory(config), config);
     check(writeTextFile(exportFile, "# export of Lib\n"));
     check(writeTextFile(exportFile.sibling(exportFile.fileName() + ".names"),
                         "Lib\n"));
@@ -92,13 +94,17 @@ BuildOutput fakeBuild(const BuildInput& input, Configs& asked, int& calls)
                     });
 }
 
-Prefix fakePrefix(Configs configs = {"Release"})
+// A prefix outside cached(), or with `staging` named, one inside its
+// callback.
+Prefix fakePrefix(Configs configs = {"Release"}, std::string staging = {})
 {
     auto fingerprint = AbiFingerprint {};
     fingerprint.platform = "macos-arm64";
-    auto entry = BinaryEntry {
-        FilePath {"/cache/bin/Lib/macos-arm64/0123456789ab"}, fingerprint, {}, {}};
-    return {entry, fingerprint, std::move(configs)};
+    const auto path = FilePath {"/cache/bin/Lib/macos-arm64/0123456789ab"};
+    auto entry = BinaryEntry {path, fingerprint, {}, {}, {}};
+    const auto staged =
+        staging.empty() ? FilePath {} : stagingDirectory(path) / staging;
+    return {entry, fingerprint, std::move(configs), staged};
 }
 
 struct Custom final : CMakePackage
@@ -200,12 +206,21 @@ auto tPackageBuildsMissing = test("Package/cached/buildsMissingConfigs") = []
     check(output.fingerprintHash == fingerprintId(entry->fingerprint));
     check(entry->fingerprint.sourceId == "abcdef");
     check(entry->fingerprint.options.at("LIB_TESTS") == "OFF");
-    check(eacp::Files::isFile(entry->prefix / "Debug.json"));
-    check(eacp::Files::isFile(entry->prefix / "Release.json"));
+    check(eacp::Files::isFile(entry->prefix / "configs/Debug/epm-config.json"));
+    check(eacp::Files::isFile(entry->prefix / "configs/Release/epm-config.json"));
+    check(eacp::Files::readFile(entry->targetsFile()) == targetsFileText());
 
-    const auto targets = eacp::Files::readFile(entry->targetsFile());
-    check(targets.find("export-Debug.cmake") != std::string::npos);
-    check(targets.find("export-Release.cmake") != std::string::npos);
+    // Each unit records its files, hashed; staging is gone.
+    const auto* release = entry->markerOf("Release");
+    check(release != nullptr
+          && loadConfigFiles(configDirectory(entry->prefix, "Release"), *release)
+                     .files.value_or(ConfigFiles {})
+                     .files.size()
+                 == 2);
+    check(release != nullptr && release->lto.empty());
+    check(release != nullptr
+          && release->compilerVersion == input.env.cxxCompilerVersion);
+    check(eacp::Files::listDirectory(stagingDirectory(entry->prefix)).empty());
 };
 
 auto tPackageUsesEntry = test("Package/cached/usesACompleteEntry") = []
@@ -246,6 +261,136 @@ auto tPackageAdditive = test("Package/cached/buildsOnlyTheMissingConfig") = []
     check(both.configs == Configs {"Debug", "Release"});
 };
 
+namespace
+{
+// Every file under `directory`, by relative path, with its contents.
+std::map<std::string, std::string> filesUnder(const FilePath& directory)
+{
+    auto options = eacp::Files::DirectoryOptions {};
+    options.recursive = true;
+    options.includeHidden = true;
+    auto files = std::map<std::string, std::string> {};
+
+    for (const auto& entry: eacp::Files::listDirectory(directory, options))
+        if (eacp::Files::isFile(entry.path))
+            files[entry.path.relativeTo(directory).str()] =
+                eacp::Files::readFile(entry.path);
+
+    return files;
+}
+} // namespace
+
+auto tPackageAddLeavesOthers =
+    test("Package/cached/addingAConfigLeavesOthersAlone") = []
+{
+    auto root = eacp::TemporaryFile {};
+    auto asked = Configs {};
+    auto calls = 0;
+    const auto release = fakeBuild(packageInput(root.path()), asked, calls);
+    const auto prefix = FilePath {release.prefix};
+    const auto releaseBefore = filesUnder(configDirectory(prefix, "Release"));
+    const auto facadeBefore = eacp::Files::readFile(prefix / "epm-targets.cmake");
+
+    const auto both = fakeBuild(
+        packageInput(root.path(), "auto", {"Debug", "Release"}), asked, calls);
+
+    check(both.ok() && both.prefix == release.prefix);
+    check(asked == Configs {"Debug"});
+    check(!releaseBefore.empty());
+    check(filesUnder(configDirectory(prefix, "Release")) == releaseBefore);
+    check(eacp::Files::readFile(prefix / "epm-targets.cmake") == facadeBefore);
+    check(eacp::Files::isFile(configDirectory(prefix, "Debug") / "epm-config.json"));
+};
+
+// A compatible entry of another compiler takes a missing config only when it
+// is machine code: LTO objects go to the exact entry, which then gets the
+// other configs too, so the entry's own compiler can still use its entry.
+auto tPackageLtoExact = test("Package/cached/ltoObjectsGoToTheExactEntry") = []
+{
+    auto root = eacp::TemporaryFile {};
+    auto asked = Configs {};
+    auto calls = 0;
+    const auto ninja = fakeBuild(packageInput(root.path()), asked, calls);
+
+    auto input = packageInput(root.path(), "auto", {"Debug", "Release"});
+    input.env.cxxCompilerVersion = "17.0.0.17000319";
+    auto rounds = eacp::Vector<Configs> {};
+
+    const auto xcode =
+        runSteps(input,
+                 [&](Package& package)
+                 {
+                     const auto key = package.fingerprint(package.fetch());
+                     const auto build = [&](const Prefix& prefix)
+                     {
+                         rounds.add(prefix.configs());
+
+                         for (const auto& config: prefix.configs())
+                         {
+                             writeFakeExport(prefix, config);
+                             check(writeTextFile(
+                                 prefix.configDirectory(config) / "lib/libLib.a",
+                                 std::string {"BC\xC0\xDE\x35\x14\x00\x00", 8}));
+                         }
+                     };
+
+                     if (auto prefix = package.cached(key, build))
+                         package.exportPrefix(*prefix);
+                 });
+
+    check(ninja.ok() && xcode.ok());
+    check(rounds == eacp::Vector<Configs> {{"Debug"}, {"Release"}});
+    check(xcode.prefix != ninja.prefix);
+    check(xcode.configs == Configs {"Debug", "Release"});
+    check(xcode.note.empty());
+
+    // The compatible entry is as it was; the exact one holds both, pinned.
+    check(readEntry(FilePath {ninja.prefix})->configs == Configs {"Release"});
+
+    const auto exact = readEntry(FilePath {xcode.prefix});
+    check(exact && exact->markerOf("Debug")->lto == "llvm-bitcode");
+    check(exact && exact->markerOf("Debug")->compilerVersion == "17.0.0.17000319");
+};
+
+// An entry whose Debug is LTO objects of its own compiler and whose Release is
+// plain, picked for Release by a compatible compiler: the configs it reports,
+// which the facade loads, leave the Debug it cannot link out.
+auto tPackageUsableConfigs =
+    test("Package/export/onlyConfigsTheConsumerCanLink") = []
+{
+    auto root = eacp::TemporaryFile {};
+    const auto both = Configs {"Debug", "Release"};
+    const auto bitcode = std::string {"BC\xC0\xDE\x35\x14\x00\x00", 8};
+    const auto build = [&](const Prefix& prefix)
+    {
+        for (const auto& config: prefix.configs())
+        {
+            writeFakeExport(prefix, config);
+            check(writeTextFile(prefix.configDirectory(config) / "lib/libLib.a",
+                                config == "Debug" ? bitcode : "!<arch>\n"));
+        }
+    };
+    const auto steps = [&](Package& package)
+    {
+        if (auto prefix =
+                package.cached(package.fingerprint(package.fetch()), build))
+            package.exportPrefix(*prefix);
+    };
+    const auto built = runSteps(packageInput(root.path(), "auto", both), steps);
+
+    check(built.ok() && built.configs == both);
+
+    auto input = packageInput(root.path(), "binary-only", {"Release"});
+    input.env.cxxCompilerVersion = "17.0.0.17000319";
+    auto asked = Configs {};
+    auto calls = 0;
+    const auto used = fakeBuild(input, asked, calls);
+
+    check(used.ok() && calls == 0);
+    check(used.prefix == built.prefix);
+    check(used.configs == Configs {"Release"});
+};
+
 auto tPackageBinaryOnlyMiss = test("Package/cached/binaryOnlyMissIsAnError") = []
 {
     auto root = eacp::TemporaryFile {};
@@ -259,6 +404,41 @@ auto tPackageBinaryOnlyMiss = test("Package/cached/binaryOnlyMissIsAnError") = [
     check(output.mode.empty());
     check(output.error.find("Lib is binary-only, but the cache has no macos-arm64 "
                             "entry holding Release")
+          != std::string::npos);
+};
+
+// A config a cache store holds counts as cached, binary-only included: it is
+// copied into the local cache and used from there, and nothing is built.
+auto tPackageStoreHit = test("Package/cached/aStoreHitCountsAsCached") = []
+{
+    auto root = eacp::TemporaryFile {};
+    auto asked = Configs {};
+    auto calls = 0;
+    const auto builder = packageInput(root.path() / "ci");
+    check(fakeBuild(builder, asked, calls).ok());
+    check(calls == 1);
+
+    const auto store = root.path() / "store";
+    check(pushToStore(CacheRoot {FilePath {builder.cacheRoot}}, store, {}).configs
+          == 1);
+
+    auto input = packageInput(root.path() / "dev", "binary-only");
+    input.cacheStores = {store.str()};
+    calls = 0;
+    const auto output = fakeBuild(input, asked, calls);
+
+    check(output.ok());
+    check(calls == 0);
+    check(output.mode == "prebuilt");
+    check(FilePath {output.prefix}.str().starts_with(input.cacheRoot));
+    check(output.configs == Configs {"Release"});
+
+    // Without the store the same request has nothing to use.
+    auto alone = packageInput(root.path() / "other", "binary-only");
+    alone.cacheStores = {(root.path() / "nowhere").str()};
+    const auto missed = fakeBuild(alone, asked, calls);
+    check(!missed.ok());
+    check(missed.error.find("neither the cache nor its 1 cache store has")
           != std::string::npos);
 };
 
@@ -330,7 +510,8 @@ auto tPackageCallbackThrows =
         return;
 
     check(entries[0].configs.empty());
-    check(!eacp::Files::exists(entries[0].prefix / "Debug.json"));
+    check(!eacp::Files::exists(entries[0].prefix / "configs/Debug"));
+    check(eacp::Files::listDirectory(stagingDirectory(entries[0].prefix)).empty());
 
     auto asked = Configs {};
     auto calls = 0;
@@ -342,32 +523,51 @@ auto tPackageCallbackThrows =
     check(rebuilt.configs == Configs {"Debug", "Release"});
 };
 
-// A fetch inside cached()'s callback would wait on the lock this process
-// holds: it fails at once instead, unless the source is in hand already.
-auto tPackageFetchUnderLock = test("Package/fetch/insideCachedFailsFast") = []
+// A source resolved but not fetched: fetch() inside cached()'s callback
+// fetches the commit epm resolved, under the lock cached() holds, and the
+// snapshot already in the cache makes that a lookup.
+auto tPackageFetchUnderLock = test("Package/fetch/insideCachedFetchesTheCommit") = []
 {
     auto root = eacp::TemporaryFile {};
     auto input = packageInput(root.path());
-    const auto given = *input.source;
-    input.source.reset();
+    const auto commit = std::string(40, 'b');
+    const auto id = sourceId(input.request.gitUrl, commit);
+    const auto snapshot =
+        FilePath {input.cacheRoot} / "src" / "Lib" / id.substr(0, 12);
+    check(eacp::Files::createDirectories(snapshot));
+    check(saveJsonFile(snapshot.sibling(snapshot.fileName() + ".json"),
+                       SourceMarker {input.request.gitUrl, commit, "now"}));
+    input.source = BuildSource {commit, id, {}};
 
-    const auto output =
-        runSteps(input,
-                 [&](Package& package)
-                 {
-                     const auto key = package.fingerprint(snapshotOf(given));
-                     package.cached(key, [&](const Prefix&) { package.fetch(); });
-                     package.useSource();
-                 });
+    auto resolvedOutside = SourceSnapshot {};
+    auto fetchedInside = SourceSnapshot {};
+    const auto output = runSteps(input,
+                                 [&](Package& package)
+                                 {
+                                     resolvedOutside = package.resolveSource();
+                                     const auto key =
+                                         package.fingerprint(resolvedOutside);
+                                     const auto build = [&](const Prefix& prefix)
+                                     {
+                                         fetchedInside = package.fetch();
+                                         writeFakeExport(prefix, "Release");
+                                     };
 
-    check(!output.ok());
-    check(output.error
-          == "the build step of Lib fetches its source inside cached()'s "
-             "callback, under the package lock a fetch takes: call fetch() "
-             "before cached()");
+                                     if (auto prefix = package.cached(key, build))
+                                         package.exportPrefix(*prefix);
+                                 });
+
+    check(output.ok());
+    check(resolvedOutside.directory.empty());
+    check(resolvedOutside.sourceId == id);
+    check(fetchedInside.directory == snapshot);
+    check(fetchedInside.commit == commit);
+
+    // Fetched only to build: the prebuilt result names no source directory.
+    check(output.sourceDirectory.empty());
 
     // With the source handed in, fetch() returns it, lock or not.
-    auto fetchedInside = SourceSnapshot {};
+    fetchedInside = SourceSnapshot {};
     const auto handed = runSteps(packageInput(root.path(), "auto", {"Debug"}),
                                  [&](Package& package)
                                  {
@@ -481,7 +681,18 @@ auto tPackageExport = test("Package/exportPrefix") = []
     check(output.prefix == "/cache/bin/Lib/macos-arm64/0123456789ab");
     check(output.platform == "macos-arm64");
     check(output.fingerprintHash == fingerprintId(prefix.entry().fingerprint));
-    check(output.sourceDirectory == (root.path() / "src").str());
+
+    // A prebuilt package names its source only when the step asked for it.
+    check(output.sourceDirectory.empty());
+
+    const auto fetched = runSteps(packageInput(root.path()),
+                                  [&](Package& package)
+                                  {
+                                      package.fetch();
+                                      package.exportPrefix(prefix);
+                                  });
+
+    check(fetched.sourceDirectory == (root.path() / "src").str());
 
     const auto resolved = resolveResultFor(output);
     check(resolved.ok);
@@ -509,6 +720,15 @@ auto tCMakeBuildArguments = test("CMakeBuild/configureArguments") = []
                   == cacheRoot / "build" / "Lib" / "macos-arm64" / "0123456789ab"
                          / "Release");
 
+            // Inside cached()'s callback, one tree per staging directory.
+            auto staged = package.cmake(source, fakePrefix({"Release"}, "s.1"));
+            check(staged.buildDirectory("Release")
+                  == cacheRoot / "build" / "Lib" / "macos-arm64" / "0123456789ab"
+                         / "s.1" / "Release");
+            check(staged.childBuild("Release").prefix
+                  == FilePath {"/cache/bin/Lib/macos-arm64/.staging/s.1/configs/"
+                               "Release"});
+
             const auto arguments = build.configureArguments("Release");
             const auto has = [&](const std::string& argument)
             { return arguments.contains(argument); };
@@ -521,10 +741,10 @@ auto tCMakeBuildArguments = test("CMakeBuild/configureArguments") = []
             check(has("-DCMAKE_BUILD_TYPE=Release"));
             check(has("-DCMAKE_CXX_COMPILER=/usr/bin/c++"));
             check(has("-DCMAKE_ARCHIVE_OUTPUT_DIRECTORY=/cache/bin/Lib/macos-arm64/"
-                      "0123456789ab/lib/Release"));
+                      "0123456789ab/configs/Release/lib/Release"));
             check(has("-DCPM_SOURCE_CACHE=" + (cacheRoot / "cpm").str()));
             check(has("-DEPM_EXPORT_FILE=/cache/bin/Lib/macos-arm64/0123456789ab/"
-                      "export-Release.cmake"));
+                      "configs/Release/export-Release.cmake"));
             check(has("-DEPM_EXPORT_NAMESPACE=epm_release::"));
             check(arguments.back() == "-DLIB_TESTS=OFF");
             check(!has("-DEPM_EXECUTABLE=/opt/epm/bin/epm"));

@@ -36,6 +36,9 @@ struct StepCall
     std::map<std::string, std::string> deps;
     std::map<std::string, std::string> options;
     eacp::Vector<std::string> dependencies;
+
+    // BuildInput::dependencySources, "<name>@<commit>".
+    eacp::Vector<std::string> dependencySources;
 };
 
 // Checkouts on disk standing in for the source cache (name@ref), and an
@@ -117,6 +120,9 @@ struct FakeSources final : ManifestLoader
         for (const auto& dependency: input.dependencies)
             call.dependencies.add(dependency.name + ":" + dependency.prefix);
 
+        for (const auto& source: input.dependencySources)
+            call.dependencySources.add(source.name + "@" + source.commit);
+
         steps.add(std::move(call));
 
         if (const auto failure = stepErrors.find(name); failure != stepErrors.end())
@@ -146,6 +152,8 @@ struct FakeSources final : ManifestLoader
         output.platform = "test";
         output.configs = {"Debug"};
         output.fingerprintHash = "fp-" + name;
+        output.compatibleKey = "compatible-" + name;
+        output.anyKey = "any-" + name;
         outputs[name] = output;
     }
 
@@ -476,18 +484,6 @@ auto tGraphSameRepository = test("Graph/walk/sameRepositoryUnderTwoNames") = []
                   "fmt and fmtlib are the same repository (github.com/fmtlib/fmt)"));
 };
 
-auto tGraphRepositoryKey = test("Graph/repositoryKey") = []
-{
-    const auto key = std::string {"github.com/fmtlib/fmt"};
-
-    check(repositoryKey("https://github.com/fmtlib/fmt.git") == key);
-    check(repositoryKey("https://github.com/FmtLib/fmt/") == key);
-    check(repositoryKey("git@github.com:fmtlib/fmt.git") == key);
-    check(repositoryKey("ssh://git@github.com/fmtlib/fmt") == key);
-    check(repositoryKey("/srv/Git/fmt.git") == "/srv/Git/fmt");
-    check(repositoryKey("C:/Git/fmt.git") == "C:/Git/fmt");
-};
-
 auto tGraphSourcePropagates = test("Graph/walk/sourceForcesDependents") = []
 {
     auto sources = FakeSources {};
@@ -795,6 +791,84 @@ auto tGraphFallbackForcesSource =
     check(a.commit == "v1");
 };
 
+// A prebuilt dependency whose step fetched no source has no SOURCE_DIR: the
+// step of a package built against it is told what to fetch should a child
+// build of its own need the dependency's source, transitive ones included.
+auto tGraphDependencySources =
+    test("Graph/resolve/unfetchedDependenciesGoToTheStep") = []
+{
+    auto sources = FakeSources {};
+    sources.add("A", "v1", declaring("B", "v1"));
+    sources.add("B", "v1", declaring("C", "v1"));
+    sources.add("C", "v1");
+    sources.prebuilt("A");
+    sources.prebuilt("B");
+    sources.prebuilt("C");
+    sources.outputs["C"].sourceDirectory.clear();
+
+    // EPM_FETCH_SOURCES=OFF: the consumer does not want the snapshots either.
+    auto inputs = inputsFor(declaring("A", "v1"));
+    inputs.overrides.fetchSources = false;
+    const auto resolved = sources.resolve(sources.plan(inputs), inputs.env);
+
+    check(resolved.ok);
+    check(sources.stepOf("C")->dependencySources.empty());
+    check(sources.stepOf("B")->dependencySources
+          == eacp::Vector<std::string> {"C@v1"});
+    check(sources.stepOf("A")->dependencySources
+          == eacp::Vector<std::string> {"C@v1"});
+    check(findPackage(resolved.graph.packages, "C")->sourceDir.empty());
+};
+
+// The consumer's <name>_SOURCE_DIR of a prebuilt package names its snapshot,
+// fetched after the steps (here complete in the cache already, so no network
+// is needed), unless EPM_FETCH_SOURCES or EPM_<Name>_FETCH_SOURCE says not to.
+auto tGraphConsumerSources =
+    test("Graph/resolve/prebuiltSourcesFetchedForTheConsumer") = []
+{
+    const auto commit = std::string(40, 'c');
+    auto sources = FakeSources {};
+    sources.add("A", "v1", declaring("C", commit));
+    sources.add("C", commit);
+    sources.prebuilt("A");
+    sources.prebuilt("C");
+    sources.outputs["C"].sourceDirectory.clear();
+
+    const auto inputs = inputsFor(declaring("A", "v1"));
+    const auto plan = sources.plan(inputs);
+    const auto cache = CacheRoot {sources.cacheDirectory.path()};
+    const auto snapshot =
+        snapshotDirectory(cache, "C", sourceId(sources.urls["C"], commit));
+    check(writeTextFile(snapshot / "CMakeLists.txt", ""));
+    check(writeTextFile(snapshot.sibling(snapshot.fileName() + ".json"), "{}"));
+
+    const auto sourceDirOf = [&](const GraphInputs& variant)
+    {
+        const auto resolved = sources.resolve(sources.plan(variant), variant.env);
+        check(resolved.ok);
+        const auto* c = findPackage(resolved.graph.packages, "C");
+        return c == nullptr ? std::string {"none"} : c->sourceDir;
+    };
+
+    check(sourceDirOf(inputs) == snapshot.str());
+
+    // The steps saw no SOURCE_DIR either way: the fetch changes no input.
+    check(sources.stepOf("A")->dependencySources
+          == eacp::Vector<std::string> {"C@" + commit});
+
+    auto packageOff = inputs;
+    packageOff.overrides.packages["C"].fetchSource = false;
+    check(sourceDirOf(packageOff).empty());
+
+    auto globalOff = inputs;
+    globalOff.overrides.fetchSources = false;
+    check(sourceDirOf(globalOff).empty());
+
+    auto packageOn = globalOff;
+    packageOn.overrides.packages["C"].fetchSource = true;
+    check(sourceDirOf(packageOn) == snapshot.str());
+};
+
 auto tGraphBinaryOnlyMiss = test("Graph/resolve/binaryOnlyFailsOnAMiss") = []
 {
     auto sources = FakeSources {};
@@ -886,6 +960,14 @@ auto tGraphStepOwners = test("Graph/steps/ownerAndDependencyOrder") = []
     check(resolvedA && resolvedA->fingerprint == "fp-A");
     check(resolvedA && resolvedA->prefix == "/bin/A");
     check(resolvedA && resolvedA->request.deps.at("C") == "fp-C");
+
+    // And each dependency's key per policy, which compatible and any compare
+    // in place of the fingerprint (Fingerprint.h, sameDependencies).
+    check(resolvedA
+          && resolvedA->request.compatibleDeps
+                 == std::map<std::string, std::string> {{"C", "compatible-C"},
+                                                        {"D", "compatible-D"}});
+    check(resolvedA && resolvedA->request.anyDeps.at("D") == "any-D");
 };
 
 auto tGraphRootOptionsKeepSteps =

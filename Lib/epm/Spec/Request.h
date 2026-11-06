@@ -41,6 +41,12 @@ struct Request
     // dependency changes the entry of everything linking it.
     std::map<std::string, std::string> deps;
 
+    // The same entries' abiKey under compatible and any, which those
+    // policies compare in place of deps (sameDependencies), so an entry built
+    // on another machine against its own compatible dependency matches.
+    std::map<std::string, std::string> compatibleDeps;
+    std::map<std::string, std::string> anyDeps;
+
     MIRO_REFLECT(schema,
                  name,
                  gitUrl,
@@ -50,7 +56,9 @@ struct Request
                  buildMissingBinaries,
                  configs,
                  abiMatch,
-                 deps)
+                 deps,
+                 compatibleDeps,
+                 anyDeps)
 };
 
 // Why the request cannot be resolved, or nullopt when it is well formed.

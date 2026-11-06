@@ -1,8 +1,10 @@
 #include <epm/Recipe/Project.h>
 #include <epm/Spec/JsonFile.h>
+#include <epm/Spec/Manifest.h>
 #include <epm/Spec/Overrides.h>
 #include <epm/Util/Text.h>
 
+#include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/TemporaryFile.h>
 
 #include <NanoTest/NanoTest.h>
@@ -115,6 +117,67 @@ auto tManifestShorthand = test("Manifest/expandGitUrl") = []
     check(!isLocalRepository("fmtlib/fmt"));
     check(expandGitUrl("file:///srv/git/b") == "file:///srv/git/b");
     check(expandGitUrl("").empty());
+};
+
+auto tManifestRepositoryKey = test("Manifest/repositoryKey/remoteSpellings") = []
+{
+    const auto key = std::string {"github.com/fmtlib/fmt"};
+
+    for (const auto* url: {"https://github.com/fmtlib/fmt.git",
+                           "https://github.com/fmtlib/fmt",
+                           "https://github.com/FmtLib/fmt/",
+                           "https://GitHub.com/fmtlib/fmt.git/",
+                           "http://github.com/fmtlib/fmt",
+                           "git://github.com/fmtlib/fmt.git",
+                           "git@github.com:fmtlib/fmt.git",
+                           "git@github.com:fmtlib/fmt",
+                           "github.com:fmtlib/fmt.git",
+                           "ssh://git@github.com/fmtlib/fmt",
+                           "ssh://github.com/fmtlib/fmt.git",
+                           "https://user:token@github.com/fmtlib/fmt.git"})
+        check(repositoryKey(url) == key);
+};
+
+auto tManifestRepositoryKeyDiffers = test("Manifest/repositoryKey/distinct") = []
+{
+    const auto key = repositoryKey("https://github.com/fmtlib/fmt.git");
+
+    check(repositoryKey("https://gitlab.com/fmtlib/fmt.git") != key);
+    check(repositoryKey("git@gitlab.com:fmtlib/fmt.git") != key);
+    check(repositoryKey("https://github.com/other/fmt.git") != key);
+    check(repositoryKey("https://github.com/fmtlib/fmt2.git") != key);
+    check(repositoryKey("https://github.com/fmtlib/fmt/sub") != key);
+    check(repositoryKey("ssh://git@github.com:2222/fmtlib/fmt") != key);
+};
+
+auto tManifestRepositoryKeyLocal = test("Manifest/repositoryKey/localPaths") = []
+{
+    const auto key = repositoryKey("/srv/Git/fmt");
+
+    check(repositoryKey("/srv/Git/fmt.git") == key);
+    check(repositoryKey("/srv/Git/fmt/") == key);
+    check(repositoryKey("file:///srv/Git/fmt.git") == key);
+    check(repositoryKey("/srv/git/fmt") != key);
+
+    // Elsewhere than Windows a drive-letter path is not absolute, so it is
+    // kept as written; on Windows "/srv" gets the current drive.
+    if (!eacp::FilePath {"C:/Git"}.isAbsolute())
+    {
+        check(key == "/srv/Git/fmt");
+        check(repositoryKey("C:/Git/fmt.git") == "C:/Git/fmt");
+        check(repositoryKey("file:///C:/Git/fmt.git") == "C:/Git/fmt");
+    }
+
+    // An existing directory is resolved: its symlinks and "..".
+    const auto directory = eacp::TemporaryFile {"-repo"};
+    check(eacp::Files::createDirectories(directory.path() / "Repo.git"));
+
+    const auto resolved = repositoryKey((directory.path() / "Repo.git").str());
+    check(resolved.ends_with("/Repo"));
+    check(repositoryKey((directory.path() / "x" / ".." / "Repo.git").str())
+          == resolved);
+    check(repositoryKey("file://" + (directory.path() / "Repo.git").str())
+          == resolved);
 };
 
 auto tOverridesParse = test("Overrides/parsesContractFixture") = []

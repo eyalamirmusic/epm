@@ -38,10 +38,29 @@ std::optional<T> loadJsonFile(const eacp::FilePath& path)
     return Miro::createFromJSON<T>(*json);
 }
 
+// The same from JSON text already read.
+template <typename T>
+std::optional<T> parseJsonText(const std::string& text)
+{
+    const auto json = Miro::Json::getParsedValue(text);
+
+    if (!json.isObject())
+        return std::nullopt;
+
+    return Miro::createFromJSON<T>(json);
+}
+
+// The text saveJsonFile writes.
+template <typename T>
+std::string jsonText(const T& value)
+{
+    return Miro::toJSONString(value, 2) + "\n";
+}
+
 template <typename T>
 bool saveJsonFile(const eacp::FilePath& path, const T& value)
 {
-    const auto text = Miro::toJSONString(value, 2) + "\n";
+    const auto text = jsonText(value);
     const auto directory = path.parentDirectory();
 
     // A bare file name has no parent, and createDirectories("") fails.

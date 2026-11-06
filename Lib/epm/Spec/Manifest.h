@@ -45,6 +45,15 @@ bool isLocalRepository(std::string_view git);
 // spelling is returned as is.
 std::string expandGitUrl(std::string_view git);
 
+// One spelling per repository, whatever way a machine reaches it: scheme,
+// user, a trailing slash and ".git" dropped, scp-like "host:path" as
+// "host/path", lower case, so https, ssh and git URLs of one repository give
+// "github.com/owner/repo". A local path (or file:// URL) is made absolute and
+// resolved, keeping its case: local repositories are machine-specific anyway.
+// It names a repository in the graph's notes and in the sourceId; fetching
+// always uses the URL as written.
+std::string repositoryKey(std::string_view url);
+
 // The entry named `name` of `packages`; nullptr when there is none.
 template <typename Package>
 const Package* findPackage(const eacp::Vector<Package>& packages,

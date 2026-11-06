@@ -42,6 +42,10 @@ struct ConfigureArgs
 
     // The cache root; $EPM_CACHE (CacheRoot::fromEnvironment) when empty.
     eacp::FilePath cache;
+
+    // The cache stores (--cache-store, repeated), in order;
+    // $EPM_CACHE_STORES (CacheRoot::storesFromEnvironment) when empty.
+    eacp::Vector<eacp::FilePath> stores;
     bool verbose = false;
 };
 
@@ -57,7 +61,8 @@ ConfigureArgs absoluteConfigureArgs(ConfigureArgs args);
 bool enterManifestDirectory(const eacp::FilePath& manifest, std::string& error);
 
 // The cache root of `args`, created, with its symlinks resolved: one spelling
-// for every path written into the cache and matched in export files.
+// for every path written into the cache and matched in export files; and its
+// cache stores, absolute.
 CacheRoot configureCache(const ConfigureArgs& args);
 
 // <out>/steps, absolute: a step runs in its recipe's directory.

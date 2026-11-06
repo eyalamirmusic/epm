@@ -21,6 +21,11 @@ struct ResolveResult
     // in their deps.
     std::string fingerprintHash;
 
+    // Prebuilt only: BuildOutput's compatibleKey and anyKey, which
+    // dependents record in their compatibleDeps and anyDeps.
+    std::string compatibleKey;
+    std::string anyKey;
+
     // BuildOutput::options: what the step built or configured the package
     // with; empty when it recorded none.
     std::map<std::string, std::string> options;
@@ -33,8 +38,9 @@ struct ResolveResult
 // What a build step recorded, as `epm resolve` and the graph report it.
 ResolveResult resolveResultFor(const BuildOutput& output);
 
-// The build step's input for a source already in hand, with this process as
-// the epm a child build calls back (EPM_EXECUTABLE).
+// The build step's input for a resolved source (its directory empty until
+// fetched), with `cache`'s stores and this process as the epm a child build
+// calls back (EPM_EXECUTABLE).
 BuildInput buildInputFor(const Request& request,
                          const Env& env,
                          const CacheRoot& cache,
@@ -42,7 +48,7 @@ BuildInput buildInputFor(const Request& request,
                          const std::string& dependencyGraph = {},
                          const eacp::Vector<PackageDependency>& dependencies = {});
 
-// Finds, builds or skips the binary entry for a source already in hand, as
+// Finds, builds or skips the binary entry for a resolved source, as
 // the mode decides: the default build steps (CMakePackage) run in this
 // process, never in a recipe executable, since `epm resolve` serves
 // epm_add_package, which has no recipe and so no custom steps. The request is
@@ -56,7 +62,13 @@ ResolveResult
                     const std::string& dependencyGraph = {},
                     const eacp::Vector<PackageDependency>& dependencies = {});
 
-// The whole `epm resolve` pipeline: fetch the source, then resolveSnapshot.
-ResolveResult
-    resolvePackage(const Request& request, const Env& env, const CacheRoot& cache);
+// The whole `epm resolve` pipeline: resolve the source (resolveSource), then
+// resolveSnapshot, whose step fetches it only when it needs it; then, for a
+// prebuilt result, the snapshot for the consumer's <name>_SOURCE_DIR unless
+// `fetchSourceDir` is false (EPM_FETCH_SOURCES, EPM_<Name>_FETCH_SOURCE),
+// which changes no fingerprint.
+ResolveResult resolvePackage(const Request& request,
+                             const Env& env,
+                             const CacheRoot& cache,
+                             bool fetchSourceDir = true);
 } // namespace epm

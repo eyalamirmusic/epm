@@ -92,6 +92,45 @@ expect_overrides([=[{"schema": 1, "mode": "", "configs": [],
         "EPM_STRICT=OFF"
         "EPM_BUILD_MISSING_BINARIES=OFF")
 
+# EPM_FETCH_SOURCES, and EPM_<name>_FETCH_SOURCE, which also ends in _SOURCE
+# but is no checkout.
+expect_overrides([=[{"schema": 1, "mode": "", "configs": [],
+    "abiMatch": "", "strict": false, "fetchSources": false,
+    "packages": {
+        "Catch2": {"mode": "", "source": "", "configs": [], "options": {},
+                   "fetchSource": true},
+        "fmt": {"mode": "", "source": "", "configs": [], "options": {},
+                "fetchSource": false}
+    }}]=]
+        "EPM_FETCH_SOURCES=OFF"
+        "EPM_Catch2_FETCH_SOURCE=ON"
+        "EPM_fmt_FETCH_SOURCE=OFF")
+
+# epm_add_package's decision: the package's own, else the global, else ON.
+function(expect_fetches name expected)
+    foreach (assignment IN LISTS ARGN)
+        string(REPLACE "=" ";" pair "${assignment}")
+        list(GET pair 0 variable)
+        list(GET pair 1 value)
+        set(${variable} "${value}")
+    endforeach ()
+
+    epm_fetches_source("${name}" actual)
+
+    if (NOT actual STREQUAL expected)
+        message(SEND_ERROR "epm_fetches_source(${name}) is ${actual}, expected "
+                "${expected} with ${ARGN}")
+        set(failures 1 PARENT_SCOPE)
+    endif ()
+endfunction()
+
+expect_fetches(fmt ON)
+expect_fetches(fmt OFF "EPM_FETCH_SOURCES=OFF")
+expect_fetches(fmt ON "EPM_FETCH_SOURCES=OFF" "EPM_fmt_FETCH_SOURCE=ON")
+expect_fetches(fmt OFF "EPM_fmt_FETCH_SOURCE=OFF")
+expect_fetches(fmt ON "EPM_FETCH_SOURCES=OFF" "EPM_Other_FETCH_SOURCE=ON"
+        "EPM_fmt_FETCH_SOURCE=ON")
+
 if (failures GREATER 0)
     message(FATAL_ERROR "epm_write_overrides checks failed")
 endif ()

@@ -1,0 +1,22 @@
+# A package whose export names every kind of path an entry has to carry,
+# committed into a local git repository by Tests/Relocate.cmake: an include
+# directory in its source and one nested inside it, an extensionless header,
+# a header generated into its build tree, and RelocDep, a CPM dependency
+# whose include directory is in the CPM cache. Reloc.cpp uses __FILE__, so
+# its archive names its source path unless the prefix maps rewrote it.
+cmake_minimum_required(VERSION 3.25)
+project(Reloc CXX)
+
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/CPM.cmake")
+CPMAddPackage(NAME RelocDep GIT_REPOSITORY "@DEP_URL@" GIT_TAG v1)
+
+configure_file(RelocGenerated.h.in
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/RelocGenerated.h")
+
+add_library(Reloc STATIC Reloc.cpp)
+add_library(Reloc::Reloc ALIAS Reloc)
+target_include_directories(Reloc PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/reloc"
+        "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_link_libraries(Reloc PUBLIC RelocDep)

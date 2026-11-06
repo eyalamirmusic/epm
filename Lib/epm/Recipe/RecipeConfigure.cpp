@@ -1,6 +1,7 @@
 #include "RecipeConfigure.h"
 #include "Recipe.h"
 
+#include <epm/Cache/CacheStore.h>
 #include <epm/Emit/GraphResponse.h>
 #include <epm/Spec/JsonFile.h>
 #include <epm/Util/Log.h>
@@ -99,6 +100,9 @@ ConfigureArgs absoluteConfigureArgs(ConfigureArgs args)
     if (!args.cache.empty())
         args.cache = resolvedPath(args.cache);
 
+    for (auto& store: args.stores)
+        store = resolvedPath(store);
+
     return args;
 }
 
@@ -130,7 +134,14 @@ CacheRoot configureCache(const ConfigureArgs& args)
     const auto cache =
         args.cache.empty() ? CacheRoot::fromEnvironment() : CacheRoot {args.cache};
     Files::createDirectories(cache.path());
-    return CacheRoot {resolvedPath(cache.path())};
+
+    auto stores = Vector<FilePath> {};
+
+    for (const auto& store:
+         args.stores.empty() ? CacheRoot::storesFromEnvironment() : args.stores)
+        stores.add(resolvedPath(store));
+
+    return CacheRoot {resolvedPath(cache.path()), std::move(stores)};
 }
 
 FilePath configureStepsDirectory(const ConfigureArgs& args)
@@ -186,7 +197,12 @@ ConfigureResult runConfigure(const ConfigureArgs& args, ManifestLoader& loader)
             return configureFailure("the manifest " + args.manifest.str() + ": "
                                     + error);
 
-        const auto result = configureGraph(*inputs, configureCache(args), loader);
+        const auto cache = configureCache(args);
+
+        for (const auto& note: storeNotes(cache))
+            Log::progress("epm: note: " + note);
+
+        const auto result = configureGraph(*inputs, cache, loader);
 
         if (!result.ok)
             return configureFailure(result.error, result.details);

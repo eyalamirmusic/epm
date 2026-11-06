@@ -1,0 +1,19 @@
+// The consumer's one dependency, Reloc. Tests/Relocate.cmake fills in
+// @RELOC_URL@.
+
+#include <epm/Recipe/Recipe.h>
+
+using namespace epm;
+
+namespace
+{
+struct Consumer final : Recipe
+{
+    void describe() override { add("Reloc", "@RELOC_URL@", "v1"); }
+};
+} // namespace
+
+int main(int argc, char** argv)
+{
+    return recipeMain<Consumer>(argc, argv);
+}

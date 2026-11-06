@@ -1,5 +1,6 @@
 #include <epm/Cache/CacheRoot.h>
 
+#include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/Files.h>
 
@@ -76,4 +77,19 @@ auto tCreatesOnDemand = test("CacheRoot/createsSubdirectoriesOnDemand") = []
         check(Files::isDirectory(directory / name));
 
     Files::removeAll(directory);
+};
+
+auto tStoresFromEnv = test("CacheRoot/storesFromEpmCacheStores") = []
+{
+    const auto separator = std::string {Platform::isWindows() ? ";" : ":"};
+    auto env = ScopedEnv {"EPM_CACHE_STORES",
+                          "/stores/a" + separator + separator + "/stores/b"};
+
+    const auto stores =
+        Vector<FilePath> {FilePath {"/stores/a"}, FilePath {"/stores/b"}};
+    check(CacheRoot::storesFromEnvironment() == stores);
+    check(CacheRoot::fromEnvironment().stores() == stores);
+
+    auto unset = ScopedEnv {"EPM_CACHE_STORES", ""};
+    check(CacheRoot::fromEnvironment().stores().empty());
 };

@@ -33,6 +33,7 @@ set(epm_recipe_headers
         Util/Git.h
         Util/Log.h
         Util/Paths.h
+        Util/ProcessInfo.h
         Util/Sha256.h
         Util/Text.h
         Util/Timestamp.h)
@@ -42,8 +43,12 @@ add_library(epm-recipe STATIC
         Build/ChildBuild.cpp
         Build/Configs.cpp
         Build/Harvest.cpp
+        Build/Lto.cpp
+        Build/Lto.h
         Cache/BinaryCache.cpp
         Cache/CacheRoot.cpp
+        Cache/CacheStore.cpp
+        Cache/CacheStore.h
         Cache/Fingerprint.cpp
         Cache/PackageLock.cpp
         Cache/SourceCache.cpp
@@ -63,6 +68,7 @@ add_library(epm-recipe STATIC
         Util/Git.cpp
         Util/Log.cpp
         Util/Paths.cpp
+        Util/ProcessInfo.cpp
         Util/Sha256.cpp
         Util/Text.cpp
         Util/Timestamp.cpp)
@@ -71,6 +77,8 @@ add_library(epm-recipe STATIC
 target_sources(epm-recipe PRIVATE
         Cache/CacheListing.cpp
         Cache/CacheListing.h
+        Cache/CacheVerify.cpp
+        Cache/CacheVerify.h
         Emit/GraphResponse.cpp
         Emit/GraphResponse.h
         Emit/RecipeSdkCMake.cpp

@@ -1,0 +1,3 @@
+#pragma once
+
+#define RELOC_GENERATED 20

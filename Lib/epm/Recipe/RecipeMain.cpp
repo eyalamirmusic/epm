@@ -188,6 +188,10 @@ int configure(const Vector<std::string>& arguments, RecipeFactory create)
     cli.option("--out", args.out, "the directory for graph.cmake and graph.json")
         .required();
     cli.option("--cache", args.cache, "the cache root (default: $EPM_CACHE)");
+    cli.option("--cache-store",
+               args.stores,
+               "a read-only cache store missing binaries are copied from, "
+               "searched in the order given (default: $EPM_CACHE_STORES)");
     cli.flag("--verbose", args.verbose, "log each step");
 
     if (auto code = cli.exitCodeFor(cli.parse(arguments)))

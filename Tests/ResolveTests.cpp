@@ -241,6 +241,48 @@ auto tGeneratorMultiConfig =
     check(withoutNinja.makeProgram.empty());
 };
 
+// Without a ninja on PATH, a multi-config consumer's own generator settings are
+// named outright, so the environment's CMAKE_GENERATOR, _PLATFORM, _TOOLSET
+// and _INSTANCE (read only when -G is left out) cannot choose them.
+auto tGeneratorExplicit = test("ChildBuild/generator/explicitWithoutNinja") = []
+{
+    auto studio = generatorEnv("Visual Studio 17 2022", true);
+    studio.makeProgram.clear();
+    studio.generatorPlatform = "x64";
+    studio.generatorToolset = "ClangCL";
+    studio.generatorInstance = "C:/Program Files/Microsoft Visual Studio/2022/BT";
+
+    const auto visualStudio = chooseGenerator(studio, {});
+    check(visualStudio.name == "Visual Studio 17 2022");
+    check(visualStudio.platform == "x64");
+    check(visualStudio.toolset == "ClangCL");
+    check(visualStudio.instance == studio.generatorInstance);
+    check(visualStudio.makeProgram.empty());
+
+    const auto withNinja = chooseGenerator(studio, eacp::FilePath {"/x/ninja"});
+    check(withNinja.name == "Ninja");
+    check(withNinja.platform.empty() && withNinja.toolset.empty()
+          && withNinja.instance.empty());
+
+    const auto ninjaMulti =
+        chooseGenerator(generatorEnv("Ninja Multi-Config", true), {});
+    check(ninjaMulti.name == "Ninja");
+    check(ninjaMulti.makeProgram == "/opt/tools/ninja");
+
+    auto build = sampleChildBuild();
+    build.generator = visualStudio;
+    const auto arguments = configureArguments(build);
+    check(arguments[4] == "-G" && arguments[5] == "Visual Studio 17 2022");
+    check(arguments[6] == "-A" && arguments[7] == "x64");
+    check(arguments[8] == "-T" && arguments[9] == "ClangCL");
+    check(arguments.contains("-DCMAKE_GENERATOR_INSTANCE=C:/Program Files/"
+                             "Microsoft Visual Studio/2022/BT"));
+
+    for (const auto& argument: configureArguments(sampleChildBuild()))
+        check(argument != "-A" && argument != "-T"
+              && !argument.starts_with("-DCMAKE_GENERATOR_INSTANCE"));
+};
+
 auto tConfigureArguments = test("ChildBuild/configureArguments") = []
 {
     const auto arguments = configureArguments(sampleChildBuild());
@@ -269,6 +311,75 @@ auto tConfigureArguments = test("ChildBuild/configureArguments") = []
         check(argument.find("CMAKE_TOOLCHAIN_FILE") == std::string::npos);
         check(argument.find("CMAKE_CXX_STANDARD") == std::string::npos);
     }
+};
+
+// GCC and Clang get the source, build tree and CPM cache mapped onto stable
+// names, as one list; the MSVC ABI gets none.
+auto tFilePrefixMaps = test("ChildBuild/filePrefixMaps") = []
+{
+    auto build = sampleChildBuild();
+    build.request.name = "eacp";
+
+    const auto maps = filePrefixMaps(build);
+
+    check(maps.size() == 3);
+    check(maps[0] == "/cache/src/eacp/abc=/epm/src/eacp");
+    check(maps[1] == "/cache/build/eacp/def/Release=/epm/build/eacp");
+    check(maps[2] == "/cache/cpm=/epm/cpm");
+    check(configureArguments(build).contains(
+        "-DEPM_FILE_PREFIX_MAPS=/cache/src/eacp/abc=/epm/src/eacp;"
+        "/cache/build/eacp/def/Release=/epm/build/eacp;/cache/cpm=/epm/cpm"));
+
+    build.env.cxxCompilerId = "MSVC";
+    check(filePrefixMaps(build).empty());
+
+    for (const auto& argument: configureArguments(build))
+        check(argument.find("EPM_FILE_PREFIX_MAPS") == std::string::npos);
+};
+
+// With the cache root known it is mapped too, first, so the more specific
+// maps after it win (GCC applies the last match, Clang the last or the
+// longest); a source in a snapshot subdirectory maps the whole snapshot.
+auto tFilePrefixMapsCache = test("ChildBuild/filePrefixMaps/cacheRootFirst") = []
+{
+    auto build = sampleChildBuild();
+    build.cacheRoot = "/cache";
+    build.sourceDirectory = "/cache/src/eacp/abc/build/cmake";
+
+    const auto maps = filePrefixMaps(build);
+
+    check(maps.size() == 4);
+    check(maps[0] == "/cache=/epm/cache");
+    check(maps[1] == "/cache/src/eacp/abc=/epm/src/eacp");
+    check(maps[2] == "/cache/build/eacp/def/Release=/epm/build/eacp");
+    check(maps[3] == "/cache/cpm=/epm/cpm");
+};
+
+// Visual Studio builds Debug unless told the config, and puts archives in a
+// <config> subdirectory of CMAKE_ARCHIVE_OUTPUT_DIRECTORY unless the
+// per-config variable names the directory.
+auto tBuildArguments = test("ChildBuild/buildArguments/config") = []
+{
+    auto build = sampleChildBuild();
+
+    check(buildArguments(build)
+          == eacp::Vector<std::string> {"--build",
+                                        "/cache/build/eacp/def/Release",
+                                        "--config",
+                                        "Release",
+                                        "--parallel"});
+
+    build.config = "RelWithDebInfo";
+    build.generator = {"Visual Studio 17 2022", {}, "x64"};
+
+    check(buildArguments(build).contains("RelWithDebInfo"));
+
+    const auto arguments = configureArguments(build);
+
+    check(arguments.contains("-DCMAKE_ARCHIVE_OUTPUT_DIRECTORY=/cache/bin/eacp/def/"
+                             "lib/RelWithDebInfo"));
+    check(arguments.contains("-DCMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO="
+                             "/cache/bin/eacp/def/lib/RelWithDebInfo"));
 };
 
 namespace
@@ -317,6 +428,18 @@ auto tConfigureArgumentsIos = test("ChildBuild/configureArguments/iosSimulator")
     const auto withToolchain = configureArguments(build);
     check(withToolchain.contains("-DCMAKE_TOOLCHAIN_FILE=/x/ios.toolchain.cmake"));
     check(!namesTargetSystem(withToolchain));
+
+    // The SDK directory the consumer resolved wins over its name, with a
+    // toolchain file too: the child compiles against the SDK the key records.
+    const auto simulatorSdk = std::string {"/Xcode.app/Platforms/iPhoneSimulator."
+                                           "platform/SDKs/iPhoneSimulator26.0.sdk"};
+    build.env.osxSysrootPath = simulatorSdk;
+    check(configureArguments(build).contains("-DCMAKE_OSX_SYSROOT=" + simulatorSdk));
+
+    build.env.toolchainFile.clear();
+    const auto resolved = configureArguments(build);
+    check(resolved.contains("-DCMAKE_OSX_SYSROOT=" + simulatorSdk));
+    check(!resolved.contains("-DCMAKE_OSX_SYSROOT=iphonesimulator"));
 };
 
 auto tConfigureArgumentsHost = test("ChildBuild/configureArguments/hostSystem") = []
@@ -327,6 +450,21 @@ auto tConfigureArgumentsHost = test("ChildBuild/configureArguments/hostSystem") 
     build.env.osxSysroot = "/Applications/Xcode.app/Contents/Developer/Platforms/"
                            "MacOSX.platform/Developer/SDKs/MacOSX.sdk";
     check(!namesTargetSystem(configureArguments(build)));
+
+    // A native macOS consumer's child builds get its SDK, which they would
+    // otherwise take from their own SDKROOT or xcode-select, and nothing else
+    // about the target system.
+    build.env.osxSysrootPath = "/Library/Developer/CommandLineTools/SDKs/"
+                               "MacOSX15.2.sdk";
+    const auto native = configureArguments(build);
+    check(native.contains("-DCMAKE_OSX_SYSROOT=/Library/Developer/"
+                          "CommandLineTools/SDKs/MacOSX15.2.sdk"));
+
+    for (const auto& argument: native)
+        check(!argument.starts_with("-DCMAKE_SYSTEM_NAME")
+              && !argument.starts_with("-DCMAKE_SYSTEM_PROCESSOR"));
+
+    build.env.osxSysrootPath.clear();
 
     build.env.systemName = "Linux";
     build.env.osxSysroot.clear();

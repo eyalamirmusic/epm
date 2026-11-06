@@ -93,14 +93,16 @@ endfunction()
 #
 #   epm_load_package(<name> MODE prebuilt|source SOURCE_DIR <dir>
 #       [TARGETS_FILE <file>] [PREFIX <dir>] [PLATFORM <platform>] [NOTE <text>]
-#       [OPTIONS KEY=VALUE...] [ORIGIN <text for errors>])
+#       [CONFIGS <config>...] [OPTIONS KEY=VALUE...] [ORIGIN <text for errors>])
 #
+# CONFIGS (prebuilt) are the entry's configs this consumer can link; the
+# facade loads only those (EPM_FACADE_CONFIGS), all of them without it.
 # Records the result in the GLOBAL properties EPM_PACKAGE_<name>_MODE,
 # _SOURCE_DIR and _BINARY_DIR (empty when prebuilt).
 function(epm_load_package name)
     cmake_parse_arguments(arg ""
-            "MODE;SOURCE_DIR;TARGETS_FILE;PREFIX;PLATFORM;NOTE;ORIGIN" "OPTIONS"
-            ${ARGN})
+            "MODE;SOURCE_DIR;TARGETS_FILE;PREFIX;PLATFORM;NOTE;ORIGIN"
+            "OPTIONS;CONFIGS" ${ARGN})
 
     set(origin "")
 
@@ -117,7 +119,12 @@ function(epm_load_package name)
                     "'${arg_TARGETS_FILE}' does not exist${origin}")
         endif ()
 
+        if (arg_CONFIGS)
+            set(EPM_FACADE_CONFIGS ${arg_CONFIGS})
+        endif ()
+
         epm_include_targets_globally("${arg_TARGETS_FILE}")
+        unset(EPM_FACADE_CONFIGS)
 
         # PREFIX is <cache>/bin/<name>/<platform>/<fp12>.
         get_filename_component(id "${arg_PREFIX}" NAME)
@@ -239,6 +246,7 @@ function(epm_provider_load name)
             PREFIX "${epm_${name}_PREFIX}"
             PLATFORM "${epm_${name}_PLATFORM}"
             NOTE "${epm_${name}_NOTE}"
+            CONFIGS ${epm_${name}_CONFIGS}
             OPTIONS ${epm_${name}_OPTIONS}
             ORIGIN "${_epm_graph}")
 

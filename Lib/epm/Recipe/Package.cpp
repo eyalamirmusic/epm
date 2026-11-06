@@ -2,11 +2,16 @@
 
 #include <epm/Build/ChildBuild.h>
 #include <epm/Build/Configs.h>
+#include <epm/Build/Harvest.h>
 #include <epm/Cache/BinaryCache.h>
+#include <epm/Cache/CacheStore.h>
 #include <epm/Cache/PackageLock.h>
+#include <epm/Emit/Response.h>
 #include <epm/Util/Command.h>
 #include <epm/Util/Log.h>
 #include <epm/Util/Text.h>
+
+#include <eacp/Core/Utils/Files.h>
 
 #include <exception>
 
@@ -35,13 +40,46 @@ std::string missingBinaryError(const std::string& name,
                                const AbiFingerprint& wanted,
                                const Vector<std::string>& configs,
                                const std::optional<BinaryEntry>& existing,
-                               const Vector<std::string>& missing)
+                               const Vector<std::string>& missing,
+                               std::size_t stores)
 {
-    return name + " is binary-only, but the cache has no " + wanted.platform
+    const auto where =
+        stores == 0
+            ? std::string {"the cache has"}
+            : "neither the cache nor its " + std::to_string(stores)
+                  + (stores == 1 ? " cache store has" : " cache stores have");
+
+    return name + " is binary-only, but " + where + " no " + wanted.platform
            + " entry holding " + joinList(configs, ", ") + " for " + shortId(wanted)
            + (existing ? " (entry " + existing->prefix.fileName() + " lacks "
                              + joinList(missing, ", ") + ")"
                        : "");
+}
+
+// set(epm_<name>_SOURCE_DIR ...) for each of `sources`, fetched now by the
+// commit epm resolved: appended to the graph a child build loads, so a
+// package that names a prebuilt dependency's <name>_SOURCE_DIR (its include/,
+// say) finds the snapshot. Each fetch takes that dependency's lock, never the
+// one the building step holds.
+std::string dependencySourceLines(const CacheRoot& cache,
+                                  const Vector<DependencySource>& sources)
+{
+    auto lines = std::string {};
+
+    for (const auto& source: sources)
+    {
+        const auto fetched = fetchCommit(
+            cache, source.name, source.gitUrl, source.gitRef, source.commit);
+
+        if (!fetched.ok)
+            throw BuildError {"fetching the source of the dependency " + source.name
+                              + ": " + fetched.error};
+
+        lines += "set(epm_" + source.name + "_SOURCE_DIR "
+                 + cmakeQuoted(fetched.snapshot.directory.str()) + ")\n";
+    }
+
+    return lines;
 }
 
 BuildOutput failedOutput(const std::string& name,
@@ -73,7 +111,12 @@ const Env& Package::env() const
 
 CacheRoot Package::cache() const
 {
-    return CacheRoot {FilePath {input.cacheRoot}};
+    auto stores = Vector<FilePath> {};
+
+    for (const auto& store: input.cacheStores)
+        stores.add(FilePath {store});
+
+    return CacheRoot {FilePath {input.cacheRoot}, std::move(stores)};
 }
 
 const Vector<PackageDependency>& Package::dependencies() const
@@ -91,34 +134,72 @@ bool Package::verbose() const
     return input.verbose;
 }
 
-SourceSnapshot Package::fetch()
+SourceSnapshot Package::resolveSource()
 {
     if (fetched)
         return *fetched;
 
+    if (resolved)
+        return *resolved;
+
     if (input.source)
     {
-        fetched = snapshotOf(*input.source);
-        return *fetched;
+        resolved = snapshotOf(*input.source);
+        return *resolved;
     }
 
     const auto& request = spec();
-
-    // fetchSource takes the package lock, and eacp's IPC::Lock is not
-    // re-entrant: this process would wait out the timeout on itself.
-    if (holdsLock)
-        throw BuildError {"the build step of " + request.name
-                          + " fetches its source inside cached()'s callback, "
-                            "under the package lock a fetch takes: call fetch() "
-                            "before cached()"};
-
     const auto source =
-        fetchSource(cache(), request.name, request.gitUrl, request.gitRef);
+        epm::resolveSource(cache(), request.name, request.gitUrl, request.gitRef);
 
     if (!source.ok)
         throw BuildError {source.error};
 
-    fetched = source.snapshot;
+    resolved = source.snapshot;
+    return *resolved;
+}
+
+SourceSnapshot Package::fetch()
+{
+    if (!holdsLock)
+        sourceRequested = true;
+
+    return fetchSnapshot();
+}
+
+SourceSnapshot Package::fetchSnapshot()
+{
+    if (fetched)
+        return *fetched;
+
+    const auto source = resolveSource();
+
+    if (!source.directory.empty())
+    {
+        fetched = source;
+        return *fetched;
+    }
+
+    // The commit epm resolved, so the snapshot is the one the fingerprint
+    // names even if the ref has moved since. Under cached()'s callback this
+    // process holds the package lock already, and eacp's IPC::Lock is not
+    // re-entrant.
+    const auto& request = spec();
+    const auto snapshot =
+        source.commit.empty()
+            ? fetchSource(
+                  cache(), request.name, request.gitUrl, request.gitRef, holdsLock)
+            : fetchCommit(cache(),
+                          request.name,
+                          request.gitUrl,
+                          request.gitRef,
+                          source.commit,
+                          holdsLock);
+
+    if (!snapshot.ok)
+        throw BuildError {snapshot.error};
+
+    fetched = snapshot.snapshot;
     return *fetched;
 }
 
@@ -156,9 +237,35 @@ std::optional<Prefix>
                          configs);
     };
 
+    const auto missingOf = [&](const std::optional<BinaryEntry>& entry)
+    {
+        return entry ? missingConfigs(entry->usableConfigs(wanted), configs)
+                     : configs;
+    };
+
     auto existing = pick();
-    auto missing = existing ? missingConfigs(existing->configs, configs) : configs;
+    auto missing = missingOf(existing);
     logEntry(request.name, wanted, existing, missing);
+
+    if (!missing.empty() && !store.stores().empty())
+    {
+        const auto pulled =
+            pullFromStores(store, request.name, wanted, policy, configs);
+
+        for (const auto& note: pulled.notes)
+            Log::progress("epm: note: " + note);
+
+        for (const auto& copied: pulled.copied)
+            Log::progress("epm: " + request.name + ": copied " + copied
+                          + " into the cache");
+
+        if (!pulled.copied.empty())
+        {
+            existing = pick();
+            missing = missingOf(existing);
+            logEntry(request.name, wanted, existing, missing);
+        }
+    }
 
     switch (decide(request, existing && missing.empty()))
     {
@@ -169,13 +276,19 @@ std::optional<Prefix>
             return Prefix {*existing, wanted, {}};
 
         case Decision::missingBinary:
-            throw BuildError {missingBinaryError(
-                request.name, wanted, configs, existing, missing)};
+            throw BuildError {missingBinaryError(request.name,
+                                                 wanted,
+                                                 configs,
+                                                 existing,
+                                                 missing,
+                                                 store.stores().size())};
 
         case Decision::buildBinary:
             break;
     }
 
+    // Only to keep two local processes from building the same thing twice:
+    // publishing is atomic, so the entry is valid without it (BinaryCache.h).
     // Another process may have built the entry while this one waited.
     const auto lock = PackageLock {store, request.name, packageLockTimeout};
 
@@ -186,28 +299,78 @@ std::optional<Prefix>
     existing = pick();
 
     if (!existing)
-        existing = createEntry(store, request.name, wanted, wanted.sourceId);
+        existing = exactEntry(wanted);
 
-    if (!existing)
-        throw BuildError {"cannot create "
-                          + entryPrefix(store, request.name, wanted).str()};
-
-    const auto prefix = existing->prefix;
-    missing = missingConfigs(existing->configs, configs);
+    missing = missingConfigs(existing->usableConfigs(wanted), configs);
 
     if (missing.empty())
         return Prefix {*existing, wanted, {}};
 
-    for (const auto& config: missing)
-        if (!clearConfig(prefix, config))
-            throw BuildError {"cannot clear the leftovers of " + config + " in "
-                              + prefix.str()};
+    auto entry = buildAndPublish(*existing, wanted, missing, buildMissing);
+    auto built = missing;
+    auto still = missingConfigs(entry.usableConfigs(wanted), configs);
 
+    // The configs went to the exact entry (LTO objects of a compiler the entry
+    // picked was not recorded for), which may lack the others; or another
+    // process published one this compiler cannot link first: the exact entry
+    // takes them all.
+    if (!still.empty())
+    {
+        if (entry.prefix != entryPrefix(store, request.name, wanted))
+        {
+            entry = exactEntry(wanted);
+            still = missingConfigs(entry.usableConfigs(wanted), configs);
+        }
+
+        if (!still.empty())
+        {
+            built.addFrom(still);
+            entry = buildAndPublish(entry, wanted, still, buildMissing);
+            still = missingConfigs(entry.usableConfigs(wanted), configs);
+        }
+    }
+
+    removeStagingIfEmpty(entry.prefix);
+
+    if (!still.empty())
+        throw BuildError {
+            "the entry " + entry.prefix.str() + " of " + request.name + " holds "
+            + joinList(still, ", ") + " as LTO objects of another compiler, which "
+            + wanted.compilerId + " " + wanted.compilerVersion + " cannot link"};
+
+    return Prefix {entry, wanted, canonicalConfigs(built)};
+}
+
+BinaryEntry Package::exactEntry(const AbiFingerprint& wanted) const
+{
+    const auto store = cache();
+    const auto& name = spec().name;
+
+    if (auto entry = createEntry(store, name, wanted, wanted.sourceId))
+        return *entry;
+
+    throw BuildError {"cannot create " + entryPrefix(store, name, wanted).str()};
+}
+
+BinaryEntry
+    Package::buildAndPublish(const BinaryEntry& entry,
+                             const AbiFingerprint& wanted,
+                             const Vector<std::string>& configs,
+                             const std::function<void(const Prefix&)>& buildMissing)
+{
+    const auto& name = spec().name;
+    removeStaleStaging(stagingDirectory(entry.prefix));
+    const auto staging = newStaging(entry.prefix);
+
+    if (!Files::createDirectories(staging.path()))
+        throw BuildError {"cannot create " + staging.path().str()};
+
+    touchStagingHeartbeat(staging.path());
     holdsLock = true;
 
     try
     {
-        buildMissing(Prefix {*existing, wanted, missing});
+        buildMissing(Prefix {entry, wanted, configs, staging.path()});
     }
     catch (...)
     {
@@ -216,30 +379,62 @@ std::optional<Prefix>
     }
 
     holdsLock = false;
+    auto markers = Vector<ConfigMarker> {};
 
-    for (const auto& config: missing)
+    for (const auto& config: configs)
     {
-        const auto entry = readEntry(prefix);
+        const auto unit = configDirectory(staging.path(), config);
 
-        if (entry && entry->configs.contains(config))
-            continue;
+        if (!hasExport(unit, config))
+            throw BuildError {"the build step of " + name + " left no "
+                              + exportFileFor(unit, config).fileName()
+                              + " (or its .names) in " + unit.str()};
 
-        if (!hasExport(prefix, config))
-            throw BuildError {"the build step of " + request.name + " left no "
-                              + exportFileFor(prefix, config).fileName()
-                              + " (or its .names) in " + prefix.str()};
+        auto staged = describeStagedConfig(staging.path(), config, env());
 
-        if (auto error = addConfigToEntry(prefix, config, env()))
-            throw BuildError {"adding " + config + " to the entry of " + request.name
-                              + ": " + *error};
+        if (!staged.marker)
+            throw BuildError {"publishing " + config + " of " + name + ": "
+                              + staged.error};
+
+        markers.add(std::move(*staged.marker));
     }
 
-    const auto built = readEntry(prefix);
+    // LTO objects link only with the compiler that wrote them: they go only
+    // into an entry recorded for that compiler, this one's exact entry, so a
+    // compatible entry never holds a config its own compiler cannot link.
+    const auto pinned = markers.findIf(
+        [&](const ConfigMarker& marker)
+        {
+            return !marker.lto.empty()
+                   && (marker.compilerId != entry.fingerprint.compilerId
+                       || marker.compilerVersion
+                              != entry.fingerprint.compilerVersion);
+        });
 
-    if (!built)
-        throw BuildError {"cannot read the entry " + prefix.str()};
+    const auto target = pinned ? exactEntry(wanted) : entry;
 
-    return Prefix {*built, wanted, missing};
+    if (pinned)
+        Log::step("epm: " + name + " " + pinned->config + " holds " + pinned->lto
+                  + " objects: publishing into the exact entry "
+                  + target.prefix.fileName());
+
+    for (const auto& marker: markers)
+    {
+        const auto published = publishConfig(target.prefix, staging.path(), marker);
+
+        if (published.result == PublishResult::failed)
+            throw BuildError {"publishing " + marker.config + " of " + name + ": "
+                              + published.error};
+
+        if (published.result == PublishResult::alreadyThere)
+            Log::step("epm: " + name + " " + marker.config
+                      + " was published by another process meanwhile");
+    }
+
+    if (auto published = readEntry(target.prefix))
+        return *published;
+
+    throw BuildError {"cannot read the entry " + target.prefix.str()};
 }
 
 CMakeBuild Package::cmake(const SourceSnapshot& source) const
@@ -252,9 +447,14 @@ CMakeBuild Package::cmake(const SourceSnapshot& source) const
     base.generator = chooseGenerator(env(), findExecutable("ninja"));
     base.sourceDirectory = source.directory;
     base.cpmCache = store.cpm();
+    base.cacheRoot = store.path();
     base.dependencyGraph = dependencyGraph();
     base.epmExecutable = FilePath {input.epmExecutable};
-    return CMakeBuild {std::move(base), store.build()};
+
+    auto build = CMakeBuild {std::move(base), store.build()};
+    build.dependencySources = [store, sources = input.dependencySources]
+    { return dependencySourceLines(store, sources); };
+    return build;
 }
 
 CMakeBuild Package::cmake(const SourceSnapshot& source, const Prefix& prefix) const
@@ -271,12 +471,22 @@ void Package::exportPrefix(const Prefix& prefix)
     output = BuildOutput {};
     output.name = spec().name;
     output.mode = "prebuilt";
-    output.sourceDirectory = fetch().directory.str();
+
+    // Only a checkout the step asked for: one the default steps fetched to
+    // build would give a SOURCE_DIR to the configure that built and none to
+    // the next.
+    if (sourceRequested && fetched)
+        output.sourceDirectory = fetched->directory.str();
     output.prefix = entry.prefix.str();
     output.platform = entry.fingerprint.platform;
-    output.configs = entry.configs;
+
+    // What the facade loads: a config of LTO objects this compiler cannot
+    // link, which a compatible entry picked for others may hold, never is.
+    output.configs = entry.usableConfigs(prefix.wanted());
     output.note = abiNote(entry.fingerprint, prefix.wanted()).value_or("");
     output.fingerprintHash = fingerprintId(entry.fingerprint);
+    output.compatibleKey = abiKey(entry.fingerprint, AbiMatch::compatible);
+    output.anyKey = abiKey(entry.fingerprint, AbiMatch::any);
     output.options = prefix.wanted().options;
 }
 
@@ -285,7 +495,7 @@ void Package::useSource()
     output = BuildOutput {};
     output.name = spec().name;
     output.mode = "source";
-    output.sourceDirectory = fetch().directory.str();
+    output.sourceDirectory = fetchSnapshot().directory.str();
 }
 
 void Package::useSource(const CMakeBuild& build)
@@ -302,7 +512,7 @@ void Package::log(std::string_view line) const
 void Package::buildWithCMake(const std::function<void(CMakeBuild&)>& configure,
                              const std::function<void(const Prefix&)>& afterBuild)
 {
-    const auto source = fetch();
+    const auto source = resolveSource();
     auto settings = cmake(source);
 
     if (configure)
@@ -310,7 +520,7 @@ void Package::buildWithCMake(const std::function<void(CMakeBuild&)>& configure,
 
     const auto buildMissing = [&](const Prefix& missing)
     {
-        settings.into(missing).run();
+        settings.source(fetchSnapshot().directory).into(missing).run();
 
         if (afterBuild)
             afterBuild(missing);
@@ -325,10 +535,12 @@ void Package::buildWithCMake(const std::function<void(CMakeBuild&)>& configure,
 void PackageRunner::setInput(Package& package, const BuildInput& input)
 {
     package.input = input;
+    package.resolved.reset();
     package.fetched.reset();
     package.output = BuildOutput {};
     package.output.name = input.request.name;
     package.holdsLock = false;
+    package.sourceRequested = false;
 }
 
 BuildOutput runPackage(Package& package, const BuildInput& input)

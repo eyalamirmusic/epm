@@ -50,6 +50,11 @@
 #   EPM_CACHE                   cache root handed to the binary as --cache
 #                               (else the EPM_CACHE environment variable, else the
 #                               platform cache directory, as the binary does)
+#   EPM_CACHE_STORES            read-only cache stores, a list searched in order
+#                               for a binary the cache lacks, each handed to the
+#                               binary as --cache-store (else the EPM_CACHE_STORES
+#                               environment variable, its paths separated by ':',
+#                               ';' on Windows)
 #   EPM_VERBOSE                 pass --verbose and echo the binary's output
 #   EPM_CONFIGS                 auto (the default): a single-config generator
 #                               gets CMAKE_BUILD_TYPE (Debug, Release or
@@ -73,6 +78,15 @@
 #                               ON: epm_add_recipe goes on (with a warning) when
 #                               the project's C++ compiler id is not the one
 #                               epm and its recipe libraries were built with
+#   EPM_FETCH_SOURCES           unset or ON (default): a prebuilt package's
+#                               source snapshot is fetched too, so
+#                               <name>_SOURCE_DIR names it (CMake modules and
+#                               headers some projects read from there); OFF
+#                               skips that clone for developers and CI that only
+#                               consume prebuilts (SOURCE_DIR is then empty,
+#                               unless a package built from source needs it).
+#                               EPM_<name>_FETCH_SOURCE (ON/OFF) decides for one
+#                               package. Neither changes a fingerprint.
 #
 # With a manifest, EPM_CONFIGS, EPM_ABI_MATCH and EPM_BUILD_MISSING_BINARIES are
 # overrides: unset or empty, the manifest (or the binary's default) decides.
@@ -227,6 +241,28 @@ function(epm_json_string_array out_var)
     set(${out_var} "${array}" PARENT_SCOPE)
 endfunction()
 
+# Whether a prebuilt <name>'s source snapshot is fetched for its
+# <name>_SOURCE_DIR (epm_add_package's --no-source-dir otherwise):
+# EPM_<name>_FETCH_SOURCE, else EPM_FETCH_SOURCES, each a CMake variable or
+# else the environment, else ON.
+function(epm_fetches_source name out_var)
+    foreach (value IN ITEMS "${EPM_${name}_FETCH_SOURCE}"
+            "$ENV{EPM_${name}_FETCH_SOURCE}" "${EPM_FETCH_SOURCES}"
+            "$ENV{EPM_FETCH_SOURCES}")
+        if (NOT value STREQUAL "")
+            if (value)
+                set(${out_var} ON PARENT_SCOPE)
+            else ()
+                set(${out_var} OFF PARENT_SCOPE)
+            endif ()
+
+            return()
+        endif ()
+    endforeach ()
+
+    set(${out_var} ON PARENT_SCOPE)
+endfunction()
+
 # Writes overrides.json (Docs/Graph.md §3) from the EPM_* variables visible
 # here, normal or cache, a normal one winning as ${} has it. Empty values are
 # left out; EPM_<name>_SOURCE is made absolute against CMAKE_SOURCE_DIR.
@@ -253,6 +289,14 @@ function(epm_write_overrides file)
         endif ()
     endif ()
 
+    if (NOT "${EPM_FETCH_SOURCES}" STREQUAL "")
+        if (EPM_FETCH_SOURCES)
+            string(JSON json SET "${json}" fetchSources true)
+        else ()
+            string(JSON json SET "${json}" fetchSources false)
+        endif ()
+    endif ()
+
     get_cmake_property(normal_names VARIABLES)
     get_cmake_property(cache_names CACHE_VARIABLES)
     set(names ${normal_names} ${cache_names})
@@ -264,7 +308,9 @@ function(epm_write_overrides file)
 
     foreach (var IN LISTS names)
         # Only matching names are read: reading some others warns (CMP0218).
-        if (NOT var MATCHES "^EPM_(.+)_(MODE|SOURCE|CONFIGS|OPTIONS)$")
+        # FETCH_SOURCE first: EPM_<name>_FETCH_SOURCE also ends in _SOURCE.
+        if (var MATCHES "^EPM_(.+)_(FETCH_SOURCE)$")
+        elseif (NOT var MATCHES "^EPM_(.+)_(MODE|SOURCE|CONFIGS|OPTIONS)$")
             continue()
         endif ()
 
@@ -284,6 +330,12 @@ function(epm_write_overrides file)
 
         if (field STREQUAL "MODE")
             epm_json_set_string(package mode "${value}")
+        elseif (field STREQUAL "FETCH_SOURCE")
+            if (value)
+                string(JSON package SET "${package}" fetchSource true)
+            else ()
+                string(JSON package SET "${package}" fetchSource false)
+            endif ()
         elseif (field STREQUAL "SOURCE")
             if (value MATCHES "^~([/\\]|$)")
                 set(home "$ENV{HOME}")
@@ -359,23 +411,116 @@ function(epm_osx_architectures out_var)
     set(${out_var} "${architectures}" PARENT_SCOPE)
 endfunction()
 
-# env.json's osxDeploymentTarget: CMAKE_OSX_DEPLOYMENT_TARGET, else, for an
-# Apple device or simulator SDK, the Xcode attribute a project may set instead
-# (CMAKE_XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET, or TVOS_, WATCHOS_, XROS_).
+# env.json's osxDeploymentTarget, the effective one: CMAKE_OSX_DEPLOYMENT_TARGET,
+# else, for an Apple device or simulator SDK, the Xcode attribute a project may
+# set instead (CMAKE_XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET, or TVOS_,
+# WATCHOS_, XROS_), else the environment's MACOSX_DEPLOYMENT_TARGET (IPHONEOS_,
+# TVOS_, WATCHOS_, XROS_), which clang reads when it is given no target. The
+# fingerprint records it, and child builds get it as an explicit
+# CMAKE_OSX_DEPLOYMENT_TARGET, so their environment cannot change it.
 function(epm_osx_deployment_target out_var)
     set(target "${CMAKE_OSX_DEPLOYMENT_TARGET}")
 
-    foreach (pair IN ITEMS iOS=IPHONEOS tvOS=TVOS watchOS=WATCHOS visionOS=XROS)
+    foreach (pair IN ITEMS Darwin=MACOSX iOS=IPHONEOS tvOS=TVOS watchOS=WATCHOS
+            visionOS=XROS)
         string(REPLACE "=" ";" pair "${pair}")
         list(GET pair 0 system)
-        list(GET pair 1 attribute)
+        list(GET pair 1 sdk)
 
-        if (target STREQUAL "" AND CMAKE_SYSTEM_NAME STREQUAL system)
-            set(target "${CMAKE_XCODE_ATTRIBUTE_${attribute}_DEPLOYMENT_TARGET}")
+        if (NOT CMAKE_SYSTEM_NAME STREQUAL system)
+            continue()
+        endif ()
+
+        if (target STREQUAL "" AND NOT system STREQUAL "Darwin")
+            set(target "${CMAKE_XCODE_ATTRIBUTE_${sdk}_DEPLOYMENT_TARGET}")
+        endif ()
+
+        if (target STREQUAL "")
+            set(target "$ENV{${sdk}_DEPLOYMENT_TARGET}")
         endif ()
     endforeach ()
 
     set(${out_var} "${target}" PARENT_SCOPE)
+endfunction()
+
+# The Apple SDK directory the project compiles against: the one CMake's Darwin
+# platform module resolved (_CMAKE_OSX_SYSROOT_PATH, also when the compiler's
+# default SDK is used), else CMAKE_OSX_SYSROOT when that is a path, else what
+# xcrun names for that SDK (or for none: the default, which SDKROOT sets).
+function(epm_apple_sdk_path out_var)
+    set(path "${_CMAKE_OSX_SYSROOT_PATH}")
+
+    if (path STREQUAL "" AND "${CMAKE_OSX_SYSROOT}" MATCHES "/")
+        set(path "${CMAKE_OSX_SYSROOT}")
+    endif ()
+
+    if (path STREQUAL "")
+        set(sdk_arguments "")
+
+        if (NOT "${CMAKE_OSX_SYSROOT}" STREQUAL "")
+            set(sdk_arguments --sdk "${CMAKE_OSX_SYSROOT}")
+        endif ()
+
+        execute_process(COMMAND xcrun ${sdk_arguments} --show-sdk-path
+                OUTPUT_VARIABLE path
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                RESULT_VARIABLE result
+                ERROR_QUIET)
+
+        if (NOT result EQUAL 0)
+            set(path "")
+        endif ()
+    endif ()
+
+    set(${out_var} "${path}" PARENT_SCOPE)
+endfunction()
+
+# env.json's osxSysrootPath: for an Apple system, the SDK directory
+# (epm_apple_sdk_path) when it exists; empty elsewhere. Every Apple child build
+# gets it as CMAKE_OSX_SYSROOT, so it compiles against the SDK that sdkVersion
+# names, not whatever its own SDKROOT or xcode-select would pick.
+function(epm_osx_sysroot_path out_var)
+    set(path "")
+
+    if (CMAKE_SYSTEM_NAME MATCHES "^(Darwin|iOS|tvOS|watchOS|visionOS)$")
+        epm_apple_sdk_path(path)
+
+        if (NOT IS_DIRECTORY "${path}")
+            set(path "")
+        endif ()
+    endif ()
+
+    set(${out_var} "${path}" PARENT_SCOPE)
+endfunction()
+
+# env.json's sdkVersion, part of the fingerprint: for an Apple system, the
+# Version of the SDK's SDKSettings.json (epm_osx_sysroot_path); for Windows, the
+# Visual Studio generator's CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION, else a
+# developer prompt's WindowsSDKVersion. Empty elsewhere or when not found.
+function(epm_sdk_version out_var)
+    set(version "")
+
+    if (CMAKE_SYSTEM_NAME MATCHES "^(Darwin|iOS|tvOS|watchOS|visionOS)$")
+        epm_osx_sysroot_path(sdk)
+        set(settings_file "${sdk}/SDKSettings.json")
+
+        if (NOT sdk STREQUAL "" AND EXISTS "${settings_file}")
+            file(READ "${settings_file}" settings)
+            string(JSON version ERROR_VARIABLE error GET "${settings}" Version)
+
+            if (error)
+                set(version "")
+            endif ()
+        endif ()
+    elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+        set(version "${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
+
+        if (version STREQUAL "")
+            string(REGEX REPLACE "[/\\]+$" "" version "$ENV{WindowsSDKVersion}")
+        endif ()
+    endif ()
+
+    set(${out_var} "${version}" PARENT_SCOPE)
 endfunction()
 
 # The compiler is cl or clang-cl (CMAKE_CXX_COMPILER_FRONTEND_VARIANT): the MSVC
@@ -387,6 +532,87 @@ function(epm_is_msvc_abi out_var)
     else ()
         set(${out_var} FALSE PARENT_SCOPE)
     endif ()
+endfunction()
+
+# The C driver beside a C++ compiler driver: clang for clang++, gcc for g++, cc
+# for c++, icx for icpx, emcc for em++, keeping any prefix and suffix
+# (x86_64-linux-gnu-g++-13 gives x86_64-linux-gnu-gcc-13, clang++.exe
+# clang.exe). The compiler's symlinks are followed one at a time and the last
+# link with a driver beside it wins, so a /usr/bin/c++ that an alternatives link
+# turns into g++-13 gives gcc-13, not whatever /usr/bin/cc points at. Empty when
+# no link has one.
+function(epm_c_driver_beside cxx_compiler out_var)
+    set(found "")
+    set(path "${cxx_compiler}")
+
+    foreach (link RANGE 15)
+        get_filename_component(directory "${path}" DIRECTORY)
+        get_filename_component(name "${path}" NAME)
+
+        foreach (pair IN ITEMS "clang\\+\\+=clang" "g\\+\\+=gcc" "c\\+\\+=cc"
+                "icpx=icx" "em\\+\\+=emcc")
+            string(REPLACE "=" ";" pair "${pair}")
+            list(GET pair 0 pattern)
+            list(GET pair 1 driver)
+
+            if (name MATCHES "^(.*)${pattern}(.*)$")
+                set(candidate "${directory}/${CMAKE_MATCH_1}${driver}${CMAKE_MATCH_2}")
+
+                if (EXISTS "${candidate}" AND NOT IS_DIRECTORY "${candidate}")
+                    set(found "${candidate}")
+                endif ()
+
+                break()
+            endif ()
+        endforeach ()
+
+        if (NOT IS_SYMLINK "${path}")
+            break()
+        endif ()
+
+        file(READ_SYMLINK "${path}" target)
+
+        if (NOT IS_ABSOLUTE "${target}")
+            set(target "${directory}/${target}")
+        endif ()
+
+        set(path "${target}")
+    endforeach ()
+
+    set(${out_var} "${found}" PARENT_SCOPE)
+endfunction()
+
+# env.json's cCompiler, the C compiler of every child build: the project's
+# CMAKE_C_COMPILER; for a project that enabled no C, on the MSVC ABI the C++
+# compiler (cl and clang-cl compile both, and CMake refuses a build mixing
+# clang-cl with the cl it would pick for C), elsewhere the C driver beside the
+# C++ one (epm_c_driver_beside). A child build given none would take CC or
+# CMake's default, which the fingerprint does not record. Empty when there is
+# no C++ compiler or no driver beside it.
+function(epm_c_compiler out_var)
+    set(compiler "${CMAKE_C_COMPILER}")
+    epm_is_msvc_abi(msvc_abi)
+
+    if (compiler STREQUAL "" AND msvc_abi)
+        set(compiler "${CMAKE_CXX_COMPILER}")
+    elseif (compiler STREQUAL "" AND NOT "${CMAKE_CXX_COMPILER}" STREQUAL "")
+        epm_c_driver_beside("${CMAKE_CXX_COMPILER}" compiler)
+    endif ()
+
+    set(${out_var} "${compiler}" PARENT_SCOPE)
+endfunction()
+
+# env.json's generatorPlatform: CMAKE_GENERATOR_PLATFORM, else the platform a
+# Visual Studio generator picked by default (CMAKE_VS_PLATFORM_NAME); empty
+# under other generators.
+function(epm_generator_platform out_var)
+    set(platform "${CMAKE_GENERATOR_PLATFORM}")
+
+    if (platform STREQUAL "" AND CMAKE_GENERATOR MATCHES "^Visual Studio")
+        set(platform "${CMAKE_VS_PLATFORM_NAME}")
+    endif ()
+
+    set(${out_var} "${platform}" PARENT_SCOPE)
 endfunction()
 
 # env.json's msvcRuntime: the runtime library the project's targets get on the
@@ -498,6 +724,8 @@ function(epm_write_env)
             "cmake=CMAKE_COMMAND"
             "cmakeVersion=CMAKE_VERSION"
             "generator=CMAKE_GENERATOR"
+            "generatorToolset=CMAKE_GENERATOR_TOOLSET"
+            "generatorInstance=CMAKE_GENERATOR_INSTANCE"
             "makeProgram=CMAKE_MAKE_PROGRAM")
         string(REPLACE "=" ";" pair "${pair}")
         list(GET pair 0 key)
@@ -505,13 +733,20 @@ function(epm_write_env)
         epm_json_set_string(json ${key} "${${var}}")
     endforeach ()
 
+    epm_generator_platform(generator_platform)
+    epm_json_set_string(json generatorPlatform "${generator_platform}")
+
     string(JSON json SET "${json}" isMultiConfig ${is_multi_config})
     epm_json_set_string(json buildType "${CMAKE_BUILD_TYPE}")
     epm_json_string_array(config_types ${CMAKE_CONFIGURATION_TYPES})
     string(JSON json SET "${json}" configurationTypes "${config_types}")
 
+    epm_c_compiler(c_compiler)
+    epm_json_set_string(json cCompiler "${c_compiler}")
+
     foreach (pair IN ITEMS
-            "cCompiler=CMAKE_C_COMPILER"
+            "cCompilerId=CMAKE_C_COMPILER_ID"
+            "cCompilerVersion=CMAKE_C_COMPILER_VERSION"
             "cxxCompiler=CMAKE_CXX_COMPILER"
             "cxxCompilerId=CMAKE_CXX_COMPILER_ID"
             "cxxCompilerVersion=CMAKE_CXX_COMPILER_VERSION"
@@ -538,6 +773,10 @@ function(epm_write_env)
     epm_json_set_string(json osxArchitectures "${architectures}")
     epm_osx_deployment_target(deployment_target)
     epm_json_set_string(json osxDeploymentTarget "${deployment_target}")
+    epm_osx_sysroot_path(sysroot_path)
+    epm_json_set_string(json osxSysrootPath "${sysroot_path}")
+    epm_sdk_version(sdk_version)
+    epm_json_set_string(json sdkVersion "${sdk_version}")
 
     # CMake's own Android support sets CMAKE_ANDROID_ARCH_ABI; the NDK's
     # legacy toolchain file only ANDROID_ABI.
@@ -583,7 +822,25 @@ function(epm_write_env)
     set_property(GLOBAL PROPERTY EPM_ENV_WRITTEN TRUE)
 endfunction()
 
-# Runs the epm binary with `arguments` plus --cache and --verbose as asked for.
+# --cache-store <dir> for each entry of EPM_CACHE_STORES, made absolute against
+# the source directory; nothing when it is empty, so the binary reads the
+# EPM_CACHE_STORES environment variable instead.
+function(epm_cache_store_arguments out_var)
+    set(arguments "")
+
+    foreach (store IN LISTS EPM_CACHE_STORES)
+        if (NOT store STREQUAL "")
+            cmake_path(ABSOLUTE_PATH store BASE_DIRECTORY "${CMAKE_SOURCE_DIR}"
+                    OUTPUT_VARIABLE absolute)
+            list(APPEND arguments --cache-store "${absolute}")
+        endif ()
+    endforeach ()
+
+    set(${out_var} "${arguments}" PARENT_SCOPE)
+endfunction()
+
+# Runs the epm binary with `arguments` plus --cache, --cache-store and --verbose
+# as asked for.
 # Its stdout goes straight to the console as it is written: without --verbose
 # that is only the "-- epm: building ..." progress of a dependency built into
 # the cache. stderr is kept for the failure message (and echoed with
@@ -594,6 +851,9 @@ function(epm_run_binary what)
     if (EPM_CACHE)
         list(APPEND command --cache "${EPM_CACHE}")
     endif ()
+
+    epm_cache_store_arguments(store_arguments)
+    list(APPEND command ${store_arguments})
 
     set(echo_args "")
 
@@ -990,7 +1250,7 @@ endfunction()
 #
 #   <target> configure --manifest <file> --env <build dir>/epm/env.json
 #            --overrides <build dir>/epm/overrides.json --out <build dir>/epm
-#            [--cache <dir>] [--verbose]
+#            [--cache <dir>] [--cache-store <dir>...] [--verbose]
 #
 # which is what the custom target <target>-configure runs (it refreshes the
 # build's graph files) and what Xcode and Visual Studio get as the target's
@@ -1112,6 +1372,9 @@ function(epm_add_recipe target)
                 OUTPUT_VARIABLE cache)
         list(APPEND options --cache "${cache}")
     endif ()
+
+    epm_cache_store_arguments(store_arguments)
+    list(APPEND options ${store_arguments})
 
     if (EPM_VERBOSE)
         list(APPEND options --verbose)
@@ -1276,11 +1539,19 @@ function(epm_add_package)
     file(MAKE_DIRECTORY "${EPM_DIR}/responses")
     file(REMOVE "${response_file}")
 
+    epm_fetches_source("${name}" fetch_source)
+    set(source_dir_flag "")
+
+    if (NOT fetch_source)
+        set(source_dir_flag --no-source-dir)
+    endif ()
+
     epm_run_binary("resolving ${name}"
             resolve
             --request "${request_file}"
             --env "${EPM_DIR}/env.json"
-            --response "${response_file}")
+            --response "${response_file}"
+            ${source_dir_flag})
 
     if (NOT EXISTS "${response_file}")
         message(FATAL_ERROR
@@ -1297,6 +1568,7 @@ function(epm_add_package)
             PREFIX "${epm_${name}_PREFIX}"
             PLATFORM "${epm_${name}_PLATFORM}"
             NOTE "${epm_${name}_NOTE}"
+            CONFIGS ${epm_${name}_CONFIGS}
             OPTIONS ${options}
             ORIGIN "${response_file}")
 

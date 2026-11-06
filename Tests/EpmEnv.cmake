@@ -1,6 +1,8 @@
 # Self-test of env.json's Apple architecture and deployment-target fallbacks in
-# CMake/epm.cmake (epm_osx_architectures, epm_osx_deployment_target), and of
-# its MSVC runtime library (epm_msvc_runtime).
+# CMake/epm.cmake (epm_osx_architectures, epm_osx_deployment_target), of its SDK
+# directory and version (epm_osx_sysroot_path, epm_sdk_version), of its C
+# compiler (epm_c_driver_beside, epm_c_compiler), of its generator platform
+# (epm_generator_platform) and of its MSVC runtime library (epm_msvc_runtime).
 #
 #   cmake -P Tests/EpmEnv.cmake
 
@@ -53,6 +55,13 @@ expect(epm_osx_architectures "" CMAKE_SYSTEM_NAME=Darwin
 expect(epm_osx_architectures "" CMAKE_SYSTEM_NAME=Linux
         CMAKE_CXX_COMPILER_ARCHITECTURE_ID=x86_64)
 
+set(deployment_variables MACOSX_DEPLOYMENT_TARGET IPHONEOS_DEPLOYMENT_TARGET)
+
+foreach (variable IN LISTS deployment_variables)
+    set(saved_${variable} "$ENV{${variable}}")
+    unset(ENV{${variable}})
+endforeach ()
+
 expect(epm_osx_deployment_target "15.0" CMAKE_SYSTEM_NAME=iOS
         CMAKE_OSX_DEPLOYMENT_TARGET=15.0
         CMAKE_XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET=14.0)
@@ -62,6 +71,153 @@ expect(epm_osx_deployment_target "2.0" CMAKE_SYSTEM_NAME=visionOS
         CMAKE_XCODE_ATTRIBUTE_XROS_DEPLOYMENT_TARGET=2.0)
 expect(epm_osx_deployment_target "" CMAKE_SYSTEM_NAME=Darwin
         CMAKE_XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET=14.0)
+
+# Else the system's variable from the environment, which clang would read: the
+# key and the child builds get the target the compiler actually uses.
+set(ENV{MACOSX_DEPLOYMENT_TARGET} 12.3)
+set(ENV{IPHONEOS_DEPLOYMENT_TARGET} 16.4)
+expect(epm_osx_deployment_target "12.3" CMAKE_SYSTEM_NAME=Darwin)
+expect(epm_osx_deployment_target "11.0" CMAKE_SYSTEM_NAME=Darwin
+        CMAKE_OSX_DEPLOYMENT_TARGET=11.0)
+expect(epm_osx_deployment_target "16.4" CMAKE_SYSTEM_NAME=iOS)
+expect(epm_osx_deployment_target "14.0" CMAKE_SYSTEM_NAME=iOS
+        CMAKE_XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET=14.0)
+expect(epm_osx_deployment_target "" CMAKE_SYSTEM_NAME=tvOS)
+expect(epm_osx_deployment_target "" CMAKE_SYSTEM_NAME=Linux)
+
+foreach (variable IN LISTS deployment_variables)
+    if (saved_${variable} STREQUAL "")
+        unset(ENV{${variable}})
+    else ()
+        set(ENV{${variable}} "${saved_${variable}}")
+    endif ()
+endforeach ()
+
+# The SDK version: an Apple SDK's SDKSettings.json, found where CMake resolved
+# it, else at CMAKE_OSX_SYSROOT as a path.
+set(fake_sdk "${CMAKE_CURRENT_BINARY_DIR}/epm-env-fake/MacOSX15.2.sdk")
+set(no_settings_sdk "${CMAKE_CURRENT_BINARY_DIR}/epm-env-fake/Empty.sdk")
+file(REMOVE_RECURSE "${CMAKE_CURRENT_BINARY_DIR}/epm-env-fake")
+file(WRITE "${fake_sdk}/SDKSettings.json"
+        "{\"CanonicalName\": \"macosx15.2\", \"Version\": \"15.2\"}")
+file(MAKE_DIRECTORY "${no_settings_sdk}")
+
+expect(epm_sdk_version "15.2" CMAKE_SYSTEM_NAME=Darwin
+        "_CMAKE_OSX_SYSROOT_PATH=${fake_sdk}" CMAKE_OSX_SYSROOT=macosx)
+expect(epm_sdk_version "15.2" CMAKE_SYSTEM_NAME=iOS "CMAKE_OSX_SYSROOT=${fake_sdk}")
+expect(epm_sdk_version "" CMAKE_SYSTEM_NAME=Darwin
+        "CMAKE_OSX_SYSROOT=${no_settings_sdk}")
+expect(epm_sdk_version "" CMAKE_SYSTEM_NAME=Linux "CMAKE_OSX_SYSROOT=${fake_sdk}")
+
+# The SDK directory child builds get as their sysroot: the same one, only for
+# an Apple system and only when it exists.
+expect(epm_osx_sysroot_path "${fake_sdk}" CMAKE_SYSTEM_NAME=Darwin
+        "_CMAKE_OSX_SYSROOT_PATH=${fake_sdk}")
+expect(epm_osx_sysroot_path "${fake_sdk}" CMAKE_SYSTEM_NAME=iOS
+        CMAKE_OSX_SYSROOT=iphonesimulator "_CMAKE_OSX_SYSROOT_PATH=${fake_sdk}")
+expect(epm_osx_sysroot_path "${fake_sdk}" CMAKE_SYSTEM_NAME=Darwin
+        "CMAKE_OSX_SYSROOT=${fake_sdk}")
+expect(epm_osx_sysroot_path "" CMAKE_SYSTEM_NAME=Darwin
+        "_CMAKE_OSX_SYSROOT_PATH=${fake_sdk}-missing")
+expect(epm_osx_sysroot_path "" CMAKE_SYSTEM_NAME=Linux
+        "_CMAKE_OSX_SYSROOT_PATH=${fake_sdk}")
+
+# With neither, xcrun names the default SDK, when there is one.
+if (CMAKE_HOST_APPLE)
+    find_program(xcrun_program xcrun)
+
+    if (xcrun_program)
+        set(CMAKE_SYSTEM_NAME Darwin)
+        epm_sdk_version(default_version)
+        epm_osx_sysroot_path(default_sysroot)
+        unset(CMAKE_SYSTEM_NAME)
+
+        if (NOT default_version MATCHES "^[0-9]+(\\.[0-9]+)*$")
+            message(SEND_ERROR "epm_sdk_version of the default SDK is "
+                    "'${default_version}', expected a version")
+            set(failures 1)
+        endif ()
+
+        if (NOT IS_DIRECTORY "${default_sysroot}")
+            message(SEND_ERROR "epm_osx_sysroot_path of the default SDK is "
+                    "'${default_sysroot}', expected a directory")
+            set(failures 1)
+        endif ()
+    endif ()
+endif ()
+
+# The C compiler: the project's, else on the MSVC ABI the C++ compiler, else the
+# C driver beside the C++ one.
+set(fake_bin "${CMAKE_CURRENT_BINARY_DIR}/epm-env-fake/bin")
+set(fake_alt "${CMAKE_CURRENT_BINARY_DIR}/epm-env-fake/alt")
+
+foreach (tool IN ITEMS clang++ clang x86_64-linux-gnu-g++-13
+        x86_64-linux-gnu-gcc-13 g++-13 gcc-13 cc icpx icx em++ emcc
+        clang++.exe clang.exe lonely-c++ weird++)
+    file(WRITE "${fake_bin}/${tool}" "")
+endforeach ()
+
+function(expect_driver cxx expected)
+    epm_c_driver_beside("${cxx}" actual)
+
+    if (NOT actual STREQUAL expected)
+        message(SEND_ERROR "epm_c_driver_beside(${cxx}) is '${actual}', expected "
+                "'${expected}'")
+        set(failures 1 PARENT_SCOPE)
+    endif ()
+endfunction()
+
+expect_driver("${fake_bin}/clang++" "${fake_bin}/clang")
+expect_driver("${fake_bin}/clang++.exe" "${fake_bin}/clang.exe")
+expect_driver("${fake_bin}/x86_64-linux-gnu-g++-13"
+        "${fake_bin}/x86_64-linux-gnu-gcc-13")
+expect_driver("${fake_bin}/icpx" "${fake_bin}/icx")
+expect_driver("${fake_bin}/em++" "${fake_bin}/emcc")
+expect_driver("${fake_bin}/lonely-c++" "")
+expect_driver("${fake_bin}/weird++" "")
+expect_driver("" "")
+
+# A c++ that links (via an alternatives directory) to g++-13 gets gcc-13, not
+# the cc beside the link; skipped where symlinks cannot be made.
+file(MAKE_DIRECTORY "${fake_alt}")
+file(CREATE_LINK "${fake_bin}/g++-13" "${fake_alt}/c++" RESULT alt_link SYMBOLIC)
+file(CREATE_LINK "../alt/c++" "${fake_bin}/c++" RESULT bin_link SYMBOLIC)
+
+if (alt_link EQUAL 0 AND bin_link EQUAL 0)
+    expect_driver("${fake_bin}/c++" "${fake_bin}/gcc-13")
+endif ()
+
+expect(epm_c_compiler "/opt/cc" CMAKE_C_COMPILER=/opt/cc
+        "CMAKE_CXX_COMPILER=${fake_bin}/clang++" CMAKE_CXX_COMPILER_ID=Clang)
+expect(epm_c_compiler "${fake_bin}/clang" "CMAKE_CXX_COMPILER=${fake_bin}/clang++"
+        CMAKE_CXX_COMPILER_ID=Clang)
+expect(epm_c_compiler "C:/VS/bin/cl.exe" CMAKE_CXX_COMPILER=C:/VS/bin/cl.exe
+        CMAKE_CXX_COMPILER_ID=MSVC)
+expect(epm_c_compiler "C:/LLVM/bin/clang-cl.exe"
+        CMAKE_CXX_COMPILER=C:/LLVM/bin/clang-cl.exe CMAKE_CXX_COMPILER_ID=Clang
+        CMAKE_CXX_COMPILER_FRONTEND_VARIANT=MSVC)
+expect(epm_c_compiler "" "CMAKE_CXX_COMPILER=${fake_bin}/weird++"
+        CMAKE_CXX_COMPILER_ID=GNU)
+expect(epm_c_compiler "")
+
+# A Visual Studio generator's platform, as given or as it picked by default.
+expect(epm_generator_platform "ARM64" "CMAKE_GENERATOR=Visual Studio 17 2022"
+        CMAKE_GENERATOR_PLATFORM=ARM64 CMAKE_VS_PLATFORM_NAME=ARM64)
+expect(epm_generator_platform "x64" "CMAKE_GENERATOR=Visual Studio 17 2022"
+        CMAKE_VS_PLATFORM_NAME=x64)
+expect(epm_generator_platform "" CMAKE_GENERATOR=Ninja)
+
+file(REMOVE_RECURSE "${CMAKE_CURRENT_BINARY_DIR}/epm-env-fake")
+
+# Windows: the Visual Studio generator's SDK, else a developer prompt's.
+set(saved_sdk_version "$ENV{WindowsSDKVersion}")
+set(ENV{WindowsSDKVersion} "10.0.19041.0\\")
+expect(epm_sdk_version "10.0.22621.0" CMAKE_SYSTEM_NAME=Windows
+        CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION=10.0.22621.0)
+expect(epm_sdk_version "10.0.19041.0" CMAKE_SYSTEM_NAME=Windows)
+set(ENV{WindowsSDKVersion} "")
+expect(epm_sdk_version "" CMAKE_SYSTEM_NAME=Windows)
+set(ENV{WindowsSDKVersion} "${saved_sdk_version}")
 
 # The runtime library on the MSVC ABI only (cl, or clang-cl's MSVC frontend):
 # the project's, or CMake's own default when the project left it empty.

@@ -25,8 +25,51 @@
 # Inputs (cache variables, both required):
 #   EPM_EXPORT_FILE       absolute path of the export file to write
 #   EPM_EXPORT_NAMESPACE  namespace prefix for the imported targets, e.g. epm_debug::
+#
+# Optional:
+#   EPM_FILE_PREFIX_MAPS  <old>=<new> pairs, which become -ffile-prefix-map
+#                         options for the GCC and Clang versions that take it,
+#                         so the archives name no path of the cache that built
+#                         them
 
 include_guard(GLOBAL)
+
+# Sets out_var to a generator expression that is 1 where the source being
+# compiled is C, C++, Objective-C or Objective-C++ and its compiler takes
+# -ffile-prefix-map: GCC 8, Clang 10, AppleClang 12 and every IntelLLVM. Older
+# ones reject the option, which would fail every compile.
+function(epm_prefix_map_condition out_var)
+    set(minimum_versions GNU=8 Clang=10 AppleClang=12 IntelLLVM=0)
+    set(terms "")
+
+    foreach (lang IN ITEMS C CXX OBJC OBJCXX)
+        foreach (minimum IN LISTS minimum_versions)
+            string(REPLACE "=" ";" minimum "${minimum}")
+            list(GET minimum 0 id)
+            list(GET minimum 1 version)
+            set(is_compiler "$<COMPILE_LANG_AND_ID:${lang},${id}>")
+            set(is_recent
+                    "$<VERSION_GREATER_EQUAL:$<${lang}_COMPILER_VERSION>,${version}>")
+            list(APPEND terms "$<AND:${is_compiler},${is_recent}>")
+        endforeach ()
+    endforeach ()
+
+    list(JOIN terms "," terms)
+    set(${out_var} "$<OR:${terms}>" PARENT_SCOPE)
+endfunction()
+
+# Compile options of the top-level directory, which every target of the build
+# inherits, so they add to whatever flags the build has (CMAKE_<LANG>_FLAGS, a
+# toolchain file's) instead of replacing them.
+epm_prefix_map_condition(epm_prefix_map_supported)
+
+foreach (epm_prefix_map IN LISTS EPM_FILE_PREFIX_MAPS)
+    add_compile_options(
+            "$<${epm_prefix_map_supported}:-ffile-prefix-map=${epm_prefix_map}>")
+endforeach ()
+
+unset(epm_prefix_map)
+unset(epm_prefix_map_supported)
 
 foreach (epm_required_var IN ITEMS EPM_EXPORT_FILE EPM_EXPORT_NAMESPACE)
     if (NOT DEFINED ${epm_required_var} OR "${${epm_required_var}}" STREQUAL "")

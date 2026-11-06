@@ -8,6 +8,9 @@
 
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
+#include <eacp/Core/Utils/StdPath.h>
+
+#include <filesystem>
 
 namespace epm
 {
@@ -49,6 +52,12 @@ CMakeBuild& CMakeBuild::into(const Prefix& prefixToUse)
     return *this;
 }
 
+CMakeBuild& CMakeBuild::source(FilePath directory)
+{
+    base.sourceDirectory = std::move(directory);
+    return *this;
+}
+
 std::map<std::string, std::string> CMakeBuild::definedValues() const
 {
     auto values = base.request.options;
@@ -87,9 +96,17 @@ const Prefix& CMakeBuild::requirePrefix() const
 
 FilePath CMakeBuild::buildRoot() const
 {
-    const auto& entry = requirePrefix().entry();
-    return buildRoots / base.request.name / entry.fingerprint.platform
-           / entry.prefix.fileName();
+    const auto& prefixToUse = requirePrefix();
+    const auto& entry = prefixToUse.entry();
+    const auto root = buildRoots / base.request.name / entry.fingerprint.platform
+                      / entry.prefix.fileName();
+
+    // One per staging directory, so builds of the same config in two
+    // processes never share a tree.
+    if (prefixToUse.stagedEntry() == prefixToUse.path())
+        return root;
+
+    return root / prefixToUse.stagedEntry().fileName();
 }
 
 FilePath CMakeBuild::buildDirectory(const std::string& config) const
@@ -101,7 +118,7 @@ ChildBuild CMakeBuild::childBuild(const std::string& config) const
 {
     auto build = base;
     build.buildDirectory = buildDirectory(config);
-    build.prefix = requirePrefix().path();
+    build.prefix = requirePrefix().configDirectory(config);
     build.config = config;
     return build;
 }
@@ -111,8 +128,18 @@ Vector<std::string> CMakeBuild::configureArguments(const std::string& config) co
     return epm::configureArguments(childBuild(config));
 }
 
+void CMakeBuild::addDependencySources()
+{
+    if (addedDependencySources || base.dependencyGraph.empty())
+        return;
+
+    base.dependencyGraph += dependencySources();
+    addedDependencySources = true;
+}
+
 void CMakeBuild::configure(const std::string& config)
 {
+    addDependencySources();
     const auto build = childBuild(config);
 
     if (!Files::removeAll(build.buildDirectory))
@@ -135,8 +162,14 @@ void CMakeBuild::build(const std::string& config)
 void CMakeBuild::harvest(const std::string& config)
 {
     const auto& name = base.request.name;
-    const auto& prefixPath = requirePrefix().path();
-    const auto harvested = harvestConfig(buildDirectory(config), prefixPath, config);
+    const auto& staged = requirePrefix().stagedEntry();
+    // buildRoots is the cache's build/, so its parent is the cache root. The
+    // source root is the snapshot's, whichever subdirectory of it -S named.
+    const auto cacheRoot = buildRoots.parentDirectory();
+    const auto roots = HarvestRoots {
+        cacheRoot, sourceRootOf(cacheRoot, base.sourceDirectory), base.cpmCache};
+    const auto harvested =
+        harvestConfig(buildDirectory(config), staged, config, roots);
 
     if (!harvested.ok)
         throw BuildError {"harvesting " + name + " (" + config
@@ -158,8 +191,21 @@ void CMakeBuild::run()
               + entry.prefix.str() + " with generator '" + base.generator.name
               + "'");
 
+    // Trees that failed builds of this entry kept, once they are stale.
+    removeStaleStaging(buildRoot().parentDirectory());
+
+    const auto& prefix = requirePrefix();
+    const auto staged = prefix.stagedEntry() != prefix.path();
+
     for (const auto& config: configs())
     {
+        // So that another host sharing the cache sees the build is alive.
+        if (staged)
+        {
+            touchStagingHeartbeat(prefix.stagedEntry());
+            touchStagingHeartbeat(buildRoot());
+        }
+
         Log::progress("epm: building " + name + " from source into the cache ("
                       + config + ", " + entry.fingerprint.platform
                       + "), this can take a while");
@@ -174,7 +220,17 @@ void CMakeBuild::run()
         harvest(config);
     }
 
-    if (!keptBuildTree)
-        Files::removeAll(buildRoot());
+    if (keptBuildTree)
+        return;
+
+    Files::removeAll(buildRoot());
+
+    // The entry's directory of trees, unless another build is using it: a
+    // plain remove fails on a directory that is not empty.
+    if (requirePrefix().stagedEntry() != requirePrefix().path())
+    {
+        auto notEmpty = std::error_code {};
+        std::filesystem::remove(toStdPath(buildRoot().parentDirectory()), notEmpty);
+    }
 }
 } // namespace epm

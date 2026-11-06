@@ -7,6 +7,7 @@
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/FilePath.h>
 
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -47,6 +48,10 @@ public:
     // one (Package::cmake(source)).
     CMakeBuild& into(const Prefix& prefixToUse);
 
+    // The checkout to build, for a CMakeBuild made from a source resolved but
+    // not fetched yet (Package::resolveSource), whose directory is empty.
+    CMakeBuild& source(eacp::FilePath directory);
+
     // The options and the definitions, as the -D flags set them, a
     // definition by its name without the :TYPE (a definition wins over an
     // option of the same name): what Package::fingerprint records for this
@@ -56,7 +61,10 @@ public:
     const eacp::Vector<std::string>& configs() const;
     const Generator& generator() const;
 
-    // <cache>/build/<name>/<platform>/<fp12>/<config>.
+    // <cache>/build/<name>/<platform>/<fp12>/<staging>/<config>, <staging>
+    // the name of the prefix's stagedEntry() inside cached()'s callback, so
+    // two processes building the same config never share a tree; without
+    // one, <fp12>/<config>.
     eacp::FilePath buildDirectory(const std::string& config) const;
 
     // The child build of one config, as configure() and build() run it.
@@ -70,19 +78,31 @@ public:
     // `cmake --build`.
     void build(const std::string& config);
 
-    // Relocates the build's output into the prefix (harvestConfig): its
-    // export file and .names. The config is not in the entry yet:
-    // Package::cached() checks it in once its callback has returned, so a
-    // step that fails after the harvest leaves nothing that passes for built.
+    // Relocates the build's output into the config's unit in the prefix's
+    // stagedEntry() (harvestConfig): its export file and .names. The config is
+    // not in the entry yet: Package::cached() publishes it once its callback
+    // has returned, so a step that fails after the harvest leaves nothing that
+    // passes for built.
     void harvest(const std::string& config);
 
     // configure, build and harvest each config in turn, then deletes the
-    // build trees unless a harvest had to keep one.
+    // build trees unless a harvest had to keep one (and, first, the trees
+    // failed builds of the entry kept that are over a day old).
     void run();
 
 private:
+    friend class Package;
+
     const Prefix& requirePrefix() const;
     eacp::FilePath buildRoot() const;
+
+    // What the first configure() adds to the dependency graph a child build
+    // loads: the SOURCE_DIR of each dependency whose source was not fetched,
+    // fetched then (Package::cmake), so it costs nothing when nothing builds.
+    void addDependencySources();
+
+    std::function<std::string()> dependencySources = [] { return std::string {}; };
+    bool addedDependencySources = false;
 
     ChildBuild base;
     eacp::FilePath buildRoots;

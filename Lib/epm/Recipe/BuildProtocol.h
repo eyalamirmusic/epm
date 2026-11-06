@@ -21,8 +21,9 @@ namespace epm
 {
 constexpr auto buildProtocolSchema = 1;
 
-// A source checkout handed to the step: a fetched snapshot, or an override
-// checkout (EPM_<Name>_SOURCE), which has no commit and no sourceId.
+// The source handed to the step: a resolved commit with its sourceId and,
+// once fetched, the snapshot's directory; or an override checkout
+// (EPM_<Name>_SOURCE), which has a directory but no commit and no sourceId.
 struct BuildSource
 {
     std::string commit;
@@ -53,6 +54,23 @@ struct PackageDependency
     MIRO_REFLECT(name, mode, fingerprint, prefix, targetsFile, configs)
 };
 
+// A package of the dependency closure whose SOURCE_DIR dependencyGraph leaves
+// empty (prebuilt, its source not fetched): what the step fetches, by the
+// commit epm resolved, once a child build of its own loads the closure, so
+// that the child's <name>_SOURCE_DIR names the snapshot.
+struct DependencySource
+{
+    std::string name;
+    std::string gitUrl;
+
+    // The tag or branch the commit was resolved from: what a server that
+    // will not serve a commit by its hash is asked for instead.
+    std::string gitRef;
+    std::string commit;
+
+    MIRO_REFLECT(name, gitUrl, gitRef, commit)
+};
+
 struct BuildInput
 {
     int schema = buildProtocolSchema;
@@ -67,12 +85,20 @@ struct BuildInput
     // The cache root, resolved (CacheRoot).
     std::string cacheRoot;
 
+    // The cache stores a missing binary is taken from before it is built
+    // (CacheRoot::stores, CacheStore.h), in order, as the configure was given
+    // them; here so that a step run again by hand sees them too.
+    eacp::Vector<std::string> cacheStores;
+
     // The package's effective request: its name, git url and ref, mode,
     // options, configs (concrete), abiMatch, buildMissingBinaries and deps
     // (each direct dependency's fingerprint hash).
     Request request;
 
-    // The checkout epm already has; without one, Package::fetch() fetches.
+    // The source as epm resolved it: its commit and sourceId, and the
+    // checkout when there is one already (a snapshot in the cache, an
+    // override). Without a directory Package::fetch() fetches that commit;
+    // without a source at all, the request's ref.
     std::optional<BuildSource> source;
 
     eacp::Vector<PackageDependency> dependencies;
@@ -81,6 +107,11 @@ struct BuildInput
     // which a child build of a package with dependencies loads; empty
     // without dependencies.
     std::string dependencyGraph;
+
+    // The packages of dependencyGraph without a SOURCE_DIR, fetched only by a
+    // child build (CMakeBuild::configure), which gets their snapshots as
+    // SOURCE_DIR.
+    eacp::Vector<DependencySource> dependencySources;
 
     // The epm binary running the graph: what a child build with dependencies
     // gets as EPM_EXECUTABLE.
@@ -98,10 +129,12 @@ struct BuildInput
                  recipeName,
                  env,
                  cacheRoot,
+                 cacheStores,
                  request,
                  source,
                  dependencies,
                  dependencyGraph,
+                 dependencySources,
                  epmExecutable,
                  verbose,
                  customBuild)
@@ -118,14 +151,20 @@ struct BuildOutput
     std::string mode;
     std::string sourceDirectory;
 
-    // Prebuilt only: the entry, its platform, the configs it holds, how its
-    // toolchain differs from the current one (abiNote), and its fingerprint
-    // hash, which dependents record in their deps.
+    // Prebuilt only: the entry, its platform, the configs it holds that the
+    // consumer can link (configUsableBy; the facade loads only those), how
+    // its toolchain differs from the current one (abiNote), and its
+    // fingerprint hash, which dependents record in their deps.
     std::string prefix;
     std::string platform;
     eacp::Vector<std::string> configs;
     std::string note;
     std::string fingerprintHash;
+
+    // Prebuilt only: abiKey of the entry's fingerprint under compatible and
+    // any, which dependents record in their compatibleDeps and anyDeps.
+    std::string compatibleKey;
+    std::string anyKey;
 
     // The options the package is built with, as the step's CMakeBuild set
     // them (CMakeBuild::definedValues, a hook's included): what graph.cmake
@@ -148,6 +187,8 @@ struct BuildOutput
                  configs,
                  note,
                  fingerprintHash,
+                 compatibleKey,
+                 anyKey,
                  options,
                  error,
                  details)

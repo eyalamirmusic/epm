@@ -1,9 +1,11 @@
+#include <epm/Build/Harvest.h>
 #include <epm/Emit/GraphResponse.h>
 #include <epm/Emit/RecipeSdkCMake.h>
 #include <epm/Graph/ManifestLoader.h>
 #include <epm/Recipe/Recipe.h>
 #include <epm/Recipe/RecipeBuild.h>
 #include <epm/Recipe/RecipeRun.h>
+#include <epm/Resolve/Resolve.h>
 #include <epm/Spec/JsonFile.h>
 #include <epm/Spec/Overrides.h>
 #include <epm/Spec/Platform.h>
@@ -936,12 +938,13 @@ auto tRecipeBuildPackage = test("Recipe/buildPackage/tinyCMakeProject") = []
     const auto prefix = FilePath {output->prefix};
     check(output->mode == "prebuilt");
     check(output->configs == eacp::Vector<std::string> {"Release"});
-    check(eacp::Files::isFile(prefix / "Release.json"));
+    const auto unit = configDirectory(prefix, "Release");
+    check(eacp::Files::isFile(unit / "epm-config.json"));
     check(eacp::Files::isFile(prefix / "epm-targets.cmake"));
-    check(eacp::Files::isFile(prefix / "lib" / "Release" / tinyArchive()));
+    check(eacp::Files::isFile(unit / "lib" / "Release" / tinyArchive()));
 
     // The hook's option reached the child build, and so the fingerprint.
-    const auto exported = eacp::Files::readFile(prefix / "export-Release.cmake");
+    const auto exported = eacp::Files::readFile(unit / "export-Release.cmake");
     check(exported.find("TINY_VALUE=42") != std::string::npos);
 
     const auto entry = readEntry(prefix);
@@ -966,8 +969,9 @@ auto tRecipeBuildPackage = test("Recipe/buildPackage/tinyCMakeProject") = []
     check(inProcess.prefix != output->prefix);
 
     if (inProcess.ok())
-        check(eacp::Files::readFile(FilePath {inProcess.prefix}
-                                    / "export-Release.cmake")
+        check(eacp::Files::readFile(
+                  configDirectory(FilePath {inProcess.prefix}, "Release")
+                  / "export-Release.cmake")
                   .find("TINY_VALUE=1")
               != std::string::npos);
 };
@@ -1010,15 +1014,16 @@ auto tRecipeAfterBuildThrows = test("Recipe/buildPackage/afterBuildThrows") = []
 
     const auto prefix = entries[0].prefix;
     check(entries[0].configs.empty());
-    check(!eacp::Files::exists(prefix / "Release.json"));
-    check(!eacp::Files::exists(prefix / "epm-targets.cmake"));
+    check(!eacp::Files::exists(configDirectory(prefix, "Release")));
+    check(eacp::Files::listDirectory(stagingDirectory(prefix)).empty());
 
     // The default steps, with the same fingerprint, build into that entry.
     const auto rebuilt = buildInProcess(input);
     check(rebuilt.ok());
     check(FilePath {rebuilt.prefix} == prefix);
     check(rebuilt.configs == eacp::Vector<std::string> {"Release"});
-    check(eacp::Files::isFile(prefix / "Release.json"));
+    check(
+        eacp::Files::isFile(configDirectory(prefix, "Release") / "epm-config.json"));
 };
 
 auto tRecipeSyntaxError = test("Recipe/syntaxError") = []
@@ -1485,4 +1490,42 @@ auto tRecipeRunMissing = test("Recipe/runMissingExecutable") = []
 
     check(!run.project);
     check(run.error.find("no recipe executable") != std::string::npos);
+};
+
+// epm_add_package's `epm resolve`: a prebuilt Tiny's response names its
+// snapshot as SOURCE_DIR, built or found, unless --no-source-dir
+// (EPM_FETCH_SOURCES=OFF) leaves it out; the entry is the same either way.
+auto tResolveSourceDir = test("Resolve/resolvePackage/prebuiltSourceDir") = []
+{
+    if (!hasRecipeCompiler() || !hasTestCMake())
+        return;
+
+    auto root = eacp::TemporaryFile {};
+    const auto work = resolvedPath(root.path());
+    const auto cache = CacheRoot {work / "cache"};
+    const auto env = tinyInput(work, cache).env;
+
+    if (!commitAsRepository(work / "src"))
+        return;
+
+    auto request = Request {};
+    request.name = "Tiny";
+    request.gitUrl = (work / "src").str();
+    request.gitRef = "v1";
+    request.mode = "prebuilt";
+    request.configs = {"Release"};
+    request.options = {{"TINY_FLAG", "ON"}};
+
+    const auto built = resolvePackage(request, env, cache, false);
+
+    if (!built.ok)
+        eacp::Console::print(built.details + built.error);
+
+    check(built.ok && built.response.mode == "prebuilt");
+    check(built.response.sourceDirectory.empty());
+
+    const auto found = resolvePackage(request, env, cache);
+    check(found.ok && found.response.prefix == built.response.prefix);
+    check(eacp::Files::isFile(found.response.sourceDirectory / "CMakeLists.txt"));
+    check(found.response.sourceDirectory.str().starts_with(cache.src().str() + "/"));
 };

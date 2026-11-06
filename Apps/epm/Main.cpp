@@ -1,5 +1,7 @@
 #include <epm/Cache/CacheListing.h>
+#include <epm/Cache/CacheVerify.h>
 #include <epm/Cache/CacheRoot.h>
+#include <epm/Cache/CacheStore.h>
 #include <epm/Emit/GraphResponse.h>
 #include <epm/Emit/RecipeSdkCMake.h>
 #include <epm/Emit/Response.h>
@@ -38,6 +40,9 @@ constexpr auto usage =
     "  resolve      resolve one package request for epm.cmake\n"
     "  cache path   print the cache root\n"
     "  cache ls     list the cached binaries, sources and tools\n"
+    "  cache verify re-hash the cached binaries, report corrupt or incomplete ones\n"
+    "  cache push   copy the cached binaries into a cache store directory\n"
+    "  cache pull   copy a cache store's binaries into the cache\n"
     "  --version    print the version";
 
 Vector<std::string> argumentsAfter(int count)
@@ -57,13 +62,22 @@ int fail(const std::string& message)
     return 1;
 }
 
-// One spelling for every path epm writes into the cache and matches in export
+// The cache root `root` names ($EPM_CACHE when empty) and the cache stores
+// `stores` name ($EPM_CACHE_STORES when empty), as configure takes them: one
+// spelling for every path epm writes into the cache and matches in export
 // files, whatever symlinks (/tmp on macOS) the cache root was given through.
-epm::CacheRoot canonical(const epm::CacheRoot& cache)
+epm::CacheRoot cacheOf(const FilePath& root, const Vector<FilePath>& stores = {})
 {
-    Files::createDirectories(cache.path());
-    return epm::CacheRoot {epm::resolvedPath(cache.path())};
+    auto args = epm::ConfigureArgs {};
+    args.cache = root;
+    args.stores = stores;
+    return epm::configureCache(args);
 }
+
+constexpr auto cacheHelp = "the cache root (default: $EPM_CACHE)";
+constexpr auto storeHelp =
+    "a read-only cache store missing binaries are copied from, searched in the "
+    "order given (default: $EPM_CACHE_STORES)";
 
 int resolve()
 {
@@ -71,14 +85,20 @@ int resolve()
     auto env = FilePath {};
     auto response = FilePath {};
     auto cache = FilePath {};
+    auto stores = Vector<FilePath> {};
     auto verbose = false;
+    auto noSourceDir = false;
 
     auto cli = Args::Parser {"epm resolve", "Resolves one package request."};
     cli.option("--request", request, "the request JSON").required();
     cli.option("--env", env, "the env JSON").required();
     cli.option("--response", response, "the response CMake file to write")
         .required();
-    cli.option("--cache", cache, "the cache root (default: $EPM_CACHE)");
+    cli.option("--cache", cache, cacheHelp);
+    cli.option("--cache-store", stores, storeHelp);
+    cli.flag("--no-source-dir",
+             noSourceDir,
+             "do not fetch a prebuilt package's source for its SOURCE_DIR");
     cli.flag("--verbose", verbose, "log each step");
 
     if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
@@ -98,10 +118,13 @@ int resolve()
         if (!requestSpec)
             return fail("cannot read the request file " + request.str());
 
-        const auto cacheRoot = cache.empty() ? epm::CacheRoot::fromEnvironment()
-                                             : epm::CacheRoot {cache};
+        const auto cacheRoot = cacheOf(cache, stores);
+
+        for (const auto& note: epm::storeNotes(cacheRoot))
+            epm::Log::progress("epm: note: " + note);
+
         const auto result =
-            epm::resolvePackage(*requestSpec, *envSpec, canonical(cacheRoot));
+            epm::resolvePackage(*requestSpec, *envSpec, cacheRoot, !noSourceDir);
 
         if (!result.ok)
         {
@@ -176,6 +199,11 @@ int configureInRecipe(const epm::ConfigureArgs& args,
                                           "--cache",
                                           cache.path().str()};
 
+    // Resolved here, $EPM_CACHE_STORES included, so the recipe executable
+    // takes the same stores whatever its environment.
+    for (const auto& store: cache.stores())
+        arguments.addFrom(Vector<std::string> {"--cache-store", store.str()});
+
     if (args.verbose)
         arguments.add("--verbose");
 
@@ -212,7 +240,8 @@ int configure()
     cli.option("--overrides", args.overrides, "the overrides JSON").required();
     cli.option("--out", args.out, "the directory for graph.cmake and graph.json")
         .required();
-    cli.option("--cache", args.cache, "the cache root (default: $EPM_CACHE)");
+    cli.option("--cache", args.cache, cacheHelp);
+    cli.option("--cache-store", args.stores, storeHelp);
     cli.flag("--verbose", args.verbose, "log each step");
 
     if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(2))))
@@ -271,9 +300,7 @@ int graphCMake()
 // there already; nullopt once the failure is reported.
 std::optional<FilePath> builtRecipe(const FilePath& recipe, const FilePath& cache)
 {
-    const auto cacheRoot =
-        cache.empty() ? epm::CacheRoot::fromEnvironment() : epm::CacheRoot {cache};
-    const auto build = epm::buildRecipe(recipe, canonical(cacheRoot));
+    const auto build = epm::buildRecipe(recipe, cacheOf(cache));
 
     if (!build.ok)
     {
@@ -383,6 +410,45 @@ int recipeSdk()
     return 0;
 }
 
+// `epm cache push` and `epm cache pull`: published configs copied, checked
+// against their markers, between the local cache and a store directory.
+int transferCache(bool push)
+{
+    auto store = FilePath {};
+    auto root = FilePath {};
+    auto names = Vector<std::string> {};
+    const auto command = std::string {push ? "push" : "pull"};
+
+    auto cli = Args::Parser {
+        "epm cache " + command,
+        push ? "Copies the cache's published binary configs into a cache store "
+               "directory (a share, a synced folder, a directory a CI job saves), "
+               "skipping those already there; safe for several machines at once."
+             : "Copies a cache store's published binary configs into the cache, "
+               "skipping those already there."};
+    cli.positional(store, "store", "the cache store directory").required();
+    cli.positional(names, "name", "only these packages (default: all)");
+    cli.option("--cache", root, cacheHelp);
+
+    if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(3))))
+        return *code;
+
+    try
+    {
+        const auto cache = cacheOf(root);
+        const auto storePath = epm::resolvedPath(store);
+        const auto transfer = push ? epm::pushToStore(cache, storePath, names)
+                                   : epm::pullFromStore(cache, storePath, names);
+        Console::print(epm::transferText(
+            transfer, push ? "pushed" : "pulled", push ? "to" : "from", storePath));
+        return transfer.problems.empty() ? 0 : 1;
+    }
+    catch (const std::exception& error)
+    {
+        return fail(error.what());
+    }
+}
+
 int cache()
 {
     const auto rest = argumentsAfter(2);
@@ -397,19 +463,40 @@ int cache()
     {
         auto root = FilePath {};
         auto cli = Args::Parser {"epm cache ls", "Lists what the cache holds."};
-        cli.option("--cache", root, "the cache root (default: $EPM_CACHE)");
+        cli.option("--cache", root, cacheHelp);
 
         if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(3))))
             return *code;
 
-        const auto cacheRoot =
-            root.empty() ? epm::CacheRoot::fromEnvironment() : epm::CacheRoot {root};
-        Console::print(epm::cacheListing(canonical(cacheRoot)));
+        Console::print(epm::cacheListing(cacheOf(root)));
         return 0;
     }
 
+    if (!rest.empty() && rest[0] == "verify")
+    {
+        auto root = FilePath {};
+        auto cli = Args::Parser {
+            "epm cache verify",
+            "Re-hashes every cached binary config against its marker; exits 1 "
+            "when any is corrupt or incomplete."};
+        cli.option("--cache", root, cacheHelp);
+
+        if (auto code = cli.exitCodeFor(cli.parse(argumentsAfter(3))))
+            return *code;
+
+        const auto verification = epm::verifyCache(cacheOf(root));
+        Console::print(epm::verificationText(verification));
+        return verification.problems.empty() ? 0 : 1;
+    }
+
+    if (!rest.empty() && (rest[0] == "push" || rest[0] == "pull"))
+        return transferCache(rest[0] == "push");
+
     Console::printError(
-        "usage: epm cache path\n       epm cache ls [--cache <dir>]");
+        "usage: epm cache path\n       epm cache ls [--cache <dir>]\n"
+        "       epm cache verify [--cache <dir>]\n"
+        "       epm cache push <store> [--cache <dir>] [<name>...]\n"
+        "       epm cache pull <store> [--cache <dir>] [<name>...]");
     return Args::badArguments;
 }
 

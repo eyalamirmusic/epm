@@ -181,9 +181,61 @@ Two cache variables, set with `-D` or before the first `epm_add_package`:
   the configure line:
   `-- epm: eacp (prebuilt, macos-arm64, 1a2b3c4d5e6f, built with AppleClang 17.0.0.17000013, current 17.0.0.17000319)`.
 
-`epm cache ls` lists what the cache holds. Docs/PoC.md §9 has the details.
-Builds cached by epm 0.1.2 and older use another layout and are ignored;
-delete the cache's `bin/` directory once to reclaim the space.
+`epm cache ls` lists what the cache holds, and `epm cache verify` re-hashes
+every cached binary against what was recorded when it was published,
+reporting corrupt or incomplete ones. `epm cache push <store> [<name>...]`
+copies the cache's binaries into a cache store directory and `epm cache pull
+<store> [<name>...]` copies a store's into the cache (both take `--cache`).
+Docs/PoC.md §3 and §9 have the details. Builds cached by epm 0.1.2 and older
+use another layout and are ignored; delete the cache's `bin/` directory once
+to reclaim the space.
+
+### Sharing a cache
+
+A cached build names no path of the machine that made it, so it can be used
+anywhere with the same toolchain. Two ways to share them:
+
+- **Cache stores.** A store is a directory laid out as a cache's `bin/`: a
+  network share, a synced folder, or a directory a CI job saves and restores.
+  Name stores in `EPM_CACHE_STORES` (a CMake list, or an environment variable
+  with paths separated by `:`, `;` on Windows). epm reads them and never
+  writes to them: when the local cache lacks a build, the stores are searched
+  in order, and a matching one is copied into the local cache, checked
+  against the sizes and hashes recorded when it was published, and used from
+  there, without building it. A store that is missing or holds a corrupt copy
+  is reported and passed over. `epm cache push <store>` fills one; several
+  machines can push into one store at once.
+- **Skipping the source.** By default a prebuilt package's source is still
+  fetched (a shallow clone of the commit), so `<name>_SOURCE_DIR` names it as
+  for a package built from source: some projects read CMake modules or headers
+  from there (`${Catch2_SOURCE_DIR}/extras`). Developers and CI that only
+  consume prebuilts can set `EPM_FETCH_SOURCES=OFF` (a CMake variable or the
+  environment) to skip that clone; `EPM_<Name>_FETCH_SOURCE=ON` keeps it for a
+  package that needs it. A package built from source still gets the sources
+  of its dependencies. Neither setting changes which build is used.
+- **Caching the whole cache directory.** A CI system's cache step pointed at
+  `EPM_CACHE` keeps every build, source and the bootstrapped epm between runs
+  of one job, with nothing else to set up.
+
+A CI recipe with GitHub Actions, where CI builds and developers reuse:
+
+```yaml
+- run: cmake -S . -B build -G Ninja -DEPM_CACHE=${{ runner.temp }}/epm
+- run: cmake --build build
+- run: epm cache push ${{ runner.temp }}/store --cache ${{ runner.temp }}/epm
+  # epm is the binary get_epm.cmake found: build/CMakeCache.txt's EPM_EXECUTABLE
+- uses: actions/upload-artifact@v4
+  with: { name: epm-store-${{ runner.os }}, path: "${{ runner.temp }}/store" }
+```
+
+Or push straight to a share (`epm cache push /mnt/epm-store`), and on a
+developer machine:
+
+```bash
+export EPM_CACHE_STORES=/mnt/epm-store   # or an unpacked CI artifact
+export EPM_FETCH_SOURCES=OFF             # optional: no source clones
+cmake -S . -B build
+```
 
 ## Getting the epm binary
 

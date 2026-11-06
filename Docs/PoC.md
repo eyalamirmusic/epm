@@ -51,15 +51,19 @@ All under `${CMAKE_BINARY_DIR}/epm/`.
 ```json
 { "schema": 1,
   "cmake": "/path/to/cmake", "cmakeVersion": "3.31.6", "generator": "Ninja",
+  "generatorPlatform": "", "generatorToolset": "", "generatorInstance": "",
   "makeProgram": "/opt/homebrew/bin/ninja",
   "isMultiConfig": false,
   "buildType": "Debug", "configurationTypes": [],
-  "cCompiler": "/usr/bin/cc", "cxxCompiler": "/usr/bin/c++",
+  "cCompiler": "/usr/bin/cc", "cCompilerId": "AppleClang",
+  "cCompilerVersion": "17.0.0.17000013", "cxxCompiler": "/usr/bin/c++",
   "cxxCompilerId": "AppleClang", "cxxCompilerVersion": "17.0.0.17000013",
   "cxxCompilerFrontend": "GNU",
   "systemName": "Darwin", "systemProcessor": "arm64", "crossCompiling": false,
   "osxArchitectures": "", "osxDeploymentTarget": "11.0",
   "osxSysroot": "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+  "osxSysrootPath": "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+  "sdkVersion": "15.2",
   "androidAbi": "",
   "cxxStandard": "20",
   "toolchainFile": "", "msvcRuntime": "",
@@ -79,14 +83,45 @@ compiler's default target (`CMAKE_CXX_COMPILER_ARCHITECTURE_ID`), so the platfor
 the fingerprint carry the architecture and child builds build exactly it; and an empty
 `CMAKE_OSX_DEPLOYMENT_TARGET` as `CMAKE_XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET` (`TVOS_`,
 `WATCHOS_`, `XROS_` alike) when the project sets that instead (`epm_osx_architectures`,
-`epm_osx_deployment_target`).
+`epm_osx_deployment_target`). Failing both, `osxDeploymentTarget` is the environment's
+`MACOSX_DEPLOYMENT_TARGET` (`IPHONEOS_`, `TVOS_`, `WATCHOS_`, `XROS_` for the device
+systems), which clang reads when it is given no target: CMake reads it into
+`CMAKE_OSX_DEPLOYMENT_TARGET` only on a build tree's first configure, so a later change,
+or a variable left empty, would otherwise leave the key without the target the compiler
+uses. Child builds get the value as an explicit `CMAKE_OSX_DEPLOYMENT_TARGET` (§5), so
+their own environment cannot change it.
+`sdkVersion` (`epm_sdk_version`) is the version of the SDK the consumer compiles
+against, for the fingerprint (§3, §9). For an Apple system it is the `Version` of the
+`SDKSettings.json` in `osxSysrootPath` (`epm_osx_sysroot_path`): the SDK directory CMake's
+Darwin platform module resolved (`_CMAKE_OSX_SYSROOT_PATH`, set also when the compiler's
+default SDK is used, as named by `SDKROOT` or `xcode-select`), else `CMAKE_OSX_SYSROOT`
+when that is a path, else what `xcrun [--sdk <name>] --show-sdk-path` names; empty off
+Apple systems and when the directory does not exist. Every Apple child build gets
+`osxSysrootPath` as its `CMAKE_OSX_SYSROOT` (§5), so it compiles against the SDK whose
+version the key records rather than whatever its own environment would pick; the path
+itself is in no fingerprint. For Windows `sdkVersion` is
+`CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION` (Visual Studio generators), else a developer
+prompt's `WindowsSDKVersion`. Empty elsewhere and when none is found.
 Empty string / empty array when a variable is unset. Written at the first `epm_add_package`
-call (not at include time), once per configure. `cCompiler` is empty when the consumer does
-not enable C; the binary must not pass an empty `-DCMAKE_C_COMPILER` to child builds (on
-the MSVC ABI it passes the C++ compiler for C too: cl and clang-cl compile both, and
-CMake refuses a build mixing clang-cl with the cl it would pick for C).
+call (not at include time), once per configure. `cCompiler` (`epm_c_compiler`) is the C
+compiler of every child build: the consumer's `CMAKE_C_COMPILER`; when the consumer does
+not enable C, on the MSVC ABI the C++ compiler (cl and clang-cl compile both, and CMake
+refuses a build mixing clang-cl with the cl it would pick for C), elsewhere the C driver
+beside the C++ one (`epm_c_driver_beside`: `clang` for `clang++`, `gcc` for `g++`, `cc`
+for `c++`, `icx` for `icpx`, `emcc` for `em++`, any prefix and suffix kept, the C++
+compiler's symlinks followed one link at a time so an alternatives `c++` that is
+`g++-13` gives `gcc-13`). A child build given no C compiler would take `CC` or CMake's
+default, which the key does not record. It is empty only when no such driver exists;
+the binary never passes an empty `-DCMAKE_C_COMPILER`. `cCompilerId` and
+`cCompilerVersion` are `CMAKE_C_COMPILER_ID`/`_VERSION` when the consumer enables C,
+else empty; the fingerprint records them only when they differ from the C++ compiler's
+(§3).
 `makeProgram` (`CMAKE_MAKE_PROGRAM`) is passed to a child build that reuses the consumer's
 generator, so a build tool that is not on PATH (CLion's bundled ninja) is still found.
+`generatorPlatform` (`CMAKE_GENERATOR_PLATFORM`, else the `CMAKE_VS_PLATFORM_NAME` a
+Visual Studio generator picked), `generatorToolset` (`CMAKE_GENERATOR_TOOLSET`) and
+`generatorInstance` (`CMAKE_GENERATOR_INSTANCE`) are passed with a Visual Studio
+consumer's generator when a child build reuses it (§5).
 `epmExecutable` is `EPM_EXECUTABLE`, the epm binary running the configure: the recipe SDK
 is found from its install prefix (`RecipeSdk`, §8), and a child build with dependencies
 gets it as its `EPM_EXECUTABLE`. Like `profile`, it is in no fingerprint.
@@ -140,7 +175,7 @@ defaults to the repository name as in CPM.
 
 ```cmake
 set(epm_eacp_MODE "prebuilt")                                   # or "source"
-set(epm_eacp_SOURCE_DIR "/Users/me/.cache/epm/src/eacp/3f1c0a9b2d4e")
+set(epm_eacp_SOURCE_DIR "")    # source: "/Users/me/.cache/epm/src/eacp/3f1c0a9b2d4e"
 # prebuilt only:
 set(epm_eacp_PREFIX "/Users/me/.cache/epm/bin/eacp/macos-arm64/9a8b7c6d5e4f")
 set(epm_eacp_TARGETS_FILE "${epm_eacp_PREFIX}/epm-targets.cmake")
@@ -153,7 +188,8 @@ set(epm_eacp_NOTE "built with AppleClang 17.0.0.17000013, current 17.0.0.1700031
 compatible match, §9). `epm.cmake` then either `include()`s the targets file (prebuilt) or
 sets the OPTIONS as plain variables and calls
 `add_subdirectory(<SOURCE_DIR> ${CMAKE_BINARY_DIR}/_deps/<name>-build)` (source). In both
-cases it sets `<name>_SOURCE_DIR`, `<name>_ADDED` and `<name>_MODE` in the caller's scope,
+cases it sets `<name>_SOURCE_DIR` (empty when prebuilt: the source is fetched only to
+build, §4), `<name>_ADDED` and `<name>_MODE` in the caller's scope,
 and prints one line: `-- epm: eacp (prebuilt, macos-arm64, 9a8b7c6d5e4f)`, with the note
 appended when there is one (`-- epm: eacp (prebuilt, macos-arm64, 9a8b7c6d5e4f, built
 with AppleClang 17.0.0.17000013, current 17.0.0.17000319)`), or
@@ -165,16 +201,50 @@ with AppleClang 17.0.0.17000013, current 17.0.0.17000319)`), or
 $EPM_CACHE  (default: <platform cache dir>/epm, e.g. ~/Library/Caches/epm or ~/.cache/epm)
   src/<name>/<sourceId12>/          clean snapshot, no .git
   src/<name>/<sourceId12>.json      completeness marker: {url, commit, fetchedAt}
-  bin/<name>/<platform>/<fp12>/     one entry per ABI fingerprint (§9)
-      manifest.json                 {schema, fingerprint, sourceId, createdAt}; written first
-      <Config>.json                 per-config completeness marker, written last for that
-                                    config: {config, builtAt, compilerPath, compilerVersion}
-      lib/<Config>/*.a|*.lib
-      export-<Config>.cmake (+ .names, .aliases)   CMake export() output, namespaced epm_<config>::
-      gen/<Config>/…                relocated per-config build-tree paths (include dirs, objects)
-      gen/shared/<sha12>/<relpath>  relocated INTERFACE_SOURCES files, content-addressed
-      epm-targets.cmake             facade targets (§5), regenerated when a config is added
-  build/<name>/<platform>/<fp12>/<Config>/   child build trees; deleted after the harvest
+  src/<name>/.recipes/<sourceId12>/ the package's epm.cpp alone (empty without one),
+                                    what the graph walk reads and compiles, the snapshot
+                                    there or not (§4): a recipe is one file; staged in
+                                    .recipes/ and appears whole, by one rename
+  bin/<name>/<platform>/<fp12>/     one entry per ABI fingerprint (§9), schema 3; it appears
+                                    whole, by one rename, holding manifest.json, the facade
+                                    and an empty configs/
+      manifest.json                 {schema: 3, fingerprint, sourceId, createdAt}
+      epm-targets.cmake             the facade (§5): the same file in every entry, never
+                                    rewritten; it finds the published configs when loaded
+      configs/<Config>/             one config's unit: built in staging, published by one
+                                    rename, never modified afterwards
+          epm-config.json           the config's marker, inside the unit, so the config is
+                                    published exactly when it is: {config, builtAt,
+                                    compilerId, compilerVersion, compilerPath, lto,
+                                    filesSha256}; small, the only file a pick reads
+          epm-files.json            published with it: {files: [{path, size, sha256}],
+                                    shared: [...]}, every file the config depends on,
+                                    read only to verify or copy it; the marker records
+                                    its sha256
+          lib/<Config>/*.a|*.lib
+          export-<Config>.cmake (+ .names, .aliases)   CMake export() output, namespaced
+                                    epm_<config>::, every path in it ${CMAKE_CURRENT_LIST_DIR}/…
+                                    (the unit) or, for gen/shared, ${_epm_entry_dir}/… (§5)
+          gen/<Config>/…            relocated build-tree paths (include dirs, objects)
+          include/src/<relpath>     what the export takes from the source snapshot (header
+                                    trees, by path relative to it)
+          include/cpm/<relpath>     the same from <cache>/cpm (nested CPM deps)
+      gen/shared/<sha12>/<relpath>  relocated INTERFACE_SOURCES files, content-addressed,
+                                    shared by the configs and add-only
+                                    The entry names nothing outside itself, so it can be
+                                    moved or copied, alone or with the whole cache.
+  bin/<name>/<platform>/.staging/<tmp>.<pid>-<host12>.<unix seconds>/   a build's private
+                                    directory, laid out as an entry (configs/<Config>/,
+                                    gen/shared/), or an entry being assembled; never read;
+                                    deleted once published, and as stale by the next build
+                                    (removeStaleStaging): at once when its process, on this
+                                    host, is gone; one of another host when its
+                                    .epm-heartbeat (rewritten before each config a build
+                                    builds), else its name's time, is over a week old
+  build/<name>/<platform>/<fp12>/<staging name>/<Config>/   child build trees, one set per
+                                    staging directory, with its own .epm-heartbeat; deleted
+                                    after the harvest (a failed one is kept, then deleted
+                                    as stale by the same rule)
   cpm/                              CPM_SOURCE_CACHE for child builds (nested CPM deps)
   recipe/<key12>/epm-recipe         a compiled epm.cpp, with compile.log (Graph.md §2)
   tool/<key>/                       a bootstrapped epm (§8), an epm install prefix:
@@ -200,20 +270,49 @@ The build steps' files of `epm configure` (`<name>.in.json`, `<name>.out.json`,
 Locks: one eacp `IPC::Lock` per package name, held while fetching a snapshot and while
 building an entry (waits up to an hour for another process); the build step that builds
 the entry takes it itself (`Package::cached`, §5), and the configure, which runs the
-step, in its own process or another, holds none meanwhile. A recipe's compile holds `recipe-<key12>` the same way. `IPC::Lock` keeps its lock
+step, in its own process or another, holds none meanwhile. For binary entries the lock
+only keeps two local processes from building the same thing twice; their correctness
+does not depend on it, since entries and configs are published atomically (§5), so two
+processes, or two hosts sharing the cache on one filesystem, that build the same config
+both end with a valid entry. Readers (picking an entry, the facade) take no lock. A recipe's compile holds `recipe-<key12>` the same way. `IPC::Lock` keeps its lock
 files in its own per-user directory (`<appData>/eacp/Locks`) and takes no path, so the lock
 is named `epm-<sha256(cache root)[:12]>-<name>` to keep separate caches independent; there
 is no `locks/` directory. The cache root is resolved (`weakly_canonical`) before use so
 every path epm writes and matches has one spelling.
 
-`sourceId = sha256("git\n" + url + "\n" + commit)`, first 12 hex chars as directory name.
+`sourceId = sha256("git\n" + repositoryKey(url) + "\n" + commit)`, first 12 hex chars
+as directory name. `repositoryKey` (`Docs/Graph.md` §5 rule 5) is one spelling per
+repository: the scheme, a `user@`, trailing `/` and `.git` dropped, scp-like
+`git@host:owner/repo` as `host/owner/repo`, lower case, so `git@github.com:o/r.git` on a
+laptop and `https://github.com/o/r` on CI give the same `github.com/o/r` and share the
+snapshot and every entry built from it; another host, owner or repository (or a non-default
+ssh port, which is kept) stays distinct. A local path or `file://` URL is made absolute
+and resolved, keeping its case: a local repository is machine-specific anyway. Fetching
+always uses the URL as written, and the snapshot's marker records the first one used.
+
 `fp12` is the first 12 hex chars of `sha256(canonical fingerprint JSON)`. The fingerprint
-(`AbiFingerprint`, recorded in `manifest.json`) holds `schema` (2), `platform`,
-`compilerId`, `compilerVersion` (full), `compilerMajor`, `compilerPath`, `systemName`,
-`systemProcessor`, `osxArchitectures`, `osxDeploymentTarget`, `cxxStandard`,
-`msvcRuntime` (the runtime library on the MSVC ABI, §2; empty elsewhere),
-`toolchainFile` and `toolchainFileHash` (sha256 of its contents, when there is one),
-`options` (sorted) and `sourceId`. The canonical form is Miro's compact output of the
+(`AbiFingerprint`, recorded in `manifest.json`) holds `schema` (4), `platform`,
+`compilerId`, `compilerVersion` (full), `compilerMajor`, `cCompilerId` and
+`cCompilerVersion` (§2: set only when the consumer enables C with a compiler whose id or
+version is not the C++ compiler's; empty for the same toolchain and for a C driver found
+beside the C++ one, so a C++-only consumer and a C and C++ one share keys), `systemName`,
+`systemProcessor`, `osxArchitectures`, `osxDeploymentTarget`, `sdkVersion` (§2: the
+Apple or Windows SDK compiled against; empty elsewhere), `cxxStandard`, `msvcRuntime`
+(the runtime library on the MSVC ABI, §2; empty elsewhere), `toolchainFileHash` (sha256
+of the toolchain file's contents, when there is one), `envFlags`, `options` (sorted),
+`sourceId`, `deps`, `compatibleDeps` and `anyDeps` (`Docs/Graph.md` §10). It holds no
+machine path, so another machine (a CI runner, a colleague, a shared cache) with the same
+toolchain, SDK and source computes the same key: the compiler counts by id and version,
+the toolchain file by its contents, never by where they are (a config's marker still
+records the compiler path that built it, for diagnostics). `envFlags` holds the environment variables a
+child build inherits from epm and that change what it compiles, by name, those set and
+not empty: `CFLAGS`, `CXXFLAGS`, `OBJCFLAGS`, `OBJCXXFLAGS`, `ASMFLAGS`, `CUDAFLAGS`,
+`HIPFLAGS`, `FFLAGS` and `LDFLAGS`, which CMake reads into a build tree's initial
+`CMAKE_<LANG>_FLAGS` and linker flags, and `CL` and `_CL_`, which cl and clang-cl read
+on every call. They are read from the process that runs the build step (the child build
+is its child), not from `env.json`. Schema 4 is where paths left the key and
+`sdkVersion`, `envFlags` and the normalized `sourceId` came in; every entry of an
+earlier schema is ignored and rebuilt. The canonical form is Miro's compact output of the
 struct (`Miro::toJSONString`): Miro objects are `std::map`s, so every key, options
 included, comes out sorted, with no whitespace. The configs are *not* in it: one entry
 holds every config built for that fingerprint, added one at a time. Which entry a request
@@ -223,11 +322,117 @@ comes later.
 
 Entries of the 0.1.2 layout (`bin/<name>/<key12>/` with `<key12>.json` beside it) are
 ignored, never read or deleted; `epm cache ls` reports them. Delete `bin/` once after
-upgrading (it only holds rebuildable binaries).
+upgrading (it only holds rebuildable binaries). Entries of the schema 2 layout (configs
+built in place at the entry's top level, `<Config>.json` markers) are ignored too, and
+one at the path a new entry needs is moved aside and deleted when it is created.
+
+**Completeness and immutability.** A config is in an entry exactly when
+`configs/<Config>/epm-config.json` is there and names it: the unit is renamed into place
+with its marker inside, so no reader ever sees half a config, and epm never re-hashes on
+a configure. Nothing of a published config changes afterwards: adding Debug to a Release
+entry publishes `configs/Debug/` beside it and leaves every Release file and the facade
+byte for byte as they were. The only shared files, `gen/shared/<sha12>/…`, are
+content-addressed and add-only: each is published by its own rename, and one already
+there (the same contents, by its path) is kept. A crash leaves only `.staging`
+directories, which readers never look at.
 
 `epm cache ls [--cache <dir>]` prints one line per binary entry
 (`<name>  <platform>  <configs>  <compiler> <major>  <size>  <fp12>`), then the sources and
-the tools; `epm cache path` prints the cache root.
+the tools; `epm cache path` prints the cache root. `epm cache verify [--cache <dir>]`
+re-hashes every published config against its `epm-files.json` (which must be the one
+the marker recorded: each listed file of the unit and each `gen/shared` file its export
+names, missing, another size or another sha256; and any file of the unit it does not
+list) and also reports an entry directory without a readable manifest, a facade that is
+not epm's, a unit without a valid marker, and a unit whose name is not a config's
+canonical spelling (`configs/release`, which no pick reads); it prints one line per
+problem (`<name>/<platform>/<fp12> <Config>: <file>:
+<problem>`) and a summary (also counting older-layout entries, which it skips, and
+staging directories), and exits 1 when there is any problem.
+
+### Cache stores
+
+A **cache store** is a directory laid out as a cache: `<store>/bin/<name>/<platform>/<fp12>/`
+exactly as above (a store may hold only `bin/`). It is a network share, a synced
+folder, an unpacked CI artifact: anything another machine filled with `epm cache push`
+(or a copy of another cache). epm reads stores and never writes to them during a
+configure; nothing in one is locked, created or deleted.
+
+- **Configuration.** `EPM_CACHE_STORES`: a CMake list (`epm.cmake` passes each entry,
+  made absolute against the source directory, as `--cache-store <dir>`), else the
+  environment variable of that name, its paths separated by the platform's path-list
+  separator (`:`, `;` on Windows; `CacheRoot::storesFromEnvironment`). `epm configure`,
+  `epm resolve` and a recipe executable's `configure` take `--cache-store` (repeated, in
+  order); without one they read the environment. `epm configure` resolves the list once
+  and passes it explicitly to the recipe executable, and the configure records it in
+  every build step's input (`BuildInput::cacheStores`, `<build>/epm/steps/<name>.in.json`),
+  so a step in another recipe executable, or one run again by hand from
+  `steps/<name>.command`, uses the same stores whatever its environment.
+  `epm_add_recipe`'s `<target>-configure` passes them too. Stores are in no fingerprint.
+- **A store that is missing or unreadable** is a note (`-- epm: note: the cache store
+  <dir> does not exist: not used`, once per configure), never an error.
+- **Precedence.** For each package not in `source` mode, `Package::cached` picks from
+  the local cache first (§9). Only when that pick lacks a needed config (one this
+  compiler can link) are the stores searched, in order (`pullFromStores`,
+  `Cache/CacheStore`), and only until the local pick holds every needed config. Then,
+  if configs are still missing, they are built as before (or the mode refuses: a
+  `binary-only` request fails naming the cache and its stores). A store hit counts as
+  cached in every mode: `binary-only` and `prebuilt` use it, and `auto` with
+  `EPM_BUILD_MISSING_BINARIES=OFF` uses it instead of falling back to source.
+- **Picking across the cache and a store.** For one store, the store's entries of the
+  package are added to the local ones config by config, an entry of the same `fp12`
+  gaining the store's configs, and `pickEntry` picks among them under the request's
+  `EPM_ABI_MATCH`, with its usual order and LTO rule. When that pick holds more of the
+  needed configs than the local pick alone, the configs it holds that the local cache
+  lacks are copied into the local entry of that `fp12` (created from the store entry's
+  fingerprint when missing). So a local entry holding Release and a store entry of the
+  same fingerprint holding Debug end as one local entry holding both; a store entry of
+  another fingerprint that adds nothing the local pick lacks is never copied. A store
+  entry whose directory is not named after its fingerprint is ignored.
+- **Copying** (`copyConfig`) uses the protocol of a build (§5): the unit's files listed
+  in the store's `epm-files.json` (checked against the marker's `filesSha256`), and the
+  `gen/shared` files it names that the local entry lacks, are copied into a fresh staging
+  directory of the local entry, each checked against its recorded size and sha256 as it
+  is read, and the unit is published by one no-replace rename with the same marker. A
+  store comes from other machines, so its markers are checked before anything is
+  trusted: a path that climbs out of its directory, a shared path outside
+  `gen/shared/` (one under `configs/<Config>/` would block that config's publish for
+  good), a unit that lists no `export-<Config>.cmake` or no `.names` (the facade reads
+  both), an `lto` the copied bytes do not bear out (`ltoKindOf` of each file as read, in
+  either direction), an LTO config recorded for a compiler other than the entry's (epm
+  publishes LTO objects only into their compiler's exact entry), and a file that is
+  missing or differs each fail that unit; a unit whose directory and marker spell a
+  config other than canonically is never read at all. Nothing is published, a note names the
+  store, the package and the problem (`-- epm: note: the cache store <dir> holds Release
+  of eacp (1a2b3c4d5e6f), but it cannot be used: lib/Release/libeacp.a: sha256 differs
+  from the recorded one`), and the pick is made again without it, so the next store, or
+  a local build, takes over. A copied unit is announced (`-- epm: eacp: copied Release
+  from <store> into the cache`). The local entry is then used as if it had been built
+  there: every path a consumer or a child build sees is in the local cache.
+- **Picking.** A complete compatible entry (every needed config, linkable by this
+  compiler) ranks above an exact one that lacks a config (§9), so a store entry of a
+  compatible compiler holding Debug and Release is pulled in preference to building
+  the Release a local exact entry lacks.
+- **Source fetch.** A package found in the cache or a store is used without building
+  it; its source snapshot is fetched afterwards only for the consumer's `SOURCE_DIR`,
+  which `EPM_FETCH_SOURCES=OFF` turns off (§4, `Docs/Graph.md` §7).
+
+`epm cache push <store> [--cache <dir>] [<name>...]` copies every published config of
+the local cache (only the named packages' when names are given) into the store with
+the same `copyConfig`: entries are created in the store as a build creates them
+(`createEntry`, one rename), each config is staged in the store's `.staging` and
+published there by a no-replace rename, so several CI jobs pushing into one share at
+once each end with a valid store, the loser of a race dropping its copy. A config the
+store holds already is skipped, and only units with a valid marker are pushed, each file
+checked against it while copying (a corrupt local unit is reported, not pushed); staging
+debris never is. It prints the problems, then `pushed 3 configs (24.1 MB) into 2 entries
+to <store>; 1 already there`, and exits 1 when there was a problem. `epm cache pull
+<store> [--cache <dir>] [<name>...]` is the reverse, filling the local cache ahead of
+time (a configure pulls on demand anyway).
+
+Caching the whole `EPM_CACHE` directory with a CI system's cache step is the simpler
+alternative within one job's runs: it keeps sources, recipes and the bootstrapped epm
+too. Stores are for sharing between jobs, machines and people. HTTP, S3 or release-asset
+backends, signing and garbage collection of stores are future work.
 
 ## 4. Source fetch
 
@@ -239,10 +444,40 @@ the tools; `epm cache path` prints the cache root.
    `git checkout --detach FETCH_HEAD`, `git submodule update --init --recursive --depth 1`
    (if any), delete `.git` (and submodules' `.git` files), rename into place, write the
    marker. A server that refuses the shallow fetch by commit gets `git fetch origin <ref>`
-   (every branch and tag for a bare hash) and `git checkout --detach <commit>`.
+   (every branch and tag for a bare hash) and `git checkout --detach <commit>`: `<ref>` is
+   the tag or branch the commit was resolved from, carried along with it wherever the
+   commit is fetched later (`fetchCommit`; the step's request, `dependencySources`, the
+   consumer's `SOURCE_DIR` fetch), never the commit itself.
 3. Shell out to the `git` CLI through `eacp::Processes` with a non-interactive environment
    (`GIT_TERMINAL_PROMPT=0`). Lift the wrapper from
    `/Users/eyalamir/Code/AgentWorkspace/Lib/WorkspaceCore/Git.{h,cpp}`.
+
+**Resolving is not fetching.** The fingerprint needs only the `sourceId`, which is the
+repository key and the commit of step 1 (`resolveSource`: an `ls-remote`, nothing for a
+full hash), so nothing fetches the snapshot until something reads it:
+
+- The graph walk (`Docs/Graph.md` §5) needs each package's `epm.cpp` only
+  (`fetchManifest`), always from `src/<name>/.recipes/<sourceId12>/`: copied from the
+  snapshot when that is complete in the cache, else filled by `git init`, `git fetch
+  --depth 1 --filter=blob:none origin <commit>` (the commit's trees, no file contents),
+  `git ls-tree` for `epm.cpp` and, when it is there, `git checkout FETCH_HEAD -- epm.cpp`,
+  whose contents git fetches on demand; staged inside `.recipes/` (one filesystem, so
+  the rename is one) and renamed into place. A server that ignores the filter sends the
+  commit's files (git warns, the result is the same); one that refuses the fetch gets the
+  full fetch above instead, and the `epm.cpp` is copied from that snapshot. A recipe is
+  one file (its compile is keyed by its contents alone, `Docs/Graph.md` §2), and this is
+  enforced: it is compiled from beside nothing else of its repository, so a recipe that
+  `#include`s a file of its repository fails the same way on every machine, rather than
+  only where the snapshot is not cached. The root recipe, the consumer's own `epm.cpp`,
+  is compiled where it is; so is the `epm.cpp` of an `EPM_<Name>_SOURCE` checkout.
+- The build step gets the commit and `sourceId` (`BuildInput::source`, with a directory
+  only when the snapshot is there already) and fetches by that commit only when it builds
+  a config, inside `cached`'s callback, under the package lock it holds then
+  (`fetchSource(…, lockHeld)`), or when the package is in source mode. A package found in
+  the cache or a cache store (§3) is used with no fetch at all.
+- A child build that loads its dependencies' graph (`Docs/Graph.md` §10) and a package the
+  consumer builds from source get their prebuilt dependencies' snapshots fetched then, as
+  their `<name>_SOURCE_DIR` (`Docs/Graph.md` §7).
 
 ## 5. Binary build and harvest
 
@@ -257,29 +492,43 @@ definitions, configs and generator, or add files after the build, through the sa
 
 `cached` decides from the request's mode whether anything is built (`Spec/Request.h`,
 `decide`; §9 for picking). If so, under the package lock it picks the entry again (another
-process may have finished it) or creates it (`manifest.json` first), and clears whatever
-each missing config, one the entry lacks a marker for, left in `lib/`, `gen/` or its export
-files. Then `CMakeBuild::run` configures, builds and harvests each of those configs, and
-only those, in turn (child build dir `build/<name>/<platform>/<fp12>/<Config>`, made fresh):
+process may have finished it) or creates it (`createEntry`: `manifest.json`, the facade
+and `configs/` assembled in `.staging` and renamed into place; a process that loses that
+race takes the winner's), and makes a fresh staging directory
+(`bin/<name>/<platform>/.staging/<tmp>.<pid>-<host12>.<unix seconds>`, the `Prefix`'s
+`stagedEntry()`, §3).
+Then `CMakeBuild::run` configures, builds and harvests each missing config, and only
+those, in turn, into its unit there, `<staging>/configs/<Config>/` (`<prefix>` below;
+child build dir `build/<name>/<platform>/<fp12>/<staging name>/<Config>`, made fresh, so
+two processes never share one):
 
 ```
 cmake -S <src> -B <builddir> -G <generator>
+      [-A <platform> -T <toolset> -DCMAKE_GENERATOR_INSTANCE=…]
+                                                     # a Visual Studio consumer's generator (below)
       -DCMAKE_BUILD_TYPE=<Config>
       -DCMAKE_TOOLCHAIN_FILE=…                       # the consumer's, if any
-      -DCMAKE_SYSTEM_NAME=… -DCMAKE_SYSTEM_PROCESSOR=… -DCMAKE_OSX_SYSROOT=…
+      -DCMAKE_SYSTEM_NAME=… -DCMAKE_SYSTEM_PROCESSOR=…
                                                      # cross-compiling without a toolchain file
+      -DCMAKE_OSX_SYSROOT=…                          # Apple systems: the consumer's SDK directory
       -DCMAKE_C_COMPILER=… -DCMAKE_CXX_COMPILER=…
       -DCMAKE_OSX_ARCHITECTURES=… -DCMAKE_OSX_DEPLOYMENT_TARGET=… -DCMAKE_CXX_STANDARD=…
       -DCMAKE_MSVC_RUNTIME_LIBRARY=… -DCMAKE_POLICY_DEFAULT_CMP0091=NEW
                                                      # the MSVC ABI only: the consumer's runtime (§2)
+      -DEPM_FILE_PREFIX_MAPS=<cache>=/epm/cache;<snapshot>=/epm/src/<name>;<builddir>=/epm/build/<name>;<cache>/cpm=/epm/cpm
+                                                     # off the MSVC ABI only (below)
       -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY=<prefix>/lib/<Config>
+      -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY_<CONFIG>=<prefix>/lib/<Config>
+                                                     # so Visual Studio adds no <Config>/ to it
       -DCPM_SOURCE_CACHE=<cache>/cpm
       -DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=<builddir>/epm-export.cmake
       -DEPM_EXPORT_FILE=<prefix>/export-<Config>.cmake
       -DEPM_EXPORT_NAMESPACE=epm_<config>::          # epm_debug:: / epm_release::
       -D<OPTION>=<VALUE> …                           # the request's, as CMakeBuild::option left them
       -D<NAME>=<VALUE> …                             # CMakeBuild::define, last
-cmake --build <builddir> --parallel
+cmake --build <builddir> --config <Config> --parallel
+                                                     # a multi-config generator (Visual Studio)
+                                                     # would build Debug without --config
 ```
 
 A package with dependencies also gets the nested flags of `Docs/Graph.md` §10. The options
@@ -287,20 +536,33 @@ and definitions are part of the fingerprint (`Package::fingerprint(source, build
 the entry is keyed by what was actually passed.
 
 - Generator: the consumer's generator (and `CMAKE_MAKE_PROGRAM`) if it is single-config;
-  otherwise `Ninja` if found on PATH (passed as `CMAKE_MAKE_PROGRAM`), else
-  `Unix Makefiles` (or the platform default on Windows); `CMakeBuild::generator` overrides
-  it. `-D` flags whose env value is empty are left out; `-DCMAKE_TOOLCHAIN_FILE` is passed
-  when the consumer has one.
+  otherwise `Ninja` if found on PATH (passed as `CMAKE_MAKE_PROGRAM`), else the ninja a
+  `Ninja Multi-Config` consumer runs (its `CMAKE_MAKE_PROGRAM`) with `Ninja`, else a
+  Visual Studio consumer's generator with its platform (`-A`), toolset (`-T`) and
+  instance (`CMAKE_GENERATOR_INSTANCE`) from `env.json`, else `Unix Makefiles` (or the
+  platform default on Windows, the only case left without `-G`); `CMakeBuild::generator`
+  overrides it. Naming the generator matters beyond choosing it: without `-G`, CMake takes
+  the generator from the environment's `CMAKE_GENERATOR` and with it
+  `CMAKE_GENERATOR_PLATFORM`, `_TOOLSET` and `_INSTANCE`, which are in no key. `-D` flags
+  whose env value is empty are left out; `-DCMAKE_TOOLCHAIN_FILE` is passed when the
+  consumer has one.
+- Sysroot: every Apple child build (macOS included, cross-compiling or not, with a
+  toolchain file or without) gets `env.json`'s `osxSysrootPath` as `CMAKE_OSX_SYSROOT`, the
+  SDK directory the consumer compiles against (§2), so it compiles against the SDK whose
+  `sdkVersion` the key records: left to itself, a native macOS child would take its own
+  `SDKROOT` or `xcode-select` default. Without a resolved directory, a consumer
+  cross-compiling without a toolchain file passes its `CMAKE_OSX_SYSROOT` as it is (an SDK
+  name such as `iphonesimulator`).
 - Target system: when the consumer cross-compiles without a toolchain file
   (`crossCompilesWithoutToolchain`, `Spec/Platform`: `env.json`'s `crossCompiling` set
   and its `toolchainFile` empty), as with `-DCMAKE_SYSTEM_NAME=iOS
-  -DCMAKE_OSX_SYSROOT=iphonesimulator`, the child gets `CMAKE_SYSTEM_NAME`,
-  `CMAKE_SYSTEM_PROCESSOR` and `CMAKE_OSX_SYSROOT` (each when non-empty; CMake leaves the
-  processor empty for iOS), and for Android `CMAKE_ANDROID_ARCH_ABI`, so it configures for
+  -DCMAKE_OSX_SYSROOT=iphonesimulator`, the child gets `CMAKE_SYSTEM_NAME` and
+  `CMAKE_SYSTEM_PROCESSOR` (each when non-empty; CMake leaves the processor empty for
+  iOS), the sysroot above, and for Android `CMAKE_ANDROID_ARCH_ABI`, so it configures for
   that system before its `project()` instead of for the host; with the architectures and
   deployment target above, an iOS simulator consumer's packages are simulator archives
   (`Tests/GraphIos.cmake`). A toolchain file, which the child gets too, names the system
-  itself, and a native consumer gets none of these. Not forwarded: `CMAKE_ANDROID_NDK`
+  itself, and a native consumer gets none of these but the sysroot. Not forwarded: `CMAKE_ANDROID_NDK`
   and `CMAKE_SYSTEM_VERSION` (an Android child without a toolchain file finds the NDK
   from the environment), nor the NDK toolchain's `ANDROID_ABI`/`ANDROID_PLATFORM`.
 - `epm-export.cmake` (source of truth: `CMake/epm-export.cmake` in this repo, embedded into
@@ -316,52 +578,168 @@ the entry is keyed by what was actually passed.
   which the harvester reads instead of scraping the export file, and
   `${EPM_EXPORT_FILE}.aliases`, one `<alias> <target>` line per ALIAS of an exported
   target (`Docs/Graph.md` §9).
-- Because archives are written straight into the prefix, the export file already points at
-  cached `.a` files. Include directories point into the source cache (stable) and into
-  `<cache>/cpm` for nested CPM dependencies (stable).
-- **Relocation of build-tree paths.** Verified against eacp: the export file still references
-  the child build tree in a few places — ResEmbed-generated include dirs and registration
-  `.cpp` files in `INTERFACE_SOURCES` (Miro, eacp-webview-bridge), and `IMPORTED_OBJECTS` of
-  OBJECT libraries (MiroFormats, MiroCodegenWriter). The harvester therefore, per config:
-  first, every build-tree file listed in an `INTERFACE_SOURCES` property is copied to
-  `<prefix>/gen/shared/<sha256(contents)[:12]>/<path relative to builddir>` (unless already
-  there) and that whole path is replaced in the export file; then it scans the export file
-  for every remaining path that starts with `<builddir>`, copies each referenced file or
-  directory to `<prefix>/gen/<Config>/<path relative to builddir>`, and replaces the
-  literal `<builddir>` prefix with `<prefix>/gen/<Config>` throughout the export file. After
-  that no path references the build tree and the build dir is deleted. If any reference
-  survives the rewrite (unexpected), warn and keep the build dir.
-- **Why `gen/shared` is content-addressed.** Xcode fails a target whose sources vary by
-  configuration, and the registration `.cpp` files in `INTERFACE_SOURCES` would otherwise
-  be one path per config. Because the path is derived from the file's contents, every
-  config that generates the same file names the same path, including a config added to
-  the entry weeks later, without touching the export files of the configs already there.
-  For eacp this shares the two `*_Register.cpp` files; the `.o` files and the generated
-  include dirs (whose `.d` files embed the build path) stay per config. `gen/shared` is
-  never cleared.
-- `CMakeBuild::harvest` marks nothing. Once `cached`'s callback has returned (`run()`,
-  then the `afterBuild` hook), `cached` adds each config the callback left harvested (an
-  export file with its `.names`) to the entry: it writes `<Config>.json` (the config is
-  now in the entry) and regenerates `epm-targets.cmake` for the configs whose markers
-  exist (`addConfigToEntry`); a config left without an export file fails the step. A
-  callback that throws adds none, so a first build that fails leaves an entry holding
-  only `manifest.json`, which the next run picks (§9) and builds into. If any export file
-  mentions `Threads::Threads`, the facade adds `find_package(Threads REQUIRED)` before the
-  includes:
+- `EPM_FILE_PREFIX_MAPS` keeps the cache out of what the compiler writes into the
+  archives (`__FILE__`, debug info): `epm-export.cmake` adds each pair as a
+  `-ffile-prefix-map=<old>=<new>` compile option of the top-level directory, which every
+  target inherits, so it adds to the flags the build already has (`CMAKE_<LANG>_FLAGS`, a
+  toolchain file's) instead of replacing them, and only for C, C++, Objective-C and
+  Objective-C++ compiled by a GCC or Clang that takes the option (`COMPILE_LANG_AND_ID`
+  and `VERSION_GREATER_EQUAL` on `$<LANG_COMPILER_VERSION>`, per language: GCC 8,
+  Clang 10, AppleClang 12, any IntelLLVM; older ones reject it, which would fail every
+  compile, so they get none; `Tests/PrefixMapVersions.cmake`). The maps are the cache
+  root (`/epm/cache`: the dependencies' snapshots and entries a nested child build
+  reads), the package's snapshot root (`/epm/src/<name>`, the whole snapshot even when
+  `-S` is a subdirectory of it), the build tree and the CPM cache, each as written and
+  with its symlinks resolved (`filePrefixMaps`). The cache root's comes first: GCC
+  applies the last map that matches and Clang the last or, by version, the longest
+  (AppleClang 21 the longest, checked), so either way the more specific maps after it
+  win. The MSVC ABI gets none:
+  cl has no documented equivalent (`/d1trimfile:` is undocumented and covers `__FILE__`
+  alone, and the linker's `/pdbsourcepath:` concerns PDBs, not static libraries), and
+  clang-cl, which takes it as `/clang:-ffile-prefix-map=…`, is left with cl until it is
+  tested. There the archives still name the cache in their debug info, which costs a
+  moved entry nothing but the debugger's way to the sources.
+- Because archives are written straight into the unit, the export file points at
+  staged `.a` files; include directories point into the source snapshot and into
+  `<cache>/cpm` for nested CPM dependencies, and generated ones into the build tree. An
+  entry must work wherever it is moved or copied (a shared cache, another machine), so
+  the harvest makes it carry all of that and name it relative to itself.
+- **The harvest**, per config, makes the unit's `export-<Config>.cmake` name only files
+  inside the entry: the unit's as `${CMAKE_CURRENT_LIST_DIR}/<path>` (the export file
+  lives at the unit's top level, so CMake expands that to the unit wherever it is), and
+  `gen/shared` ones as `${_epm_entry_dir}/<path>`, set by a first line the harvest adds,
+  `get_filename_component(_epm_entry_dir "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)`,
+  which normalises the path so every config spells a shared file the same way:
+  1. Every build-tree file listed in an `INTERFACE_SOURCES` property is copied to
+     `<staging>/gen/shared/<sha256(contents)[:12]>/<path relative to builddir>` (unless
+     already there), and that whole path is replaced. Verified against eacp: ResEmbed's
+     registration `.cpp` files (Miro, eacp-webview-bridge).
+  2. Every other path under `<builddir>` (or `<builddir>` itself) is copied to the
+     unit's `gen/<Config>/<path relative to builddir>`: ResEmbed-generated include dirs,
+     and the `IMPORTED_OBJECTS` of OBJECT libraries (MiroFormats, MiroCodegenWriter).
+  3. Every path under the source snapshot goes to the unit's `include/src/<relative
+     path>`, and every path under `<cache>/cpm` to its `include/cpm/<relative path>`,
+     lexically normalised (eacp's `Lib/eacp/Core/../../` is `include/src/Lib`); a
+     directory inside another named one that copies at least as much is not copied
+     twice. The snapshot is the whole of `<cache>/src/<name>/<id>` (`sourceRootOf`),
+     even for a package configured from a subdirectory of it (zstd's and lz4's
+     `build/cmake`, which name `build/cmake/../../lib`).
+  4. Paths into the unit itself (the archives) become relative.
+  5. What a nested child build takes from its dependencies (`Docs/Graph.md` §10): a
+     path under a dependency's snapshot, `<cache>/src/<dep>/<id>` (its
+     `<dep>_SOURCE_DIR`, when its step asked for the source), goes to the unit's
+     `include/dep/<dep>/<relative path>`, and one under a dependency's entry,
+     `<cache>/bin/<dep>/<platform>/<fp12>`, to its `dep/<dep>/<relative path>`. They
+     are copied rather than rewritten into a reference to the dependency's own entry:
+     the consumer may load that entry from elsewhere (another cache, a store), and an
+     export file cannot name it before the dependency is loaded. A path under
+     `<cache>/src` or `<cache>/bin` that is in no package's snapshot or entry fails the
+     step, naming the property.
+  What names a path decides how much of a directory is copied. A directory named by an
+  include property (`INTERFACE_INCLUDE_DIRECTORIES`, `INTERFACE_SYSTEM_INCLUDE_DIRECTORIES`,
+  a file set's `BASE_DIRS`) or an include option (`-I`, `-isystem`, `-iquote`,
+  `-idirafter`) is copied minus what only a build reads or produces
+  (`isCopiedIntoEntry`): hidden entries and `CMakeFiles` directories are not walked,
+  and build scripts and project files (`CMakeLists.txt`, `*.cmake`, Makefiles, Ninja,
+  Meson, Bazel files, logs, `.d` files), compiled output (objects, archives, libraries,
+  PDBs, precompiled headers) and sources (`.c`, `.cpp`, `.m`, `.mm`, assembly, …) are
+  left out. It is a rule of exclusion because headers need not have an extension
+  (Eigen's do not). A directory named any other way (`INTERFACE_LINK_DIRECTORIES` over a
+  vendored SDK's `lib/`, an ExternalProject's install directory, a `.xcframework` in
+  `INTERFACE_LINK_LIBRARIES`, `-L`/`-F` options) is copied whole, but for
+  version-control (`.git`, `.hg`, `.svn`) and `CMakeFiles` directories, so its
+  libraries come along. Sources are kept in a directory the export also names a source
+  file in (a module whose `INTERFACE_SOURCES` include their siblings), and a source
+  file (`INTERFACE_SOURCES`, or a source by its extension) outside every directory the
+  export names brings its own directory, with its sources, for what it includes by
+  relative path; this is decided over every spelling of the tree before anything is
+  copied. Any other referenced file is copied as is. A path that does not exist or
+  climbs out of its tree fails the step, naming the property that holds it.
+  A path is recognised where it starts: at the start of the text or after a quote,
+  `;`, `:`, `=`, `,`, `>` or whitespace, or right after an option that takes it joined
+  (`-I`, `-isystem`, `-iquote`, `-idirafter`, `-iframework`, `-isysroot`, `-include`,
+  `-imacros`, `-L`, `-F`), so
+  `/opt/epm` is not found inside `/usr/local/opt/epm`. It ends at a quote, `;`, a
+  generator expression's `,` or `>`, a line end, and inside a `SHELL:` option at a
+  space (`$<IF:c,<src>/a,<src>/b>`, `SHELL:-isystem <src>/x -DX`).
+  Each tree is matched as written and with its symlinks resolved. The rewritten file is
+  then checked, by the same rule: if it still names the cache root, the source
+  snapshot, `<cache>/cpm`, the build tree, the unit or the staging directory, the step
+  fails (`BuildError`, naming the path, its property and the line) and the build tree
+  is kept; otherwise it is deleted. The archives' contents are not checked.
+- **What each config carries.** Everything but `gen/shared` is in the config's unit,
+  `include/` too, so a unit is self-contained, immutable and can be published (and
+  later pushed or pulled) on its own; a config added later copies the headers it needs
+  again rather than adding to a shared tree that published configs read. The cost is one
+  copy of `include/` per config: for eacp (HelloGraph's: Release, graphics and WebView
+  off) the unit carries the headers of its `Lib/`, `ThirdParty/miniz`,
+  `ThirdParty/fmt/include` and five CPM dependencies, 4.8 MB beside 11 MB of Release
+  archives (measured on macOS, Nov 2026), so a Debug + Release entry holds about 5 MB
+  more than with one shared tree, beside Debug archives that are larger still.
+- **Why `gen/shared` is content-addressed and outside the units.** Xcode fails a target
+  whose sources vary by configuration, and the registration `.cpp` files in
+  `INTERFACE_SOURCES` would otherwise be one path per config. Because the path is
+  derived from the file's contents and lies outside every unit, every config that
+  generates the same file names the same path, including a config added to the entry
+  weeks later, without touching the configs already there. For eacp this shares the two
+  `*_Register.cpp` files (300 bytes); the `.o` files and the generated include dirs stay
+  per config. A shared file is never replaced nor deleted.
+- **Publishing.** `CMakeBuild::harvest` publishes nothing. Once `cached`'s callback has
+  returned (`run()`, then the `afterBuild` hook, which adds files to a config through
+  `Prefix::configDirectory`), `cached` describes each config the callback left
+  harvested (an export file with its `.names`; one left without fails the step):
+  `describeStagedConfig` hashes every file of its unit and every `gen/shared` file its
+  export names (sha256 and size), writes that list into the unit as `epm-files.json`
+  and detects LTO objects (§9). Then
+  `publishConfig`: (1) each of its `gen/shared` files the entry lacks is renamed into
+  the entry (a file already there is kept: same path, same contents); (2) the marker,
+  `epm-config.json`, recording the sha256 of `epm-files.json`, is written into the
+  staged unit; (3) the unit is renamed to `configs/<Config>`, a rename that fails
+  rather than replace a non-empty directory (on Windows a rename refused for a moment
+  by a handle an antivirus or indexer holds, access denied or a sharing violation, is
+  retried for about a second; a target that is there never is: `renameNoReplace`). A
+  process that loses that race finds the winner's unit, marker and all, drops its own
+  and goes on with the winner's (an identical build, by the fingerprint); so two
+  processes, or two hosts sharing the cache, building the same config both end with a
+  valid entry, without the package lock. The staging directory is then deleted. A
+  config of LTO objects built by a compiler other than the one the entry was recorded
+  for is published into the exact entry of the current fingerprint instead (§9). A
+  callback that throws publishes nothing, so a first build that fails leaves an entry
+  holding only `manifest.json` and the facade, which the next run picks (§9) and builds
+  into; a failure in any config of a run (or in `afterBuild`) publishes none of that
+  run's configs, the ones harvested before it included.
+- **The facade**, `epm-targets.cmake`, is the same text in every entry
+  (`targetsFileText`), written when the entry is created and never rewritten, so adding
+  a config does not touch it. When it is loaded it finds the published configs (Debug,
+  Release, RelWithDebInfo: those with a marker; with `EPM_FACADE_CONFIGS` set, as
+  `epm_load_package` sets it to the response's `CONFIGS`, only those among them, so a
+  config this consumer cannot link is never loaded), reads their `.names` and `.aliases`,
+  adds `find_package(Threads REQUIRED)` if any export file mentions `Threads::Threads`,
+  includes each export file, and defines the facade targets, choosing the selector for
+  the set of configs found (one branch per set, from `configSelector`):
 
 ```cmake
-include("${CMAKE_CURRENT_LIST_DIR}/export-Debug.cmake")      # one per config present
-include("${CMAKE_CURRENT_LIST_DIR}/export-Release.cmake")
-foreach(name IN ITEMS eacp-core eacp-network …)           # every exported library
-  if(NOT TARGET ${name})
-    add_library(${name} INTERFACE IMPORTED GLOBAL)
-    target_link_libraries(${name} INTERFACE
-      "$<IF:$<CONFIG:Debug>,epm_debug::${name},epm_release::${name}>")
-  endif()
-endforeach()
-if(NOT TARGET fmt::fmt)                                     # one per line of .aliases
-  add_library(fmt::fmt ALIAS fmt)
-endif()
+foreach (_epm_config IN ITEMS Debug Release RelWithDebInfo)  # each published config
+  … list(APPEND _epm_configs …) and its .names, .aliases …
+endforeach ()
+foreach (_epm_config IN LISTS _epm_configs)
+  include("${CMAKE_CURRENT_LIST_DIR}/configs/${_epm_config}/export-${_epm_config}.cmake")
+endforeach ()
+foreach (_epm_target IN LISTS _epm_targets)                  # every exported library
+  if (TARGET ${_epm_target})
+    continue ()
+  endif ()
+  add_library(${_epm_target} INTERFACE IMPORTED GLOBAL)
+  if (_epm_configs STREQUAL "Debug")                         # one branch per set
+    …
+  elseif (_epm_configs STREQUAL "Debug;Release")
+    target_link_libraries(${_epm_target} INTERFACE
+      "$<IF:$<CONFIG:Debug>,epm_debug::${_epm_target},epm_release::${_epm_target}>")
+  elseif …
+endforeach ()
+foreach (_epm_line IN LISTS _epm_aliases)                    # "fmt::fmt fmt"
+  … add_library(fmt::fmt ALIAS fmt) unless fmt::fmt exists …
+endforeach ()
 ```
 
   The selector maps each consumer config to the same-named config if the entry has it,
@@ -374,11 +752,9 @@ endif()
   names is the union of the `.names` files. Known PoC limitation: the facade covers every
   exported name (including nested deps such as `Miro`, `fmt`); if the consumer defines one
   of those itself the guard keeps the consumer's target and the program may end up with
-  two copies. To be addressed after the PoC.
-- The marker is written before the facade, so the facade never names a config whose
-  files may still be cleared. A failure in any config of a run (or in `afterBuild`)
-  marks none of that run's configs, the ones harvested before it included: the next run
-  clears and builds them all again.
+  two copies. To be addressed after the PoC. Because the facade finds configs when it is
+  loaded, a consumer that configures again after another added a config to the entry
+  sees it too, and its builds of that config link it instead of the fallback.
 
 ## 6. Repository layout (mirrors eacp / AgentWorkspace)
 
@@ -407,17 +783,21 @@ epm/
     Cache/CacheRoot, SourceCache, BinaryCache, PackageLock
     Cache/Fingerprint       AbiFingerprint, EPM_ABI_MATCH policies, the configure note
     Cache/CacheListing      `epm cache ls`
+    Cache/CacheVerify       `epm cache verify`
+    Cache/CacheStore        cache stores: copying configs from them, `epm cache push`/`pull`
     Spec/Request, Env       Miro-reflected structs for the JSON files; Request's
                             `decide` is the mode decision
     Spec/Platform           the platform name (§9)
     Build/ChildBuild, Harvest   (+ EmbeddedScripts.cpp.in: epm-export.cmake compiled in)
+    Build/Lto               LTO object detection in archives (§9)
     Build/Configs           config validation, mapping and the facade's selector
     Emit/Response
     Resolve/Resolve         the `epm resolve` pipeline (the default build steps, in-process)
   Apps/epm/Version.h.in     generated Version.h: epm::version from project(VERSION)
   Apps/epm/Main.cpp         Apps::runConsole + manual subcommand dispatch (configure,
                             graph-cmake, describe, recipe-sdk, resolve, cache path,
-                            cache ls, --version); configure compiles the root epm.cpp
+                            cache ls, cache verify, cache push, cache pull, --version);
+                            configure compiles the root epm.cpp
                             and runs its executable's configure (Docs/Graph.md §6)
   Tests/                    NanoTest: Sha256 vectors, fingerprint canonicalisation and
                             matching, platform names, config mapping and selectors, entry
@@ -433,7 +813,8 @@ eacp is consumed with `EACP_BUILD_GRAPHICS OFF`, `EACP_BUILD_WEBVIEW OFF`,
 
 ## 7. Out of scope for the PoC
 
-Remote stores, lockfile and prefetch, CPM shim for transitive deps, URL archives, patches,
+Remote stores other than directories (HTTP, S3, release assets; directory stores are in
+§3), store signing and garbage collection, offline mode, lockfile and prefetch, CPM shim for transitive deps, URL archives, patches,
 case-insensitive name matching, compiler content hashing, Windows/Linux validation (code
 should stay portable, but only macOS is exercised).
 
@@ -692,9 +1073,10 @@ that config (a recipe's `releaseIfPossible()`, `Docs/Graph.md` §2, or `EPM_CONF
 change the runtime.
 
 Configs are **additive within an entry**: a Ninja Release configure builds only Release;
-a later Ninja Debug configure finds that entry, builds only Debug and adds it (its own
-`lib/Debug`, `export-Debug.cmake`, `gen/Debug`, `Debug.json`), and an Xcode configure
-after that needs nothing. A config already in an entry is never rebuilt.
+a later Ninja Debug configure finds that entry, builds only Debug and publishes it (its
+own unit, `configs/Debug/`, without touching `configs/Release/` or the facade, §3), and
+an Xcode configure after that needs nothing. A config already in an entry is never
+rebuilt nor replaced.
 
 **`EPM_ABI_MATCH`** (cache variable, default `compatible`, sent as `abiMatch`) says which
 existing entries a request may use, comparing the entry's recorded fingerprint (§3) with
@@ -702,18 +1084,64 @@ the current one:
 
 | policy       | must be equal                                                        |
 |--------------|----------------------------------------------------------------------|
-| `strict`     | every recorded field (the 0.1.2 behaviour)                           |
-| `compatible` | platform, compilerId, compilerMajor, osxDeploymentTarget, cxxStandard, msvcRuntime, options, sourceId, toolchainFileHash |
-| `any`        | platform, msvcRuntime, options, sourceId                             |
+| `strict`     | every recorded field (the whole canonical fingerprint)               |
+| `compatible` | schema, platform, compilerId, compilerMajor, cCompilerId, the major version of cCompilerVersion, osxDeploymentTarget, the major version of sdkVersion, cxxStandard, msvcRuntime, toolchainFileHash, envFlags, options, sourceId, compatibleDeps |
+| `any`        | schema, platform, msvcRuntime, options, sourceId, anyDeps            |
 
-`compatible` ignores the compiler path, its minor and patch version and
-`systemProcessor` (the platform already encodes the architecture), so Xcode's clang and
-the command-line tools' clang share entries. When several entries qualify the one picked
+Each policy compares the dependencies as it compares everything else (`Docs/Graph.md`
+§10): `compatibleDeps` and `anyDeps` hold each dependency entry's fingerprint projected
+onto what that policy compares (`abiKey`), so a Mid entry built on CI against CI's Leaf
+matches on a machine whose own Leaf entry is compatible with CI's; `strict` compares
+`deps`, every hash, and still wants Mid built against this machine's exact Leaf. A
+dependency recorded without a key for the policy is compared by its `deps` hash.
+
+**LTO objects.** A config whose archives or objects hold link-time-optimisation IR
+(LLVM bitcode, raw `BC 0xC0DE` or wrapped `0x0B17C0DE`, as eacp's Release builds with
+Clang; GCC's `.gnu.lto_` sections in ELF and COFF objects, or its `__GNU_LTO` segment in
+Mach-O ones; MSVC's `/GL` objects, anonymous COFF objects with the LTCG class ID) only
+links with the compiler that wrote it. The harvest's publish step reads every file of
+the unit (`ltoKindOf`: objects, every member of an ar archive in its GNU, BSD and
+Windows spellings, every slice of a Mach-O universal file; a slice holds an archive or
+an object and a member an object, nothing deeper, and a slice must lie after the
+universal header and inside the file) and records `llvm-bitcode`, `gcc-lto` or
+`msvc-ltcg` as the marker's `lto`, with the compiler
+that built the config. Such a config is usable only by a consumer with the same
+`compilerId` and full `compilerVersion` (`configUsableBy`), under **every** policy, `any`
+included, since the link fails otherwise; that is stricter than `compatible`'s major
+version, deliberately, as LLVM reads only bitcode no newer than itself and Apple's two
+clangs (Xcode's and the command-line tools') often differ in their build number. An
+entry holding a needed config this consumer cannot link is passed over, and so that the
+compiler an entry was recorded for can always use it, LTO objects are only ever
+published into an entry recorded for the compiler that built them: a missing config
+built into a compatible entry of another compiler that turns out to hold LTO objects
+goes to the current fingerprint's exact entry instead, which then gets the remaining
+configs too. epm does not turn LTO off in child builds.
+
+No policy looks at a path: none is in the fingerprint (§3), so even `strict` holds
+across machines with the same toolchain. `compatible` ignores the compiler's minor and
+patch version, the SDK's minor version and `systemProcessor` (the platform already
+encodes the architecture), so Xcode's clang and the command-line tools' clang share
+entries, and so do builds against macOS SDK 15.2 and 15.4: within one major version an
+SDK adds API behind availability macros, and the deployment target, which is compared,
+is what decides the symbols a library may use; a new major version is a new Xcode, whose
+libc++ headers ship in the SDK. `envFlags` counts under `compatible` because any of those
+flags can change the ABI (`-stdlib=`, `-D_GLIBCXX_DEBUG`, `-fno-exceptions`, `-m32`) and
+epm cannot tell which do; `any` ignores them, as it ignores the compiler. When several entries qualify the one picked
 (`pickEntry`) is: one holding any config at all before an empty one (what a failed build
-leaves, §5), then an exact (strict) match, then one holding every needed config, then the
-one holding most of them, then the newest. With none, a new entry is created for the current
-fingerprint. Missing configs are built into whichever entry was picked, with the current
-toolchain (its `<Config>.json` records which). Using an entry that is not an exact match
+leaves, §5), then one holding every needed config (usable by this compiler), then an
+exact (strict) match, then the one holding most of them, then the lowest `fp12`. So a
+complete compatible entry is used, by every mode, before an exact one that lacks a
+config (which `binary-only` would otherwise fail on, `auto` without building fall back
+to source over, and `prebuilt` rebuild), and when none is complete the exact entry is
+picked, to build the missing configs into. No clock
+takes part (`createdAt` differs between machines), so the same entries give the same
+pick everywhere. With none, a new entry is created for the current fingerprint. Missing
+configs are built into whichever entry was picked, with the current toolchain (the
+config's marker records which), except LTO objects of a compiler the entry was not
+recorded for (above). An entry picked for some configs may hold others this consumer
+cannot link (LTO objects of another compiler): the response's `CONFIGS` leave them out
+and the facade loads only the configs it names (`EPM_FACADE_CONFIGS`, §5), so they are
+never linked. Using an entry that is not an exact match
 adds a note to the response and the status line:
 `-- epm: eacp (prebuilt, macos-universal, 1a2b3c4d5e6f, built with AppleClang
 17.0.0.17000013, current 17.0.0.17000319)`.

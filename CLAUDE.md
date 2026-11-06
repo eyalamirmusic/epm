@@ -25,13 +25,16 @@ longer-term design and background.
   its own (`Spec/`, `Cache/`, `Build/{ChildBuild,Harvest,Configs}` with the
   embedded scripts, `Util/` and the recipe API, whose headers and the archives
   are the installed SDK), and the driver that epm links (`Graph/`,
-  `Resolve/`, `Emit/`, `Cache/CacheListing` and
+  `Resolve/`, `Emit/`, `Cache/{CacheListing,CacheVerify}` and
   `Recipe/{RecipeBuild,RecipeRun,RecipeSdk}`, headers not installed).
   - `Util/` — `Sha256`, `Git` (git CLI through `eacp::Processes`, never
     interactive), `Command` (child processes, `Echo` for streaming their
     output, `failureReason`, `lastLines`, `findExecutable`), `Log`
     (`--verbose`, `progress` lines), `Text`, `Timestamp`, `Paths`
-    (`resolvedPath`: absolute, then `weakly_canonical`).
+    (`resolvedPath`: absolute, then `weakly_canonical`; `renameNoReplace`, the
+    publish rename, retried briefly on Windows' transient access-denied and
+    sharing violations), `ProcessInfo` (this process's id, whether a pid is
+    alive, the host name: what staging liveness reads; upstream candidates).
   - `Spec/` — `Env` (`env.json`, including `profile` and `epmExecutable`),
     `Request` (and
     `decide`, the mode decision), `Manifest` (`ManifestPackage`, one dependency
@@ -75,11 +78,42 @@ longer-term design and background.
     (runs its `describe` in a scratch directory and reads the `Project`
     back).
   - `Cache/` — `CacheRoot`, `SourceCache`, `BinaryCache` (entries under
-    `bin/<name>/<platform>/<fp12>`, picking, additive config builds),
-    `Fingerprint` (the ABI fingerprint and the `EPM_ABI_MATCH` policies),
-    `CacheListing` (`epm cache ls`), `PackageLock` (eacp `IPC::Lock`, hence
-    the `eacp-network` dependency).
-  - `Build/` — `ChildBuild`, `Harvest`, `Configs` (config mapping, Debug,
+    `bin/<name>/<platform>/<fp12>`, each config an immutable unit
+    `configs/<Config>/` built in `.staging` and published by one rename with
+    its small marker (`epm-config.json`, all a pick reads) and its hashed file
+    list (`epm-files.json`, read only to verify or copy),
+    `createEntry`/`describeStagedConfig`/`publishConfig`, picking (a complete
+    entry before an exact one), `configUsableBy`, staging names carrying
+    pid, host and time, and `removeStaleStaging`, which deletes only what a
+    dead process of this host, or a week-old heartbeat of another host,
+    left), `Fingerprint` (the ABI fingerprint, the
+    `EPM_ABI_MATCH` policies, and `abiKey`, a fingerprint projected onto what
+    a policy compares, which dependents record), `CacheListing`
+    (`epm cache ls`), `CacheVerify` (`epm cache verify`), `CacheStore`
+    (read-only cache stores, `EPM_CACHE_STORES`/`--cache-store`: `copyConfig`
+    copies a published unit, checked against its marker and file list (paths,
+    `gen/shared/` only for shared ones, the export and `.names`, the LTO kind
+    of the bytes read, an LTO config's compiler), through staging and
+    one no-replace rename; `pullFromStores`, what `Package::cached` takes from
+    the stores when the local pick lacks configs; `epm cache push`/`pull`),
+    `PackageLock` (eacp `IPC::Lock`, hence the `eacp-network` dependency; it
+    only de-duplicates local work, publishing is atomic without it).
+    `SourceCache` resolves a ref without fetching (`resolveSource`), fetches
+    the snapshot (`fetchSource`, also under a lock the caller holds;
+    `fetchCommit` for a commit resolved already, with the ref it came from
+    for servers that refuse a fetch by hash), and fetches a package's
+    `epm.cpp` alone for the graph walk (`fetchManifest`,
+    `src/<name>/.recipes/`, copied from the snapshot when that is cached: a
+    dependency's recipe is always compiled from that one file): a package found
+    in the cache or a store is used without building it, its snapshot fetched
+    afterwards only for the consumer's `SOURCE_DIR` (`EPM_FETCH_SOURCES`,
+    `EPM_<Name>_FETCH_SOURCE`).
+  - `Build/` — `ChildBuild`, `Harvest` (also the fixed facade,
+    `targetsFileText`, which loads only the configs `EPM_FACADE_CONFIGS` names
+    when it is set), `Lto` (`ltoKindOf`: LLVM bitcode, GCC LTO (ELF, COFF,
+    Mach-O) or MSVC `/GL` objects in an archive, object or universal file,
+    bounds-checked and never nesting deeper than slice, member), `Configs`
+    (config mapping, Debug,
     Release and RelWithDebInfo each a config of its own and MinSizeRel built
     as Release, the facade's `$<CONFIG>` selector, and `configLinkProblem`,
     the MSVC ABI's rule that a Debug build links only a Debug config, checked
@@ -103,7 +137,8 @@ longer-term design and background.
   - `Resolve/` — the `epm resolve` pipeline (default steps, in-process) and
     `buildInputFor`.
 - `Apps/epm/Main.cpp` — the `epm` executable (`configure`, `graph-cmake`,
-  `describe`, `recipe-sdk`, `resolve`, `cache`): `Apps::runConsole` plus
+  `describe`, `recipe-sdk`, `resolve`, `cache` with `path`, `ls`, `verify`,
+  `push` and `pull`): `Apps::runConsole` plus
   manual subcommand dispatch on `argv[1]`, `Args::Parser` per subcommand.
   `configure` is a bootstrapper: it compiles the root `epm.cpp` into the cache
   and runs that executable's `configure` with the same (absolute) arguments
@@ -135,9 +170,13 @@ longer-term design and background.
   and runs `Tests/Recipe/epm.cpp` with the real toolchain, `describe`,
   `build --package` and a whole `configure` from a copy of the executable,
   Tiny's `add<Tiny>` step in-process, fetched from a local git repository
-  named by `EPM_TEST_TINY_GIT`; `PackageTests` drives `Package`/`CMakeBuild` steps
-  in-process against a scratch cache; `GraphTests` walks graphs, step owners
-  included, over an in-memory `ManifestLoader`), plus `cmake -P`
+  named by `EPM_TEST_TINY_GIT`; `CacheStoreTests` copies, pushes and pulls
+  units between scratch caches and stores; `PackageTests` drives `Package`/`CMakeBuild` steps
+  in-process against a scratch cache; `BinaryCacheTests` also races two
+  publishers of one config in threads, verifies corrupted entries and detects
+  LTO objects, synthetic and from the real `cc -flto`; `GraphTests` walks
+  graphs, step owners included, over an in-memory `ManifestLoader`), plus
+  `cmake -P`
   self-tests: `GetEpmRanges.cmake` (get_epm's `EPM_VERSION` range handling,
   ctest `get_epm_ranges`), `GetEpmSourceDir.cmake` (get_epm's
   `EPM_SOURCE_DIR` decisions, ctest `get_epm_source_dir`), `GetEpmLatest.cmake`
@@ -145,8 +184,11 @@ longer-term design and background.
   `get_epm_latest`), `EpmConfigsAuto.cmake` (epm.cmake's
   `EPM_CONFIGS` resolution, ctest `epm_configs_auto`), `EpmOverrides.cmake`
   (the `overrides.json` writer, ctest `epm_overrides`), `EpmEnv.cmake`
-  (`env.json`'s Apple architecture and deployment-target fallbacks, ctest
-  `epm_env`), `GraphProvider.cmake`
+  (`env.json`'s Apple architecture and deployment-target fallbacks, its SDK
+  directory and version, its C compiler and its generator platform, ctest
+  `epm_env`), `PrefixMapVersions.cmake` (epm-export.cmake's
+  `-ffile-prefix-map` only for a compiler version that takes it, ctest
+  `epm_prefix_map_versions`), `GraphProvider.cmake`
   (the provider over fixtures in `Tests/Graph/`, ctest `epm_graph_provider`)
   and `GraphNested.cmake` (ctest `epm_graph_nested`: the real binary over two
   local git repositories from `Tests/Nested/`, Mid and the Leaf it declares
@@ -154,7 +196,12 @@ longer-term design and background.
   recipe executable, its option lands in Leaf's fingerprint and, in source
   mode, in `graph.json` and `graph.cmake`'s `OPTIONS`, the
   `<build>/epm/steps/` files are kept and Leaf's step is re-run by hand from
-  them; plus the consumer's `epm_add_recipe` executable: its `-configure`
+  them, and Mid's `${Leaf_SOURCE_DIR}/include` (which Mid's CMakeLists.txt
+  requires) is copied into its entry; prebuilt packages' `SOURCE_DIR`s by
+  default and with `EPM_FETCH_SOURCES=OFF`/`EPM_Mid_FETCH_SOURCE=ON`, and Mid
+  from source over a prebuilt Leaf, whose snapshot it gets; the repositories
+  serve partial fetches (`uploadpack.allowFilter`), as GitHub does;
+  plus the consumer's `epm_add_recipe` executable: its `-configure`
   target, a whole configure in that executable, refreshing
   `<build>/epm/graph.cmake` with everything cached and the dependencies'
   steps still in their cached recipe executables, its `describe` command and
@@ -163,7 +210,21 @@ longer-term design and background.
   `-DCMAKE_SYSTEM_NAME=iOS` without a toolchain file, under Xcode and Ninja:
   the child builds get the target system, the entries are
   `ios-simulator-<arch>` simulator archives and the app links; skipped off
-  macOS and without the simulator SDK) and
+  macOS and without the simulator SDK), `Relocate.cmake` (ctest
+  `epm_relocate`: the real binary over two local git repositories from
+  `Tests/Relocate/`, Reloc and the RelocDep it takes through CPM; Reloc's
+  entry, built into one cache root, names nothing of it in its CMake files or,
+  with GCC and Clang, its archive, carries its headers in its Release unit's
+  `include/`, and serves a fresh consumer without a rebuild once the root is
+  renamed, where `epm cache verify` passes, then fails on a corrupted archive;
+  skipped without git), `CacheStore.cmake` (ctest `epm_cache_store`: the same
+  fixtures; Reloc built into one cache, `epm cache push`ed into a store (a
+  second push copies nothing), the store made read-only, and fresh consumers
+  with empty caches and `EPM_CACHE_STORES` (CMake list, then environment)
+  configure, build and run without building Reloc or, with
+  `EPM_FETCH_SOURCES=OFF`, fetching its source, a corrupted copy of the store
+  listed first being rejected with a note, and without it with Reloc's
+  snapshot fetched for its `SOURCE_DIR`; skipped without git) and
   `InstallRoundTrip.cmake` (ctest `epm_install_round_trip`: the installed epm
   through a symlink (the binary itself on Windows), `recipe-sdk`, `describe` and a
   `configure` of an empty recipe against the prefix only, and which `bin/epm`
@@ -219,6 +280,10 @@ with `project(epm`) defaults `EPM_SOURCE_DIR` to that checkout, so the examples,
 which list `../../CMake/get_epm.cmake`, build epm from this checkout (an
 incremental build into `<cache>/tool/local-<hash>/`); `-DEPM_SOURCE_DIR` or
 `-DEPM_EXECUTABLE` overrides it. Examples hold only what a real consumer writes.
+`EPM_CACHE_STORES` (CMake list or environment variable) names read-only cache
+stores whose binaries a configure copies into the cache before building
+(`Docs/PoC.md` §3); they reach every build step through its input JSON, and
+never a child build, which sees only the local cache.
 
 One version: `project(epm VERSION ...)` (`Apps/epm/Version.h.in` carries it
 into `epm --version`, release.yml names the assets after it and checks it

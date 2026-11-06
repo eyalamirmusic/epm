@@ -1,9 +1,11 @@
 #include "ChildBuild.h"
 #include "Configs.h"
+#include "Harvest.h"
 
 #include <epm/Spec/Platform.h>
 #include <epm/Util/Command.h>
 #include <epm/Util/Log.h>
+#include <epm/Util/Paths.h>
 #include <epm/Util/Text.h>
 
 #include <eacp/Core/Platform/Platform.h>
@@ -33,6 +35,17 @@ std::string topLevelIncludes(const ChildBuild& build)
         return exportScript;
 
     return exportScript + ";" + (build.buildDirectory / nestedScriptName).str();
+}
+
+// The consumer's resolved SDK directory, for every Apple child build: without
+// it a native macOS child compiles against whatever SDK its own environment
+// defaults to (SDKROOT, xcode-select), not the one sdkVersion records.
+std::string childOsxSysroot(const Env& env)
+{
+    if (!env.osxSysrootPath.empty())
+        return env.osxSysrootPath;
+
+    return crossCompilesWithoutToolchain(env) ? env.osxSysroot : std::string {};
 }
 
 void addDefinition(Vector<std::string>& arguments,
@@ -73,10 +86,47 @@ Generator chooseGenerator(const Env& env, const std::optional<FilePath>& ninja)
     if (ninja)
         return {"Ninja", ninja->str()};
 
+    if (env.generator == "Ninja Multi-Config" && !env.makeProgram.empty())
+        return {"Ninja", env.makeProgram};
+
+    if (env.generator.starts_with("Visual Studio"))
+        return {env.generator,
+                {},
+                env.generatorPlatform,
+                env.generatorToolset,
+                env.generatorInstance};
+
     if (Platform::isWindows())
         return {};
 
     return {"Unix Makefiles", {}};
+}
+
+Vector<std::string> filePrefixMaps(const ChildBuild& build)
+{
+    auto maps = Vector<std::string> {};
+
+    if (msvcAbi(build.env))
+        return maps;
+
+    const auto& name = build.request.name;
+    const auto sourceRoot = sourceRootOf(build.cacheRoot, build.sourceDirectory);
+    const auto directories = {
+        std::pair {build.cacheRoot, std::string {"/epm/cache"}},
+        std::pair {sourceRoot, "/epm/src/" + name},
+        std::pair {build.buildDirectory, "/epm/build/" + name},
+        std::pair {build.cpmCache, std::string {"/epm/cpm"}}};
+
+    for (const auto& [directory, stable]: directories)
+    {
+        if (directory.empty())
+            continue;
+
+        for (const auto& spelling: {directory, resolvedPath(directory)})
+            maps.addIfNotThere(spelling.str() + "=" + stable);
+    }
+
+    return maps;
 }
 
 Vector<std::string> configureArguments(const ChildBuild& build)
@@ -87,13 +137,18 @@ Vector<std::string> configureArguments(const ChildBuild& build)
     auto arguments = Vector<std::string> {
         "-S", build.sourceDirectory.str(), "-B", build.buildDirectory.str()};
 
-    if (!build.generator.name.empty())
+    const auto& generator = build.generator;
+
+    for (const auto& [flag, value]: {std::pair {"-G", generator.name},
+                                     std::pair {"-A", generator.platform},
+                                     std::pair {"-T", generator.toolset}})
     {
-        arguments.add("-G");
-        arguments.add(build.generator.name);
+        if (!value.empty())
+            arguments.add({flag, value});
     }
 
-    addDefinition(arguments, "CMAKE_MAKE_PROGRAM", build.generator.makeProgram);
+    addDefinition(arguments, "CMAKE_GENERATOR_INSTANCE", generator.instance);
+    addDefinition(arguments, "CMAKE_MAKE_PROGRAM", generator.makeProgram);
     addDefinition(arguments, "CMAKE_BUILD_TYPE", build.config);
     addDefinition(arguments, "CMAKE_TOOLCHAIN_FILE", env.toolchainFile);
 
@@ -101,15 +156,17 @@ Vector<std::string> configureArguments(const ChildBuild& build)
     {
         addDefinition(arguments, "CMAKE_SYSTEM_NAME", env.systemName);
         addDefinition(arguments, "CMAKE_SYSTEM_PROCESSOR", env.systemProcessor);
-        addDefinition(arguments, "CMAKE_OSX_SYSROOT", env.osxSysroot);
 
         if (env.systemName == "Android")
             addDefinition(arguments, "CMAKE_ANDROID_ARCH_ABI", env.androidAbi);
     }
 
-    // A C++-only consumer names no C compiler. CMake refuses a child build
-    // mixing clang-cl for C++ with the cl it would pick for C, and both
-    // compile C with the same executable, so the child gets it for C too.
+    addDefinition(arguments, "CMAKE_OSX_SYSROOT", childOsxSysroot(env));
+
+    // epm.cmake names a C compiler for a C++-only consumer (epm_c_compiler);
+    // this covers an Env without one. CMake refuses a child build mixing
+    // clang-cl for C++ with the cl it would pick for C, and both compile C
+    // with the same executable, so the child gets it for C too.
     const auto cCompiler =
         env.cCompiler.empty() && msvcAbi(env) ? env.cxxCompiler : env.cCompiler;
 
@@ -125,9 +182,14 @@ Vector<std::string> configureArguments(const ChildBuild& build)
         addDefinition(arguments, "CMAKE_POLICY_DEFAULT_CMP0091", "NEW");
     }
 
+    addDefinition(
+        arguments, "EPM_FILE_PREFIX_MAPS", joinList(filePrefixMaps(build), ";"));
+
+    const auto archives = (build.prefix / "lib" / build.config).str();
+    addDefinition(arguments, "CMAKE_ARCHIVE_OUTPUT_DIRECTORY", archives);
     addDefinition(arguments,
-                  "CMAKE_ARCHIVE_OUTPUT_DIRECTORY",
-                  (build.prefix / "lib" / build.config).str());
+                  "CMAKE_ARCHIVE_OUTPUT_DIRECTORY_" + Strings::toUpper(build.config),
+                  archives);
     addDefinition(arguments, "CPM_SOURCE_CACHE", build.cpmCache.str());
     addDefinition(
         arguments, "CMAKE_PROJECT_TOP_LEVEL_INCLUDES", topLevelIncludes(build));
@@ -153,7 +215,11 @@ Vector<std::string> configureArguments(const ChildBuild& build)
 
 Vector<std::string> buildArguments(const ChildBuild& build)
 {
-    return {"--build", build.buildDirectory.str(), "--parallel"};
+    return {"--build",
+            build.buildDirectory.str(),
+            "--config",
+            build.config,
+            "--parallel"};
 }
 
 ChildBuildResult configureChildBuild(const ChildBuild& build)
