@@ -169,10 +169,14 @@ A recipe is two phases of user code, each run in its recipe executable:
 - `env()` is the consumer's `env.json` (`Spec/Env.h`): generator, build type,
   compiler (`cxxCompilerId`, `cxxCompilerFrontend`), `systemName`, `systemProcessor`,
   `crossCompiling`, `osxArchitectures` (for an Apple device or simulator SDK, the ones
-  it builds by default when the consumer sets none), deployment target, the MSVC
-  runtime library (`msvcRuntime`) and the rest, plus `profile`; `PoC.md` §2.
-  A consumer cross-compiling without a toolchain file (`-DCMAKE_SYSTEM_NAME=iOS`)
-  has its child builds told the target system and sysroot too (`PoC.md` §5). Every recipe in the graph, the root's and each dependency's, is described
+  it builds by default when the consumer sets none), deployment target, Android's ABI,
+  API level, NDK and STL (`androidAbi`, `androidApi`, `androidNdk`, `androidStl`), the
+  MSVC runtime library (`msvcRuntime`) and the rest, plus `profile`; `PoC.md` §2.
+  A consumer cross-compiling without a toolchain file (`-DCMAKE_SYSTEM_NAME=iOS`,
+  `-DCMAKE_SYSTEM_NAME=Android`) has its child builds told the target system and
+  sysroot, or Android's settings, too; one using the NDK's toolchain file has them
+  given its `ANDROID_*` variables (`PoC.md` §5). Recipes are still compiled for and
+  run on the host. Every recipe in the graph, the root's and each dependency's, is described
   for the same `env`, in both phases. A recipe's `describe` run without `--env`
   (below), and so `epm describe` without one, uses an empty one.
 - `project()` is what `describe()` declared.

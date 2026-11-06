@@ -64,7 +64,7 @@ All under `${CMAKE_BINARY_DIR}/epm/`.
   "osxSysroot": "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
   "osxSysrootPath": "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
   "sdkVersion": "15.2",
-  "androidAbi": "",
+  "androidAbi": "", "androidApi": "", "androidNdk": "", "androidStl": "",
   "cxxStandard": "20",
   "toolchainFile": "", "msvcRuntime": "",
   "profile": "",
@@ -74,7 +74,13 @@ All under `${CMAKE_BINARY_DIR}/epm/`.
 `osxSysroot` is `CMAKE_OSX_SYSROOT` (an SDK name such as `iphonesimulator` under Xcode,
 the resolved path under other generators) and `androidAbi` is `CMAKE_ANDROID_ARCH_ABI`
 (else the NDK toolchain's `ANDROID_ABI`); both feed the platform name (§9), and a
-cross-compiling child build gets them (§5). `crossCompiling` is `CMAKE_CROSSCOMPILING`:
+cross-compiling child build gets them (§5). The other Android settings, empty off
+Android (`epm_android_setting`), are the API level `androidApi` (the NDK legacy
+toolchain's `ANDROID_PLATFORM_LEVEL`, else `CMAKE_SYSTEM_VERSION`, which that toolchain
+file sets to 1), `androidNdk` (`CMAKE_ANDROID_NDK`, else `ANDROID_NDK`) and `androidStl`
+(`CMAKE_ANDROID_STL_TYPE`, else `ANDROID_STL`); a child build gets them too (§5), and the
+API level and STL are in the fingerprint (§3). `androidNdk` is a path, so it is not: the
+NDK counts by its revision, `sdkVersion` (below). `crossCompiling` is `CMAKE_CROSSCOMPILING`:
 the consumer named its target system itself. For an Apple device or simulator SDK (iOS,
 tvOS, watchOS, visionOS), whose `CMAKE_SYSTEM_PROCESSOR` CMake leaves empty, an empty
 `CMAKE_OSX_ARCHITECTURES` is written as what the SDK builds for by default: Xcode's
@@ -101,7 +107,10 @@ Apple systems and when the directory does not exist. Every Apple child build get
 version the key records rather than whatever its own environment would pick; the path
 itself is in no fingerprint. For Windows `sdkVersion` is
 `CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION` (Visual Studio generators), else a developer
-prompt's `WindowsSDKVersion`. Empty elsewhere and when none is found.
+prompt's `WindowsSDKVersion`. For Android it is the NDK's revision, the `Pkg.Revision`
+of `<androidNdk>/source.properties` (`27.0.12077973`), which stands for the NDK's sysroot
+and STL as an Apple SDK's version does for that SDK, while `androidNdk`, its directory,
+stays out of the key. Empty elsewhere and when none is found.
 Empty string / empty array when a variable is unset. Written at the first `epm_add_package`
 call (not at include time), once per configure. `cCompiler` (`epm_c_compiler`) is the C
 compiler of every child build: the consumer's `CMAKE_C_COMPILER`; when the consumer does
@@ -297,13 +306,16 @@ always uses the URL as written, and the snapshot's marker records the first one 
 version is not the C++ compiler's; empty for the same toolchain and for a C driver found
 beside the C++ one, so a C++-only consumer and a C and C++ one share keys), `systemName`,
 `systemProcessor`, `osxArchitectures`, `osxDeploymentTarget`, `sdkVersion` (§2: the
-Apple or Windows SDK compiled against; empty elsewhere), `cxxStandard`, `msvcRuntime`
+Apple or Windows SDK compiled against, or the Android NDK's revision; empty elsewhere),
+`cxxStandard`, `androidApi` and `androidStl` (the API level and STL, §2; empty off
+Android, whose ABI the platform name carries), `msvcRuntime`
 (the runtime library on the MSVC ABI, §2; empty elsewhere), `toolchainFileHash` (sha256
 of the toolchain file's contents, when there is one), `envFlags`, `options` (sorted),
 `sourceId`, `deps`, `compatibleDeps` and `anyDeps` (`Docs/Graph.md` §10). It holds no
 machine path, so another machine (a CI runner, a colleague, a shared cache) with the same
 toolchain, SDK and source computes the same key: the compiler counts by id and version,
-the toolchain file by its contents, never by where they are (a config's marker still
+the toolchain file by its contents, the Android NDK by its revision, never by where they
+are (a config's marker still
 records the compiler path that built it, for diagnostics). `envFlags` holds the environment variables a
 child build inherits from epm and that change what it compiles, by name, those set and
 not empty: `CFLAGS`, `CXXFLAGS`, `OBJCFLAGS`, `OBJCXXFLAGS`, `ASMFLAGS`, `CUDAFLAGS`,
@@ -311,8 +323,9 @@ not empty: `CFLAGS`, `CXXFLAGS`, `OBJCFLAGS`, `OBJCXXFLAGS`, `ASMFLAGS`, `CUDAFL
 `CMAKE_<LANG>_FLAGS` and linker flags, and `CL` and `_CL_`, which cl and clang-cl read
 on every call. They are read from the process that runs the build step (the child build
 is its child), not from `env.json`. Schema 4 is where paths left the key and
-`sdkVersion`, `envFlags` and the normalized `sourceId` came in; every entry of an
-earlier schema is ignored and rebuilt. The canonical form is Miro's compact output of the
+`sdkVersion`, `envFlags`, `androidApi`, `androidStl` and the normalized `sourceId` came
+in; every entry of an earlier schema is ignored and rebuilt. The canonical form is Miro's
+compact output of the
 struct (`Miro::toJSONString`): Miro objects are `std::map`s, so every key, options
 included, comes out sorted, with no whitespace. The configs are *not* in it: one entry
 holds every config built for that fingerprint, added one at a time. Which entry a request
@@ -558,13 +571,17 @@ the entry is keyed by what was actually passed.
   and its `toolchainFile` empty), as with `-DCMAKE_SYSTEM_NAME=iOS
   -DCMAKE_OSX_SYSROOT=iphonesimulator`, the child gets `CMAKE_SYSTEM_NAME` and
   `CMAKE_SYSTEM_PROCESSOR` (each when non-empty; CMake leaves the processor empty for
-  iOS), the sysroot above, and for Android `CMAKE_ANDROID_ARCH_ABI`, so it configures for
-  that system before its `project()` instead of for the host; with the architectures and
-  deployment target above, an iOS simulator consumer's packages are simulator archives
-  (`Tests/GraphIos.cmake`). A toolchain file, which the child gets too, names the system
-  itself, and a native consumer gets none of these but the sysroot. Not forwarded: `CMAKE_ANDROID_NDK`
-  and `CMAKE_SYSTEM_VERSION` (an Android child without a toolchain file finds the NDK
-  from the environment), nor the NDK toolchain's `ANDROID_ABI`/`ANDROID_PLATFORM`.
+  iOS), the sysroot above, and for Android `CMAKE_ANDROID_ARCH_ABI`, `CMAKE_ANDROID_NDK`,
+  `CMAKE_SYSTEM_VERSION` (the API level) and `CMAKE_ANDROID_STL_TYPE`, so it configures
+  for that system before its `project()` instead of for the host; with the architectures
+  and deployment target above, an iOS simulator consumer's packages are simulator
+  archives (`Tests/GraphIos.cmake`). A toolchain file, which the child gets too, names
+  the system itself, and a native consumer gets none of these but the sysroot, except
+  that an Android consumer's toolchain file (the NDK's `android.toolchain.cmake`) is also
+  given `ANDROID_ABI`, `ANDROID_PLATFORM` (`android-<api>`) and `ANDROID_STL`, which it
+  would otherwise default (armeabi-v7a, its minimum API level, c++_static). Both ways
+  are covered by `Tests/GraphAndroid.cmake`. Recipe executables are still compiled with
+  the recipe SDK's host compiler, never the consumer's.
 - `epm-export.cmake` (source of truth: `CMake/epm-export.cmake` in this repo, embedded into
   the binary at build time and written into `<builddir>` before configure) does:
   `cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR} CALL epm_export_all_targets)`.
@@ -760,7 +777,11 @@ endforeach ()
 
 ```
 epm/
-  CMakeLists.txt            CMake 3.31; options EPM_ENABLE_TESTS (default ON when top-level);
+  CMakeLists.txt            CMake 3.31; options EPM_ENABLE_TESTS (default ON when top-level),
+                            EPM_UNITY_BUILD (epm's own targets; default OFF),
+                            EPM_UNITY_BUILD_DEPENDENCIES (eacp, Miro, ResEmbed;
+                            default OFF), EPM_CI_BUILD (CI's flags: both of
+                            those; default OFF);
                             install: bin/epm, lib/<Config>/, include/,
                             share/epm/cmake/{epm,epm-provider}.cmake,
                             share/epm/epm-config (§8)
@@ -936,7 +957,9 @@ stays (*Install*, below):
   one, `<entry>/build-<generator>`, built and installed with `--config Debug` and
   `--config Release`. Since the generator does not follow the consumer's, consumers
   with different generators share a `local-<hash>` entry's build directories.
-- Every configure gets `-DEPM_ENABLE_TESTS=OFF` and, unless the environment sets
+- Every configure gets `-DEPM_ENABLE_TESTS=OFF`, `-DEPM_UNITY_BUILD=ON` and
+  `-DEPM_UNITY_BUILD_DEPENDENCIES=ON` (epm's own targets and its dependencies as unity
+  builds; an older tag ignores them) and, unless the environment sets
   `CPM_SOURCE_CACHE`, `-DCPM_SOURCE_CACHE=<entry>/cpm`, so both builds share one
   download of epm's dependencies.
 - It is a host build. Each step runs through `cmake -E env --unset=…`
@@ -960,7 +983,10 @@ stays (*Install*, below):
   compiler that builds the consumer's `epm_add_recipe` target (`Docs/Graph.md` §2).
 - A build directory is configured once (`epm-configured` is written in it after the
   configure succeeds); later builds are incremental, and the compilers of that first
-  configure stay: delete the entry to change them.
+  configure stay: delete the entry to change them. `epm-configured` holds the settings
+  get_epm passes (`-DEPM_UNITY_BUILD=ON;-DEPM_UNITY_BUILD_DEPENDENCIES=ON`); a
+  directory configured with others, such as one from before an option, is configured
+  again in place with them.
 - A cold build prints `-- epm: building epm v0.1.3 into <entry> (Debug and Release;
   first time only)`, then one status line per phase (`-- epm: epm v0.1.3: configuring
   Debug`, `building Debug`, `installing Debug`, the same for Release; one `configuring`
@@ -1085,7 +1111,7 @@ the current one:
 | policy       | must be equal                                                        |
 |--------------|----------------------------------------------------------------------|
 | `strict`     | every recorded field (the whole canonical fingerprint)               |
-| `compatible` | schema, platform, compilerId, compilerMajor, cCompilerId, the major version of cCompilerVersion, osxDeploymentTarget, the major version of sdkVersion, cxxStandard, msvcRuntime, toolchainFileHash, envFlags, options, sourceId, compatibleDeps |
+| `compatible` | schema, platform, compilerId, compilerMajor, cCompilerId, the major version of cCompilerVersion, osxDeploymentTarget, the major version of sdkVersion (the NDK's major revision on Android), cxxStandard, androidApi, androidStl, msvcRuntime, toolchainFileHash, envFlags, options, sourceId, compatibleDeps |
 | `any`        | schema, platform, msvcRuntime, options, sourceId, anyDeps            |
 
 Each policy compares the dependencies as it compares everything else (`Docs/Graph.md`

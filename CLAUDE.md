@@ -33,7 +33,8 @@ longer-term design and background.
     (`--verbose`, `progress` lines), `Text`, `Timestamp`, `Paths`
     (`resolvedPath`: absolute, then `weakly_canonical`; `renameNoReplace`, the
     publish rename, retried briefly on Windows' transient access-denied and
-    sharing violations), `ProcessInfo` (this process's id, whether a pid is
+    sharing violations; `subdirectories`, the directories the cache walks
+    list, hidden staging ones only on request), `ProcessInfo` (this process's id, whether a pid is
     alive, the host name: what staging liveness reads; upstream candidates).
   - `Spec/` — `Env` (`env.json`, including `profile` and `epmExecutable`),
     `Request` (and
@@ -86,9 +87,11 @@ longer-term design and background.
     entry before an exact one), `configUsableBy`, staging names carrying
     pid, host and time, and `removeStaleStaging`, which deletes only what a
     dead process of this host, or a week-old heartbeat of another host,
-    left), `Fingerprint` (the ABI fingerprint, the
-    `EPM_ABI_MATCH` policies, and `abiKey`, a fingerprint projected onto what
-    a policy compares, which dependents record), `CacheListing`
+    left), `Fingerprint` (the ABI fingerprint, no machine path in it: the
+    Android NDK, for one, counts by its revision, `sdkVersion`, beside the
+    API level and STL; the `EPM_ABI_MATCH` policies, and `abiKey`, a
+    fingerprint projected onto what a policy compares, which dependents
+    record), `CacheListing`
     (`epm cache ls`), `CacheVerify` (`epm cache verify`), `CacheStore`
     (read-only cache stores, `EPM_CACHE_STORES`/`--cache-store`: `copyConfig`
     copies a published unit, checked against its marker and file list (paths,
@@ -185,7 +188,8 @@ longer-term design and background.
   `EPM_CONFIGS` resolution, ctest `epm_configs_auto`), `EpmOverrides.cmake`
   (the `overrides.json` writer, ctest `epm_overrides`), `EpmEnv.cmake`
   (`env.json`'s Apple architecture and deployment-target fallbacks, its SDK
-  directory and version, its C compiler and its generator platform, ctest
+  directory and version (the NDK's revision on Android), its C compiler, its
+  generator platform, its MSVC runtime library and its Android settings, ctest
   `epm_env`), `PrefixMapVersions.cmake` (epm-export.cmake's
   `-ffile-prefix-map` only for a compiler version that takes it, ctest
   `epm_prefix_map_versions`), `GraphProvider.cmake`
@@ -210,7 +214,15 @@ longer-term design and background.
   `-DCMAKE_SYSTEM_NAME=iOS` without a toolchain file, under Xcode and Ninja:
   the child builds get the target system, the entries are
   `ios-simulator-<arch>` simulator archives and the app links; skipped off
-  macOS and without the simulator SDK), `Relocate.cmake` (ctest
+  macOS and without the simulator SDK), `GraphAndroid.cmake`
+  (ctest `epm_graph_android`: the same fixtures for an Android consumer under
+  Ninja, once through CMake's own Android support (arm64-v8a, API 26,
+  c++_static) and once through the NDK's toolchain file (x86_64, API 28,
+  c++_shared): the child builds get the ABI, API level, NDK and STL, the
+  entries are `android-<abi>` ELF archives and the app links; the NDK from
+  `ANDROID_NDK_HOME`, `ANDROID_NDK_ROOT`, else the newest `ndk/*` under
+  `ANDROID_HOME`/`ANDROID_SDK_ROOT`/Android Studio's SDK; skipped without
+  one, git or ninja, and on Windows hosts), `Relocate.cmake` (ctest
   `epm_relocate`: the real binary over two local git repositories from
   `Tests/Relocate/`, Reloc and the RelocDep it takes through CPM; Reloc's
   entry, built into one cache root, names nothing of it in its CMake files or,
@@ -296,6 +308,17 @@ delete a published tag.
 
 `EPM_ENABLE_TESTS` defaults ON when epm is the top-level project.
 `EPM_VERBOSE_CONFIGURE=ON` brings back the configure detail hidden by default.
+`EPM_UNITY_BUILD=ON` compiles epm's own targets (`epm-recipe`, `epm`,
+`epmTests`, not its dependencies) as unity builds; it is OFF by default, for
+the per-file `compile_commands.json`, and ON in get_epm's builds, so file-local
+names must be unique across each target's sources.
+`EPM_UNITY_BUILD_DEPENDENCIES=ON` (OFF by default, ON in get_epm's builds)
+does the same for the dependencies: it forces `EACP_UNITY_BUILD` and
+`MIRO_UNITY_BUILD` on and sets `UNITY_BUILD` on ResEmbed (fmt, miniz and
+NanoTest are one source per library, ea_data_structures header-only).
+`EPM_CI_BUILD=ON` (OFF by default, ON for epm's own configures in CI and
+`Docker/run-linux-ci.sh`) mirrors CI's flag set, as eacp's `EACP_CI_BUILD`:
+both of the above.
 Use a local eacp with `-DCPM_eacp_SOURCE=/path/to/eacp`.
 
 ## Code style

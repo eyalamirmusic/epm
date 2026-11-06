@@ -128,6 +128,18 @@ add_test(NAME epm_graph_ios
 set_tests_properties(epm_graph_ios PROPERTIES
         SKIP_REGULAR_EXPRESSION "epm-graph-ios: skipped")
 
+# Prebuilt packages for an Android consumer with the NDK, through CMake's own
+# Android support and the NDK's toolchain file; skipped without an NDK, git or
+# ninja, and on Windows hosts.
+add_test(NAME epm_graph_android
+        COMMAND ${CMAKE_COMMAND}
+            "-DEPM_BINARY=$<TARGET_FILE:epm>"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/epm-graph-android"
+            "-DTEST_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/GraphAndroid.cmake)
+set_tests_properties(epm_graph_android PROPERTIES
+        SKIP_REGULAR_EXPRESSION "epm-graph-android: skipped")
+
 add_test(NAME epm_install_round_trip
         COMMAND ${CMAKE_COMMAND}
             "-DBUILD_DIR=${CMAKE_BINARY_DIR}"

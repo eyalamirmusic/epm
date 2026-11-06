@@ -443,6 +443,29 @@ function(epm_osx_deployment_target out_var)
     set(${out_var} "${target}" PARENT_SCOPE)
 endfunction()
 
+# env.json's Android `setting` (abi, api, ndk or stl), empty off Android. CMake's
+# own Android support sets CMAKE_ANDROID_ARCH_ABI, CMAKE_SYSTEM_VERSION (the API
+# level), CMAKE_ANDROID_NDK and CMAKE_ANDROID_STL_TYPE; the NDK's legacy
+# toolchain file, its default, ANDROID_ABI, ANDROID_PLATFORM_LEVEL (with
+# CMAKE_SYSTEM_VERSION 1), ANDROID_NDK and ANDROID_STL.
+function(epm_android_setting setting out_var)
+    set(abi CMAKE_ANDROID_ARCH_ABI ANDROID_ABI)
+    set(api ANDROID_PLATFORM_LEVEL CMAKE_SYSTEM_VERSION)
+    set(ndk CMAKE_ANDROID_NDK ANDROID_NDK)
+    set(stl CMAKE_ANDROID_STL_TYPE ANDROID_STL)
+    set(value "")
+
+    if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+        foreach (variable IN LISTS ${setting})
+            if (value STREQUAL "")
+                set(value "${${variable}}")
+            endif ()
+        endforeach ()
+    endif ()
+
+    set(${out_var} "${value}" PARENT_SCOPE)
+endfunction()
+
 # The Apple SDK directory the project compiles against: the one CMake's Darwin
 # platform module resolved (_CMAKE_OSX_SYSROOT_PATH, also when the compiler's
 # default SDK is used), else CMAKE_OSX_SYSROOT when that is a path, else what
@@ -496,7 +519,10 @@ endfunction()
 # env.json's sdkVersion, part of the fingerprint: for an Apple system, the
 # Version of the SDK's SDKSettings.json (epm_osx_sysroot_path); for Windows, the
 # Visual Studio generator's CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION, else a
-# developer prompt's WindowsSDKVersion. Empty elsewhere or when not found.
+# developer prompt's WindowsSDKVersion; for Android, the NDK's Pkg.Revision
+# (source.properties), which stands for its directory (androidNdk, a path the
+# fingerprint leaves out) and the sysroot and STL it brings. Empty elsewhere or
+# when not found.
 function(epm_sdk_version out_var)
     set(version "")
 
@@ -517,6 +543,18 @@ function(epm_sdk_version out_var)
 
         if (version STREQUAL "")
             string(REGEX REPLACE "[/\\]+$" "" version "$ENV{WindowsSDKVersion}")
+        endif ()
+    elseif (CMAKE_SYSTEM_NAME STREQUAL "Android")
+        epm_android_setting(ndk ndk)
+        set(properties_file "${ndk}/source.properties")
+
+        if (NOT ndk STREQUAL "" AND EXISTS "${properties_file}")
+            file(STRINGS "${properties_file}" revision
+                    REGEX "^[ \t]*Pkg\\.Revision[ \t]*=")
+
+            if (revision MATCHES "=[ \t]*([^ \t]+)")
+                set(version "${CMAKE_MATCH_1}")
+            endif ()
         endif ()
     endif ()
 
@@ -778,15 +816,14 @@ function(epm_write_env)
     epm_sdk_version(sdk_version)
     epm_json_set_string(json sdkVersion "${sdk_version}")
 
-    # CMake's own Android support sets CMAKE_ANDROID_ARCH_ABI; the NDK's
-    # legacy toolchain file only ANDROID_ABI.
-    set(android_abi "${CMAKE_ANDROID_ARCH_ABI}")
-
-    if (NOT android_abi)
-        set(android_abi "${ANDROID_ABI}")
-    endif ()
-
-    epm_json_set_string(json androidAbi "${android_abi}")
+    foreach (pair IN ITEMS androidAbi=abi androidApi=api androidNdk=ndk
+            androidStl=stl)
+        string(REPLACE "=" ";" pair "${pair}")
+        list(GET pair 0 key)
+        list(GET pair 1 setting)
+        epm_android_setting(${setting} value)
+        epm_json_set_string(json ${key} "${value}")
+    endforeach ()
 
     # The runtime library the dependencies must share with the project's
     # targets. Under the old policy the variable never reaches a target, and

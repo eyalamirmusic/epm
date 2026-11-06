@@ -643,14 +643,19 @@ endfunction()
 # <build_name> (the Release one keeps the name a Release-only build used). A
 # build directory is configured only the first time, so a later call is an
 # incremental build; the compilers of that first configure stay (delete the
-# entry to change them). Each step of a first build prints a status line,
-# with `what` naming the epm being built. Sets build_dirs, the build
-# directories used.
+# entry to change them), except that one configured with other `settings`
+# (before EPM_UNITY_BUILD_DEPENDENCIES, say) is configured again in place with
+# these. Each step of a first build prints a status line, with `what` naming
+# the epm being built. Sets build_dirs, the build directories used.
 function(get_epm_build_configs source_dir tool_dir log what)
     get_epm_consumer_toolchain()
     get_epm_is_multi_config("${tool_generator}" multi_config)
+
+    # Recorded in each build directory's epm-configured. An epm that predates an
+    # option only warns that it is unused.
+    set(settings -DEPM_UNITY_BUILD=ON -DEPM_UNITY_BUILD_DEPENDENCIES=ON)
     set(common_args -S "${source_dir}" ${toolchain_args} -DEPM_ENABLE_TESTS=OFF
-            "-DCMAKE_INSTALL_PREFIX=${tool_dir}")
+            ${settings} "-DCMAKE_INSTALL_PREFIX=${tool_dir}")
 
     # The Debug and Release builds share one download of epm's dependencies.
     if ("$ENV{CPM_SOURCE_CACHE}" STREQUAL "")
@@ -678,8 +683,19 @@ function(get_epm_build_configs source_dir tool_dir log what)
         # Written after a configure succeeds: a cache left by a failed one is
         # redone.
         set(configured "${build_dir}/epm-configured")
+        set(configured_settings "")
 
-        if (NOT EXISTS "${configured}")
+        if (EXISTS "${configured}")
+            file(READ "${configured}" configured_settings)
+        endif ()
+
+        if (EXISTS "${configured}" AND NOT configured_settings STREQUAL "${settings}")
+            message(STATUS "epm: ${what}: reconfiguring ${config} with ${settings}")
+            file(REMOVE "${configured}")
+            get_epm_run_step("reconfigure (${config})" "${log}"
+                    "${CMAKE_COMMAND}" -S "${source_dir}" -B "${build_dir}" ${settings})
+            file(WRITE "${configured}" "${settings}")
+        elseif (NOT EXISTS "${configured}")
             if (NOT cold)
                 message(STATUS "epm: building ${what} into ${tool_dir} (Debug and "
                         "Release; first time only)")
@@ -692,7 +708,7 @@ function(get_epm_build_configs source_dir tool_dir log what)
             get_epm_run_step("configure (${config})" "${log}"
                     "${CMAKE_COMMAND}" ${common_args} -B "${build_dir}"
                     ${configure_args})
-            file(WRITE "${configured}" "")
+            file(WRITE "${configured}" "${settings}")
         endif ()
 
         foreach (step IN ITEMS build install)

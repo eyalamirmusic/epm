@@ -38,9 +38,16 @@ struct AbiFingerprint
     std::string osxArchitectures;
     std::string osxDeploymentTarget;
 
-    // Env's sdkVersion: the Apple or Windows SDK compiled against.
+    // Env's sdkVersion: the Apple or Windows SDK compiled against, or the
+    // Android NDK's revision.
     std::string sdkVersion;
     std::string cxxStandard;
+
+    // The Android API level and STL; empty off Android, where the ABI is in
+    // the platform name. The NDK counts by its revision (sdkVersion), not by
+    // its directory.
+    std::string androidApi;
+    std::string androidStl;
 
     // The MSVC runtime library (msvcRuntimeOf); empty off the MSVC ABI.
     std::string msvcRuntime;
@@ -79,6 +86,8 @@ struct AbiFingerprint
                  osxDeploymentTarget,
                  sdkVersion,
                  cxxStandard,
+                 androidApi,
+                 androidStl,
                  msvcRuntime,
                  toolchainFileHash,
                  envFlags,
@@ -92,11 +101,12 @@ struct AbiFingerprint
 // EPM_ABI_MATCH: how close an existing entry must be to be used.
 //   strict      every recorded field equal
 //   compatible  same platform, compiler id and major version (the C
-//               compiler's too, when recorded), deployment target, SDK major
-//               version, C++ standard, toolchain file contents and inherited
-//               flags; minor/patch versions of the compiler and the SDK and
-//               the processor may differ
-//   any         same platform, options and source
+//               compiler's too, when recorded), deployment target, SDK (or
+//               NDK) major version, C++ standard, Android API level and STL,
+//               toolchain file contents and inherited flags; minor/patch
+//               versions of the compiler and the SDK and the processor may
+//               differ
+//   any        same platform, options and source
 // Every policy also requires the same schema, options, source, dependencies
 // (as the policy sees them: sameDependencies) and, on the MSVC ABI, runtime
 // library (msvcRuntime): nothing links across those.

@@ -76,12 +76,21 @@ struct Env
     std::string osxSysrootPath;
 
     // The version of the SDK the project compiles against (epm_sdk_version):
-    // an Apple SDK's SDKSettings.json Version, or the Windows SDK version;
-    // empty elsewhere or when not found. Part of the fingerprint.
+    // an Apple SDK's SDKSettings.json Version, the Windows SDK version, or
+    // the Android NDK's revision; empty elsewhere or when not found. Part of
+    // the fingerprint.
     std::string sdkVersion;
 
-    // CMAKE_ANDROID_ARCH_ABI (or the NDK toolchain's ANDROID_ABI).
+    // Android only (epm_android_setting): CMAKE_ANDROID_ARCH_ABI, the API level
+    // (CMAKE_SYSTEM_VERSION), CMAKE_ANDROID_NDK and CMAKE_ANDROID_STL_TYPE, or
+    // the NDK legacy toolchain file's ANDROID_ABI, ANDROID_PLATFORM_LEVEL,
+    // ANDROID_NDK and ANDROID_STL. The fingerprint records the API level and
+    // STL; androidNdk is a path, so it counts only through sdkVersion, the
+    // NDK's revision.
     std::string androidAbi;
+    std::string androidApi;
+    std::string androidNdk;
+    std::string androidStl;
     std::string cxxStandard;
     std::string toolchainFile;
 
@@ -128,6 +137,9 @@ struct Env
                  osxSysrootPath,
                  sdkVersion,
                  androidAbi,
+                 androidApi,
+                 androidNdk,
+                 androidStl,
                  cxxStandard,
                  toolchainFile,
                  msvcRuntime,

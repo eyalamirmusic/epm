@@ -26,24 +26,12 @@ using namespace eacp;
 
 namespace
 {
-constexpr auto manifestFileName = "manifest.json";
+constexpr auto entryManifestFileName = "manifest.json";
 constexpr auto heartbeatFileName = ".epm-heartbeat";
 
 FilePath companionOf(const FilePath& exportFile, std::string_view extension)
 {
     return exportFile.sibling(exportFile.fileName() + std::string {extension});
-}
-
-// Non-hidden subdirectories: hidden ones are staging.
-Vector<FilePath> subdirectories(const FilePath& directory)
-{
-    auto directories = Vector<FilePath> {};
-
-    for (const auto& entry: Files::listDirectory(directory))
-        if (entry.kind == Files::EntryKind::directory)
-            directories.add(entry.path);
-
-    return directories;
 }
 
 std::int64_t unixSeconds()
@@ -183,7 +171,8 @@ FilePath entryPrefix(const CacheRoot& cache,
 
 std::optional<BinaryEntry> readEntry(const FilePath& prefix)
 {
-    const auto manifest = loadJsonFile<EntryManifest>(prefix / manifestFileName);
+    const auto manifest =
+        loadJsonFile<EntryManifest>(prefix / entryManifestFileName);
 
     if (!manifest || manifest->schema != entrySchema)
         return std::nullopt;
@@ -424,7 +413,7 @@ std::optional<BinaryEntry> createEntry(const CacheRoot& cache,
         const auto manifest =
             EntryManifest {entrySchema, fingerprint, sourceId, utcTimestamp()};
 
-        if (!saveJsonFile(skeleton.path() / manifestFileName, manifest)
+        if (!saveJsonFile(skeleton.path() / entryManifestFileName, manifest)
             || writeTargetsFile(skeleton.path())
             || !Files::createDirectories(skeleton.path() / "configs"))
             return std::nullopt;

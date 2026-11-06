@@ -21,7 +21,7 @@ using namespace eacp;
 namespace
 {
 // A package's recipe, as Graph/ManifestLoader.h names it.
-constexpr auto manifestFileName = "epm.cpp";
+constexpr auto recipeFileName = "epm.cpp";
 
 struct ResolvedCommit
 {
@@ -133,7 +133,7 @@ bool removeGitMetadata(const FilePath& directory)
     return true;
 }
 
-SourceResult failure(std::string error)
+SourceResult sourceFailure(std::string error)
 {
     auto result = SourceResult {};
     result.error = std::move(error);
@@ -168,16 +168,15 @@ std::optional<std::string> checkoutManifest(const FilePath& directory,
         return error;
 
     const auto listed = Git::run(
-        directory, {"ls-tree", "--name-only", "FETCH_HEAD", "--", manifestFileName});
+        directory, {"ls-tree", "--name-only", "FETCH_HEAD", "--", recipeFileName});
 
     if (!listed.ok)
         return "git ls-tree failed: " + firstLine(listed.message());
 
-    if (listed.output.find(manifestFileName) == std::string::npos)
+    if (listed.output.find(recipeFileName) == std::string::npos)
         return std::nullopt;
 
-    return runGit(directory,
-                  {"checkout", "-q", "FETCH_HEAD", "--", manifestFileName});
+    return runGit(directory, {"checkout", "-q", "FETCH_HEAD", "--", recipeFileName});
 }
 } // namespace
 
@@ -234,8 +233,8 @@ SourceResult resolveSource(const CacheRoot& cache,
     const auto resolved = resolveCommit(url, ref);
 
     if (!resolved.commit)
-        return failure("cannot resolve " + ref + " of " + url + ": "
-                       + resolved.error);
+        return sourceFailure("cannot resolve " + ref + " of " + url + ": "
+                             + resolved.error);
 
     auto result = SourceResult {};
     result.snapshot.commit = *resolved.commit;
@@ -290,8 +289,8 @@ SourceResult fetchCommit(const CacheRoot& cache,
         lock.emplace(cache, name, packageLockTimeout);
 
         if (!lock->isLocked())
-            return failure("timed out waiting for another epm process using "
-                           + name);
+            return sourceFailure("timed out waiting for another epm process using "
+                                 + name);
     }
 
     if (Files::isFile(marker))
@@ -302,29 +301,29 @@ SourceResult fetchCommit(const CacheRoot& cache,
     auto staging = TemporaryFile {cache.tmp(), "-src-" + name};
 
     if (!Files::createDirectories(staging.path()))
-        return failure("cannot create " + staging.path().str());
+        return sourceFailure("cannot create " + staging.path().str());
 
     if (auto error =
             checkoutCommit(staging.path(), url, ref, result.snapshot.commit))
-        return failure("fetching " + url + " at " + result.snapshot.commit + ": "
-                       + *error);
+        return sourceFailure("fetching " + url + " at " + result.snapshot.commit
+                             + ": " + *error);
 
     if (auto error = updateSubmodules(staging.path()))
-        return failure("fetching submodules of " + url + ": " + *error);
+        return sourceFailure("fetching submodules of " + url + ": " + *error);
 
     if (!removeGitMetadata(staging.path()))
-        return failure("cannot remove .git from " + staging.path().str());
+        return sourceFailure("cannot remove .git from " + staging.path().str());
 
     if (!Files::removeAll(result.snapshot.directory)
         || !Files::moveFile(staging.path(), result.snapshot.directory))
-        return failure("cannot move the snapshot into "
-                       + result.snapshot.directory.str());
+        return sourceFailure("cannot move the snapshot into "
+                             + result.snapshot.directory.str());
 
     const auto markerValue =
         SourceMarker {url, result.snapshot.commit, utcTimestamp()};
 
     if (!saveJsonFile(marker, markerValue))
-        return failure("cannot write " + marker.str());
+        return sourceFailure("cannot write " + marker.str());
 
     return result;
 }
@@ -349,30 +348,30 @@ SourceResult fetchManifest(const CacheRoot& cache,
 
     // Staged beside it, so the rename never crosses filesystems.
     if (!Files::createDirectories(recipes))
-        return failure("cannot create " + recipes.str());
+        return sourceFailure("cannot create " + recipes.str());
 
     auto staging = TemporaryFile {recipes, ".staging"};
     const auto manifest = staging.path() / "recipe";
     const auto checkout = staging.path() / "checkout";
 
     if (!Files::createDirectories(manifest) || !Files::createDirectories(checkout))
-        return failure("cannot create " + staging.path().str());
+        return sourceFailure("cannot create " + staging.path().str());
 
     // The epm.cpp alone even from a complete snapshot: a recipe is one file,
     // and compiled from beside the rest of its repository it could include
     // what a recipe fetched alone cannot.
-    auto from = checkout / manifestFileName;
+    auto from = checkout / recipeFileName;
 
     if (!result.snapshot.directory.empty())
-        from = result.snapshot.directory / manifestFileName;
+        from = result.snapshot.directory / recipeFileName;
     else
     {
-        Log::step("epm: fetching the " + std::string {manifestFileName} + " of "
-                  + url + " at " + commit);
+        Log::step("epm: fetching the " + std::string {recipeFileName} + " of " + url
+                  + " at " + commit);
 
         if (auto error = checkoutManifest(checkout, url, commit))
         {
-            Log::step("epm: fetching the " + std::string {manifestFileName} + " of "
+            Log::step("epm: fetching the " + std::string {recipeFileName} + " of "
                       + url + " alone failed (" + *error
                       + "), fetching the whole source");
 
@@ -382,21 +381,22 @@ SourceResult fetchManifest(const CacheRoot& cache,
                 return fetched;
 
             result.snapshot = fetched.snapshot;
-            from = result.snapshot.directory / manifestFileName;
+            from = result.snapshot.directory / recipeFileName;
         }
     }
 
-    if (Files::isFile(from) && !Files::copyFile(from, manifest / manifestFileName))
-        return failure("cannot stage the " + std::string {manifestFileName} + " of "
-                       + name + " in " + manifest.str());
+    if (Files::isFile(from) && !Files::copyFile(from, manifest / recipeFileName))
+        return sourceFailure("cannot stage the " + std::string {recipeFileName}
+                             + " of " + name + " in " + manifest.str());
 
     // A rename never replaces a directory that is not empty: another process
     // may have put the same checkout there meanwhile, and readers may be
     // using it.
     if (!renameNoReplace(manifest, result.manifestDirectory)
         && !Files::isDirectory(result.manifestDirectory))
-        return failure("cannot move the " + std::string {manifestFileName} + " of "
-                       + name + " into " + result.manifestDirectory.str());
+        return sourceFailure("cannot move the " + std::string {recipeFileName}
+                             + " of " + name + " into "
+                             + result.manifestDirectory.str());
 
     return result;
 }

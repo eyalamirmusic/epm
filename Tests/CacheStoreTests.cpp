@@ -94,7 +94,7 @@ ConfigMarker rewrittenFiles(const FilePath& prefix,
 }
 
 // Every file under `directory`, relative, sorted.
-Configs filesUnder(const FilePath& directory)
+Configs storeFilesUnder(const FilePath& directory)
 {
     auto options = eacp::Files::DirectoryOptions {};
     options.recursive = true;
@@ -304,7 +304,7 @@ auto tStorePull = test("CacheStore/pull/takesWhatTheLocalPickLacks") = []
     publishInto(builder, "Release");
     const auto store = root.path() / "store";
     check(pushToStore(builder, store, {}).configs == 2);
-    const auto before = filesUnder(store);
+    const auto before = storeFilesUnder(store);
 
     // Local holds Release of the same fingerprint; the store adds Debug.
     const auto local = CacheRoot {root.path() / "local", {store}};
@@ -321,7 +321,7 @@ auto tStorePull = test("CacheStore/pull/takesWhatTheLocalPickLacks") = []
     check(verifyCache(local).problems.empty());
 
     // Nothing was written into the store.
-    check(filesUnder(store) == before);
+    check(storeFilesUnder(store) == before);
 
     // A local hit looks at no store.
     check(pullFromStores(local,

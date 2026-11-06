@@ -264,7 +264,7 @@ auto tPackageAdditive = test("Package/cached/buildsOnlyTheMissingConfig") = []
 namespace
 {
 // Every file under `directory`, by relative path, with its contents.
-std::map<std::string, std::string> filesUnder(const FilePath& directory)
+std::map<std::string, std::string> fileContentsUnder(const FilePath& directory)
 {
     auto options = eacp::Files::DirectoryOptions {};
     options.recursive = true;
@@ -288,7 +288,7 @@ auto tPackageAddLeavesOthers =
     auto calls = 0;
     const auto release = fakeBuild(packageInput(root.path()), asked, calls);
     const auto prefix = FilePath {release.prefix};
-    const auto releaseBefore = filesUnder(configDirectory(prefix, "Release"));
+    const auto releaseBefore = fileContentsUnder(configDirectory(prefix, "Release"));
     const auto facadeBefore = eacp::Files::readFile(prefix / "epm-targets.cmake");
 
     const auto both = fakeBuild(
@@ -297,7 +297,7 @@ auto tPackageAddLeavesOthers =
     check(both.ok() && both.prefix == release.prefix);
     check(asked == Configs {"Debug"});
     check(!releaseBefore.empty());
-    check(filesUnder(configDirectory(prefix, "Release")) == releaseBefore);
+    check(fileContentsUnder(configDirectory(prefix, "Release")) == releaseBefore);
     check(eacp::Files::readFile(prefix / "epm-targets.cmake") == facadeBefore);
     check(eacp::Files::isFile(configDirectory(prefix, "Debug") / "epm-config.json"));
 };

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/FilePath.h>
 
 #include <system_error>
@@ -11,6 +12,11 @@ namespace epm
 // (Upstream candidate: an eacp Files::canonical, std::filesystem's
 // weakly_canonical without the throwing overload.)
 eacp::FilePath resolvedPath(const eacp::FilePath& path);
+
+// The directories directly inside `directory`, hidden ones (a cache entry's
+// staging) only with `includeHidden`; none when it cannot be listed.
+eacp::Vector<eacp::FilePath> subdirectories(const eacp::FilePath& directory,
+                                            bool includeHidden = false);
 
 // Renames `from` to `to` (creating to's parent), never replacing a directory
 // that is there already: std::filesystem's rename of a directory fails when

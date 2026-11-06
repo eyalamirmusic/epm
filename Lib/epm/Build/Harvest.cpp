@@ -538,7 +538,7 @@ std::optional<std::string> dependencyRoots(std::string_view text,
     return std::nullopt;
 }
 
-HarvestResult failure(std::string error)
+HarvestResult harvestFailure(std::string error)
 {
     auto result = HarvestResult {};
     result.error = std::move(error);
@@ -915,13 +915,14 @@ HarvestResult harvestConfig(const FilePath& buildDirectory,
     const auto namesFile = prefix / ("export-" + config + ".cmake.names");
 
     if (!Files::isFile(exportFile) || !Files::isFile(namesFile))
-        return failure("the " + config + " build wrote no " + exportFile.fileName()
-                       + " (or its .names) - was epm-export.cmake injected?");
+        return harvestFailure("the " + config + " build wrote no "
+                              + exportFile.fileName()
+                              + " (or its .names) - was epm-export.cmake injected?");
 
     auto text = Files::readFile(exportFile);
     auto result = HarvestResult {};
     const auto rejected = [&](const std::string& reason)
-    { return failure(exportFile.fileName() + ": " + reason); };
+    { return harvestFailure(exportFile.fileName() + ": " + reason); };
 
     for (const auto& tree: spellingsOf(buildDirectory))
     {
@@ -938,7 +939,8 @@ HarvestResult harvestConfig(const FilePath& buildDirectory,
             const auto to = entry / shared;
 
             if (!Files::isFile(to) && !Files::copyFile(from, to))
-                return failure("cannot copy " + from.str() + " to " + to.str());
+                return harvestFailure("cannot copy " + from.str() + " to "
+                                      + to.str());
 
             text = replacePath(
                 text, tree + "/" + relative, inEntry(sharedRootVariable, shared));
@@ -1053,13 +1055,13 @@ HarvestResult harvestConfig(const FilePath& buildDirectory,
         text = sharedRootLine() + text;
 
     if (!writeTextFile(exportFile, text))
-        return failure("cannot rewrite " + exportFile.str());
+        return harvestFailure("cannot rewrite " + exportFile.str());
 
     result.targetNames = parseTargetNames(Files::readFile(namesFile));
     result.needsThreads = mentionsThreads(text);
 
     if (result.targetNames.empty())
-        return failure(namesFile.str() + " lists no targets");
+        return harvestFailure(namesFile.str() + " lists no targets");
 
     if (!Files::removeAll(buildDirectory))
         result.warning = "cannot delete " + buildDirectory.str();

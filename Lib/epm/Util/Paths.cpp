@@ -24,6 +24,19 @@ FilePath resolvedPath(const FilePath& path)
     return FilePath {failed ? absolute : resolved};
 }
 
+Vector<FilePath> subdirectories(const FilePath& directory, bool includeHidden)
+{
+    auto options = Files::DirectoryOptions {};
+    options.includeHidden = includeHidden;
+    auto directories = Vector<FilePath> {};
+
+    for (const auto& entry: Files::listDirectory(directory, options))
+        if (entry.kind == Files::EntryKind::directory)
+            directories.add(entry.path);
+
+    return directories;
+}
+
 bool isTransientRenameError(const std::error_code& error)
 {
 #if defined(_WIN32)

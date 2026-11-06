@@ -2,6 +2,7 @@
 
 #include <epm/Build/Harvest.h>
 #include <epm/Spec/JsonFile.h>
+#include <epm/Util/Paths.h>
 #include <epm/Util/Sha256.h>
 
 #include <eacp/Core/Utils/Files.h>
@@ -12,19 +13,6 @@ using namespace eacp;
 
 namespace
 {
-Vector<FilePath> subdirectories(const FilePath& directory, bool hidden = false)
-{
-    auto options = Files::DirectoryOptions {};
-    options.includeHidden = hidden;
-    auto directories = Vector<FilePath> {};
-
-    for (const auto& entry: Files::listDirectory(directory, options))
-        if (entry.kind == Files::EntryKind::directory)
-            directories.add(entry.path);
-
-    return directories;
-}
-
 std::optional<std::string> fileProblem(const FilePath& file,
                                        const UnitFile& recorded)
 {

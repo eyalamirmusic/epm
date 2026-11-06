@@ -363,6 +363,67 @@ auto tFpMsvcRuntime = test("Fingerprint/msvcRuntime") = []
     check(abiNote(base, dynamic) == "built with a different msvcRuntime");
 };
 
+// On Android the ABI is in the platform name; the API level and STL are
+// compared under strict and compatible, not under any, and so are the
+// dependency keys a dependent records. The NDK counts by its revision
+// (sdkVersion), never by its directory.
+auto tFpAndroid = test("Fingerprint/android") = []
+{
+    auto env = fingerprintEnv();
+    env.systemName = "Android";
+    env.systemProcessor = "aarch64";
+    env.cxxCompilerId = "Clang";
+    env.osxDeploymentTarget.clear();
+    env.sdkVersion = "27.0.12077973";
+    env.androidAbi = "arm64-v8a";
+    env.androidApi = "26";
+    env.androidNdk = "/sdk/ndk/27.0.12077973";
+    env.androidStl = "c++_static";
+
+    const auto base = fingerprintWith(env);
+    check(base.platform == "android-arm64-v8a");
+    check(base.androidApi == "26");
+    check(base.androidStl == "c++_static");
+    check(fingerprintWith(fingerprintEnv()).androidApi.empty());
+    check(canonicalFingerprint(base).find("/sdk/ndk") == std::string::npos);
+
+    auto api = env;
+    api.androidApi = "28";
+    auto stl = env;
+    stl.androidStl = "c++_shared";
+
+    for (const auto& other: {fingerprintWith(api), fingerprintWith(stl)})
+    {
+        check(fingerprintId(other) != fingerprintId(base));
+        check(!abiMatches(base, other, AbiMatch::compatible));
+        check(abiMatches(base, other, AbiMatch::any));
+        check(abiKey(other, AbiMatch::compatible)
+              != abiKey(base, AbiMatch::compatible));
+        check(abiKey(other, AbiMatch::any) == abiKey(base, AbiMatch::any));
+    }
+
+    check(abiNote(base, fingerprintWith(api))
+          == "built with a different androidApi");
+
+    // The same NDK elsewhere is the same key; another revision of the same
+    // major version only compatible accepts, another major version none but
+    // any.
+    auto elsewhere = env;
+    elsewhere.androidNdk = "/opt/ci/android-ndk-r27";
+    auto patched = env;
+    patched.sdkVersion = "27.2.12479018";
+    auto newer = env;
+    newer.sdkVersion = "28.0.13004108";
+
+    check(fingerprintId(fingerprintWith(elsewhere)) == fingerprintId(base));
+    check(!abiMatches(base, fingerprintWith(patched), AbiMatch::strict));
+    check(abiMatches(base, fingerprintWith(patched), AbiMatch::compatible));
+    check(abiKey(fingerprintWith(patched), AbiMatch::compatible)
+          == abiKey(base, AbiMatch::compatible));
+    check(!abiMatches(base, fingerprintWith(newer), AbiMatch::compatible));
+    check(abiMatches(base, fingerprintWith(newer), AbiMatch::any));
+};
+
 auto tFpParse = test("Fingerprint/parseAbiMatch") = []
 {
     check(parseAbiMatch("strict") == AbiMatch::strict);

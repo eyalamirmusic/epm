@@ -23,10 +23,12 @@ permissions:
   contents: read
 
 jobs:
+  # The CI matrix's five released lanes only, without the smoke tests; they
+  # upload the epm-<platform> artifacts published below.
   build:
     uses: ./.github/workflows/build.yml
     with:
-      package: true
+      release: true
 
   publish:
     needs: build
